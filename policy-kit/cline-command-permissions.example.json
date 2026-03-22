@@ -1,0 +1,22 @@
+{
+  "allow": [
+    "git status",
+    "git diff *",
+    "git add *",
+    "git commit *",
+    "./mvnw test *",
+    "./mvnw -q test *",
+    "./mvnw spotless:check *",
+    "docker compose ps",
+    "docker compose logs *"
+  ],
+  "deny": [
+    "git push *",
+    "rm -rf *",
+    "sudo *",
+    "curl *",
+    "ssh *",
+    "scp *",
+    "nc *"
+  ]
+}
