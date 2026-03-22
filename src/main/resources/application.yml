@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: corebank-api
+
+  datasource:
+    url: jdbc:postgresql://localhost:5433/corebank
+    username: corebank
+    password: corebank123
+    driver-class-name: org.postgresql.Driver
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: 9090
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
