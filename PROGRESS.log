@@ -82,21 +82,45 @@
 ## Phase 3: Banking Domain Expansion
 
 ### Task 7: Deposit Flows
-**Status**: NOT STARTED
-**Started**: N/A
+**Status**: IN PROGRESS (open/accrue/maturity slice verified)
+**Started**: 2026-03-24 00:xx
 **Checkpoint**: N/A
-**Notes**: Chưa bắt đầu
+**Notes**:
+- Deposit application/contract flows implemented for open, accrue, maturity paths
+- Focused integration verification available in this log (6/6 pass)
+- Remaining: explicit productized closure policy details and expanded failure-mode coverage
 
 ### Task 8: Lending Foundation
-**Status**: NOT STARTED
-**Started**: N/A
-**Checkpoint**: N/A
-**Notes**: Chưa bắt đầu
+**Status**: IN PROGRESS (disbursement-only slice implemented and verified)
+**Started**: 2026-03-24 01:24
+**Checkpoint**: `checkpoint/lending-foundation-f9ad6b8`
+**Notes**:
+- Added additive migration `V15__lending_disbursement_foundation.sql`
+- Implemented `LoanContractService` for disbursement transaction:
+  - create loan contract
+  - generate repayment schedule snapshot
+  - post balanced disbursement journal
+  - append `loan_events(DISBURSED)`
+- Implemented `LoanApplicationService` orchestration:
+  - idempotency
+  - system mode guard
+  - audit append
+  - outbox append
+- Added `LoanApplicationServiceIntegrationTest` with focused proofs:
+  - disbursement happy-path persistence/journal/audit/outbox/balance checks
+  - replay idempotency (no double writes)
+  - EOD lock blocks write-path
+- Verification:
+  - `LoanApplicationServiceIntegrationTest`: 3/3 PASSED
+  - `TransferServiceIntegrationTest`: 9/9 PASSED (regression sanity)
+- Remaining in Task 8:
+  - repayment workflow (principal/interest/fees split)
+  - overdue/closure/default transitions
 
 ## Last Updated
-**Time**: 2026-03-23 06:22
-**Current Task**: Task 6 - Daily Snapshots (COMPLETED)
-**Next Action**: Bắt đầu Task 7 - Deposit Flows (Phase 3)
+**Time**: 2026-03-24 02:16
+**Current Task**: Task 8 - Lending Foundation (Disbursement slice)
+**Next Action**: Mở task riêng cho loan repayment allocation contract + implementation
 
 ---
 

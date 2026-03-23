@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS system_configs (
 
 INSERT INTO system_configs(config_key, config_value, description)
 VALUES
-  ('runtime_mode', '{"status":"ONLINE"}'::jsonb, 'ONLINE | EOD_RUNNING | MAINTENANCE | READ_ONLY'),
+  ('runtime_mode', '{"status":"RUNNING"}'::jsonb, 'RUNNING | EOD_LOCK | MAINTENANCE | READ_ONLY'),
   ('eod_control', '{"is_open":true,"business_date":null}'::jsonb, 'Business-date and EOD/BOD control flags')
 ON CONFLICT (config_key) DO NOTHING;
 
