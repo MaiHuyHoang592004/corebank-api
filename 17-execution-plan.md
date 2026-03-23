@@ -13,6 +13,15 @@ It is intended to answer: **what should be built first so the system works smoot
   - integration test
   - failure mode review
 
+## Current execution snapshot (2026-03-24)
+- Phase 1: completed and regression-verified for transfer/system-mode/limits.
+- Phase 2: completed baseline for exception queue, batch run registry, snapshots.
+- Phase 3:
+  - Deposit: **in progress** (open/accrue/maturity slice verified).
+  - Lending: **in progress** (loan disbursement slice verified; repayment allocation pending).
+
+This snapshot reflects executable status and test evidence in `PROGRESS.log`.
+
 ## Phase 0 — Platform bootstrap (must exist before business features)
 Goal: create a repeatable local development and delivery baseline.
 
@@ -65,7 +74,7 @@ Goal: make the system operable, not just correct.
 Build:
 - approvals / maker-checker baseline
 - exception queue
-- system mode checks (`RUNNING`, `EOD`, `MAINTENANCE`)
+- system mode checks (`RUNNING`, `EOD_LOCK`, `MAINTENANCE`, `READ_ONLY`)
 - batch run registry
 - daily snapshot generation
 - basic reconciliation checks
