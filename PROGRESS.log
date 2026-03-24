@@ -673,3 +673,54 @@
 - Saga reporting endpoints return orchestration state only; they must remain non-authoritative for balances/ledger truth.
 - `GET /api/reporting/sagas/{sagaInstanceId}/steps` currently returns empty `items` for unknown saga ids; consumers should not infer saga existence from step list alone.
 - Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.11 - Outbox Claim Recovery and Retry Hardening)
+
+### Scope
+- Harden outbox worker behavior for crash-recovery and bounded retries
+- Keep authoritative money path untouched (ledger/balance semantics unchanged)
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Added migration `V21__outbox_claim_recovery_and_retry.sql`:
+  - added `outbox_events.processing_started_at` claim timestamp column
+  - added indexes for stale-processing reclaim and failed-retry scanning
+  - replaced `get_pending_outbox_events(...)` with bounded, claim-safe logic:
+    - reclaim stale `PROCESSING` rows back to `PENDING`
+    - include retryable `FAILED` rows with backoff and max retry controls
+    - claim rows atomically using `FOR UPDATE SKIP LOCKED`
+- Updated `OutboxEventRepository`:
+  - preserved existing `getPendingEvents(int limit)` API for compatibility
+  - added overloaded `getPendingEvents(...)` with retry/backoff/reclaim parameters
+  - cleared `processing_started_at` when marking `PROCESSED` or `FAILED`
+- Updated `OutboxEventPublisher`:
+  - now calls parameterized claim API with explicit constants (`MAX_RETRIES`, backoff, reclaim timeout)
+  - improved retry attempt logging to show actual attempt number
+- Expanded `OutboxPatternIntegrationTest`:
+  - stale claim reclaim proof
+  - failed-event retry-after-backoff proof
+  - max-retry blocking proof
+- Stabilized `OutboxKafkaProjectorE2EIntegrationTest`:
+  - waits until projection is visible in both read models (`event_feed` and `notification_inbox`) before asserting
+
+### Focused Verification Results
+- `OutboxPatternIntegrationTest`: **9/9 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `NotificationProjectorIntegrationTest`: **3/3 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `SagaReportingControllerIntegrationTest`: **2/2 passed**
+- `SagaStateServiceIntegrationTest`: **3/3 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Stale-claim reclaim depends on wall-clock timeout; if publish latency exceeds reclaim timeout, duplicate processing attempts may occur (consumers remain idempotent by design).
+- Retry/backoff thresholds are currently static in code; if operational tuning is required later, move these values to controlled config with explicit rollout plan.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
