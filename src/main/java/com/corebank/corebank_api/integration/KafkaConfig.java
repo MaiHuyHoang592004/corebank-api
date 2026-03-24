@@ -44,6 +44,7 @@ public class KafkaConfig {
     public static final String TOPIC_TRANSFER_EVENTS = "transfer-events";
     public static final String TOPIC_PAYMENT_EVENTS = "payment-events";
     public static final String TOPIC_DEPOSIT_EVENTS = "deposit-events";
+    public static final String TOPIC_LOAN_EVENTS = "loan-events";
     public static final String TOPIC_LEDGER_EVENTS = "ledger-events";
     
     /**
@@ -107,6 +108,14 @@ public class KafkaConfig {
     @Bean
     public NewTopic depositEventsTopic() {
         return new NewTopic(TOPIC_DEPOSIT_EVENTS, 3, (short) 1);
+    }
+
+    /**
+     * Create loan events topic
+     */
+    @Bean
+    public NewTopic loanEventsTopic() {
+        return new NewTopic(TOPIC_LOAN_EVENTS, 3, (short) 1);
     }
     
     /**
