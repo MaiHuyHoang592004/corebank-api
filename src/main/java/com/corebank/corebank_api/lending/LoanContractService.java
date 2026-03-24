@@ -312,6 +312,55 @@ public class LoanContractService {
 		return transitionedContracts;
 	}
 
+	@Transactional
+	public DefaultTransitionResult markContractDefaulted(UUID contractId, LocalDate asOfDate) {
+		if (contractId == null) {
+			throw new CoreBankException("Loan contract id is required");
+		}
+		if (asOfDate == null) {
+			throw new CoreBankException("Default transition date is required");
+		}
+
+		LoanContractSnapshot contract = lockLoanContract(contractId)
+				.orElseThrow(() -> new CoreBankException("Loan contract not found: " + contractId));
+
+		if ("DEFAULTED".equals(contract.status())) {
+			return new DefaultTransitionResult(
+					contract.contractId(),
+					contract.outstandingPrincipalMinor(),
+					countOverdueInstallments(contract.contractId(), asOfDate),
+					false,
+					contract.status());
+		}
+
+		if (!"ACTIVE".equals(contract.status())) {
+			throw new CoreBankException("Only ACTIVE loan contracts can transition to DEFAULTED");
+		}
+
+		int overdueInstallmentCount = countOverdueInstallments(contract.contractId(), asOfDate);
+		if (overdueInstallmentCount == 0) {
+			throw new CoreBankException("Loan contract has no overdue installments eligible for default");
+		}
+
+		jdbcTemplate.update(
+				"""
+				UPDATE loan_contracts
+				SET status = 'DEFAULTED',
+				    updated_at = now()
+				WHERE contract_id = ?
+				""",
+				contract.contractId());
+
+		insertLoanDefaultedEvent(contract.contractId(), contract.outstandingPrincipalMinor(), overdueInstallmentCount, asOfDate);
+
+		return new DefaultTransitionResult(
+				contract.contractId(),
+				contract.outstandingPrincipalMinor(),
+				overdueInstallmentCount,
+				true,
+				"DEFAULTED");
+	}
+
 	private void validate(DisbursementRequest request) {
 		if (request.principalAmountMinor() <= 0) {
 			throw new CoreBankException("Loan principal must be positive");
@@ -368,6 +417,26 @@ public class LoanContractService {
 				""",
 				REPAYMENT_SCHEDULE_ROW_MAPPER,
 				contractId);
+	}
+
+	private int countOverdueInstallments(UUID contractId, LocalDate asOfDate) {
+		Integer overdueCount = jdbcTemplate.queryForObject(
+				"""
+				SELECT COUNT(*)
+				FROM repayment_schedules
+				WHERE contract_id = ?
+				  AND status = 'OVERDUE'
+				  AND due_date < ?
+				  AND (
+				      (fees_due_minor - fees_paid_minor)
+				    + (interest_due_minor - interest_paid_minor)
+				    + (principal_due_minor - principal_paid_minor)
+				  ) > 0
+				""",
+				Integer.class,
+				contractId,
+				asOfDate);
+		return overdueCount == null ? 0 : overdueCount;
 	}
 
 	private AllocationResult allocateRepayment(List<RepaymentScheduleSnapshot> schedules, long amountMinor) {
@@ -507,6 +576,31 @@ public class LoanContractService {
 					OBJECT_MAPPER.writeValueAsString(metadata));
 		} catch (JsonProcessingException e) {
 			throw new CoreBankException("Unable to serialize overdue event metadata", e);
+		}
+	}
+
+	private void insertLoanDefaultedEvent(UUID contractId, long outstandingPrincipalMinor, int overdueInstallmentCount, LocalDate asOfDate) {
+		Map<String, Object> metadata = Map.of(
+				"asOfDate", asOfDate.toString(),
+				"overdueInstallmentCount", overdueInstallmentCount,
+				"outstandingPrincipalMinor", outstandingPrincipalMinor);
+
+		try {
+			jdbcTemplate.update(
+					"""
+					INSERT INTO loan_events (
+					    contract_id,
+					    event_type,
+					    amount_minor,
+					    metadata_json,
+					    created_at
+					) VALUES (?, 'DEFAULTED', ?, ?::jsonb, now())
+					""",
+					contractId,
+					outstandingPrincipalMinor,
+					OBJECT_MAPPER.writeValueAsString(metadata));
+		} catch (JsonProcessingException e) {
+			throw new CoreBankException("Unable to serialize defaulted event metadata", e);
 		}
 	}
 
@@ -684,6 +778,14 @@ public class LoanContractService {
 			int overdueInstallmentCount,
 			long overdueAmountMinor,
 			long outstandingPrincipalMinor,
+			String contractStatus) {
+	}
+
+	public record DefaultTransitionResult(
+			UUID contractId,
+			long outstandingPrincipalMinor,
+			int overdueInstallmentCount,
+			boolean transitioned,
 			String contractStatus) {
 	}
 

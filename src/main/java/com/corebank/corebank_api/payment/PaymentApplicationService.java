@@ -1,6 +1,7 @@
 package com.corebank.corebank_api.payment;
 
 import com.corebank.corebank_api.integration.IdempotencyService;
+import com.corebank.corebank_api.integration.OutboxMetadata;
 import com.corebank.corebank_api.integration.OutboxService;
 import com.corebank.corebank_api.ops.audit.AuditService;
 import com.corebank.corebank_api.ops.system.SystemModeService;
@@ -91,7 +92,8 @@ public class PaymentApplicationService {
 					"PAYMENT_ORDER",
 					authorization.paymentOrderId().toString(),
 					"PAYMENT_AUTHORIZED",
-					responseJson);
+					response,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
 
 			idempotencyService.markSucceeded(
 					request.idempotencyKey(),
@@ -159,7 +161,8 @@ public class PaymentApplicationService {
 					"HOLD",
 					capture.holdId().toString(),
 					"PAYMENT_CAPTURED",
-					responseJson);
+					response,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
 
 			idempotencyService.markSucceeded(
 					request.idempotencyKey(),
@@ -218,7 +221,8 @@ public class PaymentApplicationService {
 					"HOLD",
 					voidResult.holdId().toString(),
 					"PAYMENT_VOIDED",
-					responseJson);
+					response,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
 
 			idempotencyService.markSucceeded(
 					request.idempotencyKey(),

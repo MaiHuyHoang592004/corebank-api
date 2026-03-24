@@ -28,6 +28,8 @@ class PaymentApplicationServiceIntegrationTest {
 	@Test
 	void authorizeHoldReducesAvailableOnlyAndWritesAuditAndOutbox() {
 		SeededAccount seededAccount = seedAccount(10_000L, 10_000L, "VND");
+		UUID correlationId = UUID.randomUUID();
+		UUID requestId = UUID.randomUUID();
 
 		PaymentApplicationService.AuthorizeHoldResponse response = paymentApplicationService.authorizeHold(
 				new PaymentApplicationService.AuthorizeHoldRequest(
@@ -39,8 +41,8 @@ class PaymentApplicationServiceIntegrationTest {
 						"MERCHANT_PAYMENT",
 						"test hold",
 						"tester",
-						UUID.randomUUID(),
-						UUID.randomUUID(),
+						correlationId,
+						requestId,
 						UUID.randomUUID(),
 						"trace-1"));
 
@@ -73,6 +75,22 @@ class PaymentApplicationServiceIntegrationTest {
 		assertEquals(1, count(
 				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'PAYMENT_AUTHORIZED' AND aggregate_id = ?",
 				response.paymentOrderId().toString()));
+		Map<String, Object> outboxEnvelope = jdbcTemplate.queryForMap(
+				"""
+				SELECT event_data->>'schemaVersion' AS schema_version,
+				       event_data->>'correlationId' AS correlation_id,
+				       event_data->>'requestId' AS request_id,
+				       event_data->>'actor' AS actor
+				FROM outbox_events
+				WHERE event_type = 'PAYMENT_AUTHORIZED' AND aggregate_id = ?
+				ORDER BY id DESC
+				LIMIT 1
+				""",
+				response.paymentOrderId().toString());
+		assertEquals("v1", outboxEnvelope.get("schema_version"));
+		assertEquals(correlationId.toString(), outboxEnvelope.get("correlation_id"));
+		assertEquals(requestId.toString(), outboxEnvelope.get("request_id"));
+		assertEquals("tester", outboxEnvelope.get("actor"));
 		assertEquals(1, count(
 				"SELECT COUNT(*) FROM idempotency_keys WHERE idempotency_key = ? AND status = 'SUCCEEDED'",
 				"idem-hold-1"));

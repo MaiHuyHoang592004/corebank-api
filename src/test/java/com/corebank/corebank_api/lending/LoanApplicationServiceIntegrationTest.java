@@ -40,6 +40,8 @@ class LoanApplicationServiceIntegrationTest {
 	@Test
 	void disburseLoan_writesContractScheduleJournalAuditOutboxAndBalances() {
 		SeededData seeded = seedLoanDisbursementData("VND", 2_000_000L, 2_000_000L);
+		UUID correlationId = UUID.randomUUID();
+		UUID requestId = UUID.randomUUID();
 
 		LoanApplicationService.LoanDisbursementRequest request = new LoanApplicationService.LoanDisbursementRequest(
 				"idem-loan-disburse-1",
@@ -53,8 +55,8 @@ class LoanApplicationServiceIntegrationTest {
 				seeded.loanReceivableLedgerAccountId(),
 				seeded.customerSettlementLedgerAccountId(),
 				"loan-officer",
-				UUID.randomUUID(),
-				UUID.randomUUID(),
+				correlationId,
+				requestId,
 				UUID.randomUUID(),
 				"trace-loan-disburse-1");
 
@@ -76,6 +78,22 @@ class LoanApplicationServiceIntegrationTest {
 		assertEquals(1, count("SELECT COUNT(*) FROM loan_events WHERE contract_id = ? AND event_type = 'DISBURSED'", response.contractId()));
 		assertEquals(1, count("SELECT COUNT(*) FROM audit_events WHERE action = 'LOAN_DISBURSED' AND resource_id = ?", response.contractId().toString()));
 		assertEquals(1, count("SELECT COUNT(*) FROM outbox_events WHERE event_type = 'LOAN_DISBURSED' AND aggregate_id = ?", response.contractId().toString()));
+		Map<String, Object> outboxEnvelope = jdbcTemplate.queryForMap(
+				"""
+				SELECT event_data->>'schemaVersion' AS schema_version,
+				       event_data->>'correlationId' AS correlation_id,
+				       event_data->>'requestId' AS request_id,
+				       event_data->>'actor' AS actor
+				FROM outbox_events
+				WHERE event_type = 'LOAN_DISBURSED' AND aggregate_id = ?
+				ORDER BY id DESC
+				LIMIT 1
+				""",
+				response.contractId().toString());
+		assertEquals("v1", outboxEnvelope.get("schema_version"));
+		assertEquals(correlationId.toString(), outboxEnvelope.get("correlation_id"));
+		assertEquals(requestId.toString(), outboxEnvelope.get("request_id"));
+		assertEquals("loan-officer", outboxEnvelope.get("actor"));
 		assertEquals(1, count("SELECT COUNT(*) FROM idempotency_keys WHERE idempotency_key = 'idem-loan-disburse-1' AND status = 'SUCCEEDED'"));
 
 		Map<String, Object> sums = jdbcTemplate.queryForMap(
@@ -590,6 +608,129 @@ class LoanApplicationServiceIntegrationTest {
 				repayment.journalId());
 		assertEquals(9_500L, ((Number) sums.get("total_debit")).longValue());
 		assertEquals(9_500L, ((Number) sums.get("total_credit")).longValue());
+	}
+
+	@Test
+	void markContractDefaulted_marksEligibleContractAndAppendsSideEffects() {
+		SeededData seeded = seedLoanDisbursementData("VND", 1_000_000L, 1_000_000L);
+		LoanApplicationService.LoanDisbursementResponse disbursement = disburseLoanForRepayment(seeded, "default-happy");
+		LocalDate asOfDate = LocalDate.now();
+
+		jdbcTemplate.update(
+				"""
+				UPDATE repayment_schedules
+				SET due_date = ?
+				WHERE contract_id = ?
+				  AND installment_no = 1
+				""",
+				asOfDate.minusDays(2),
+				disbursement.contractId());
+
+		loanApplicationService.markOverdueInstallments(
+				new LoanApplicationService.LoanOverdueTransitionRequest(
+						asOfDate,
+						"loan-collector",
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						"trace-loan-overdue-default-happy"));
+
+		LoanApplicationService.LoanDefaultTransitionResponse response = loanApplicationService.markContractDefaulted(
+				new LoanApplicationService.LoanDefaultTransitionRequest(
+						disbursement.contractId(),
+						asOfDate,
+						"loan-manager",
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						"trace-loan-default-1"));
+
+		assertEquals(disbursement.contractId(), response.contractId());
+		assertTrue(response.transitioned());
+		assertEquals("DEFAULTED", response.status());
+		assertEquals(1, response.overdueInstallmentCount());
+
+		Map<String, Object> contract = jdbcTemplate.queryForMap(
+				"SELECT status, outstanding_principal_minor FROM loan_contracts WHERE contract_id = ?",
+				disbursement.contractId());
+		assertEquals("DEFAULTED", contract.get("status"));
+		assertTrue(((Number) contract.get("outstanding_principal_minor")).longValue() > 0);
+
+		assertEquals(1, count("SELECT COUNT(*) FROM loan_events WHERE contract_id = ? AND event_type = 'DEFAULTED'", disbursement.contractId()));
+		assertEquals(1, count("SELECT COUNT(*) FROM audit_events WHERE action = 'LOAN_DEFAULTED' AND resource_id = ?", disbursement.contractId().toString()));
+		assertEquals(1, count("SELECT COUNT(*) FROM outbox_events WHERE event_type = 'LOAN_DEFAULTED' AND aggregate_id = ?", disbursement.contractId().toString()));
+	}
+
+	@Test
+	void markContractDefaulted_replayDoesNotAppendDuplicateSideEffects() {
+		SeededData seeded = seedLoanDisbursementData("VND", 1_000_000L, 1_000_000L);
+		LoanApplicationService.LoanDisbursementResponse disbursement = disburseLoanForRepayment(seeded, "default-replay");
+		LocalDate asOfDate = LocalDate.now();
+
+		jdbcTemplate.update(
+				"""
+				UPDATE repayment_schedules
+				SET due_date = ?
+				WHERE contract_id = ?
+				  AND installment_no = 1
+				""",
+				asOfDate.minusDays(2),
+				disbursement.contractId());
+
+		loanApplicationService.markOverdueInstallments(
+				new LoanApplicationService.LoanOverdueTransitionRequest(
+						asOfDate,
+						"loan-collector",
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						"trace-loan-overdue-default-replay"));
+
+		LoanApplicationService.LoanDefaultTransitionRequest request = new LoanApplicationService.LoanDefaultTransitionRequest(
+				disbursement.contractId(),
+				asOfDate,
+				"loan-manager",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"trace-loan-default-2");
+
+		LoanApplicationService.LoanDefaultTransitionResponse first = loanApplicationService.markContractDefaulted(request);
+		LoanApplicationService.LoanDefaultTransitionResponse second = loanApplicationService.markContractDefaulted(request);
+
+		assertTrue(first.transitioned());
+		assertTrue(!second.transitioned());
+		assertEquals("DEFAULTED", second.status());
+		assertEquals(1, count("SELECT COUNT(*) FROM loan_events WHERE contract_id = ? AND event_type = 'DEFAULTED'", disbursement.contractId()));
+		assertEquals(1, count("SELECT COUNT(*) FROM audit_events WHERE action = 'LOAN_DEFAULTED' AND resource_id = ?", disbursement.contractId().toString()));
+		assertEquals(1, count("SELECT COUNT(*) FROM outbox_events WHERE event_type = 'LOAN_DEFAULTED' AND aggregate_id = ?", disbursement.contractId().toString()));
+	}
+
+	@Test
+	void markContractDefaulted_rejectsContractWithoutOverdueInstallment() {
+		SeededData seeded = seedLoanDisbursementData("VND", 1_000_000L, 1_000_000L);
+		LoanApplicationService.LoanDisbursementResponse disbursement = disburseLoanForRepayment(seeded, "default-no-overdue");
+		LocalDate asOfDate = LocalDate.now();
+
+		assertThrows(
+				CoreBankException.class,
+				() -> loanApplicationService.markContractDefaulted(
+						new LoanApplicationService.LoanDefaultTransitionRequest(
+								disbursement.contractId(),
+								asOfDate,
+								"loan-manager",
+								UUID.randomUUID(),
+								UUID.randomUUID(),
+								UUID.randomUUID(),
+								"trace-loan-default-3")));
+
+		Map<String, Object> contract = jdbcTemplate.queryForMap(
+				"SELECT status FROM loan_contracts WHERE contract_id = ?",
+				disbursement.contractId());
+		assertEquals("ACTIVE", contract.get("status"));
+		assertEquals(0, count("SELECT COUNT(*) FROM loan_events WHERE contract_id = ? AND event_type = 'DEFAULTED'", disbursement.contractId()));
+		assertEquals(0, count("SELECT COUNT(*) FROM audit_events WHERE action = 'LOAN_DEFAULTED' AND resource_id = ?", disbursement.contractId().toString()));
+		assertEquals(0, count("SELECT COUNT(*) FROM outbox_events WHERE event_type = 'LOAN_DEFAULTED' AND aggregate_id = ?", disbursement.contractId().toString()));
 	}
 
 	private LoanApplicationService.LoanDisbursementResponse disburseLoanForRepayment(SeededData seeded, String suffix) {

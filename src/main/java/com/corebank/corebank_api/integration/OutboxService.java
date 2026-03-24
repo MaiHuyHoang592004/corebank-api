@@ -3,6 +3,8 @@ package com.corebank.corebank_api.integration;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import java.time.Instant;
+import java.util.UUID;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,6 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @Slf4j
 public class OutboxService {
+
+    private static final String OUTBOX_SCHEMA_VERSION = "v1";
 
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
@@ -30,14 +34,30 @@ public class OutboxService {
      */
     @Transactional
     public void appendMessage(String aggregateType, String aggregateId, String eventType, Object payload) {
+        appendMessage(aggregateType, aggregateId, eventType, payload, OutboxMetadata.empty());
+    }
+
+    /**
+     * Append a message to the outbox with metadata for traceability.
+     */
+    @Transactional
+    public void appendMessage(String aggregateType, String aggregateId, String eventType, Object payload, OutboxMetadata metadata) {
         try {
-            String eventData = objectMapper.writeValueAsString(payload);
+            OutboxMetadata effectiveMetadata = metadata == null ? OutboxMetadata.empty() : metadata;
+            String eventData = objectMapper.writeValueAsString(buildEnvelope(
+                    aggregateType,
+                    aggregateId,
+                    eventType,
+                    payload,
+                    effectiveMetadata));
             
             OutboxEvent event = OutboxEvent.builder()
                 .aggregateType(aggregateType)
                 .aggregateId(aggregateId)
                 .eventType(eventType)
                 .eventData(eventData)
+                .correlationId(effectiveMetadata.correlationId())
+                .causationId(effectiveMetadata.causationId())
                 .status(OutboxEvent.STATUS_PENDING)
                 .retryCount(0)
                 .build();
@@ -58,28 +78,31 @@ public class OutboxService {
     @Transactional
     public void appendMessage(String aggregateType, String aggregateId, String eventType, 
                             Object payload, String correlationId, String causationId) {
-        try {
-            String eventData = objectMapper.writeValueAsString(payload);
-            
-            OutboxEvent event = OutboxEvent.builder()
-                .aggregateType(aggregateType)
-                .aggregateId(aggregateId)
-                .eventType(eventType)
-                .eventData(eventData)
-                .correlationId(correlationId)
-                .causationId(causationId)
-                .status(OutboxEvent.STATUS_PENDING)
-                .retryCount(0)
-                .build();
-            
-            Long eventId = outboxEventRepository.insert(event);
-            log.debug("Created outbox event {} for {} {} {} with correlation {}", 
-                     eventId, aggregateType, aggregateId, eventType, correlationId);
-                     
-        } catch (JsonProcessingException e) {
-            log.error("Failed to serialize payload for outbox event", e);
-            throw new RuntimeException("Failed to serialize event payload", e);
-        }
+        appendMessage(
+                aggregateType,
+                aggregateId,
+                eventType,
+                payload,
+                OutboxMetadata.legacy(correlationId, causationId));
+    }
+
+    private OutboxEnvelope buildEnvelope(
+            String aggregateType,
+            String aggregateId,
+            String eventType,
+            Object payload,
+            OutboxMetadata metadata) {
+        return new OutboxEnvelope(
+                UUID.randomUUID(),
+                aggregateType,
+                aggregateId,
+                eventType,
+                Instant.now(),
+                OUTBOX_SCHEMA_VERSION,
+                metadata.correlationId(),
+                metadata.requestId(),
+                metadata.actor(),
+                payload);
     }
 
     /**

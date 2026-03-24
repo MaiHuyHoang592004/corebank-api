@@ -50,6 +50,8 @@ class TransferServiceIntegrationTest {
 	void transferUpdatesPostedAndAvailableBalancesAndWritesAuditAndOutbox() {
 		SeededAccounts seededAccounts = seedAccounts(10_000L, 10_000L, 5_000L, 5_000L, "VND");
 		SeededLedgerAccounts ledgerAccounts = seedLedgerAccounts("VND");
+		UUID correlationId = UUID.randomUUID();
+		UUID requestId = UUID.randomUUID();
 
 		TransferService.TransferResponse response = transferService.transfer(
 				new TransferService.TransferRequest(
@@ -62,8 +64,8 @@ class TransferServiceIntegrationTest {
 						ledgerAccounts.creditLedgerAccountId(),
 						"test transfer",
 						"tester",
-						UUID.randomUUID(),
-						UUID.randomUUID(),
+						correlationId,
+						requestId,
 						UUID.randomUUID(),
 						"trace-transfer-1"));
 
@@ -119,6 +121,22 @@ class TransferServiceIntegrationTest {
 		assertEquals(1, count(
 				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'TRANSFER_COMPLETED' AND aggregate_id = ?",
 				response.journalId().toString()));
+		Map<String, Object> outboxEnvelope = jdbcTemplate.queryForMap(
+				"""
+				SELECT event_data->>'schemaVersion' AS schema_version,
+				       event_data->>'correlationId' AS correlation_id,
+				       event_data->>'requestId' AS request_id,
+				       event_data->>'actor' AS actor
+				FROM outbox_events
+				WHERE event_type = 'TRANSFER_COMPLETED' AND aggregate_id = ?
+				ORDER BY id DESC
+				LIMIT 1
+				""",
+				response.journalId().toString());
+		assertEquals("v1", outboxEnvelope.get("schema_version"));
+		assertEquals(correlationId.toString(), outboxEnvelope.get("correlation_id"));
+		assertEquals(requestId.toString(), outboxEnvelope.get("request_id"));
+		assertEquals("tester", outboxEnvelope.get("actor"));
 
 		// Verify idempotency succeeded
 		assertEquals(1, count(

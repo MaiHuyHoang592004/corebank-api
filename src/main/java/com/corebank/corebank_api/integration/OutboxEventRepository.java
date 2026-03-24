@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.OffsetDateTime;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -78,26 +79,40 @@ public class OutboxEventRepository {
      * Mark event as processed
      */
     public boolean markAsProcessed(Long eventId, String status) {
-        String sql = "SELECT mark_outbox_event_processed(:eventId, :status)";
-        
+        String sql = """
+            UPDATE outbox_events
+            SET processed_at = CURRENT_TIMESTAMP,
+                status = :status
+            WHERE id = :eventId
+              AND status IN ('PENDING', 'PROCESSING')
+            """;
+
         MapSqlParameterSource params = new MapSqlParameterSource()
             .addValue("eventId", eventId)
             .addValue("status", status);
-        
-        return namedParameterJdbcTemplate.queryForObject(sql, params, Boolean.class);
+
+        return namedParameterJdbcTemplate.update(sql, params) == 1;
     }
     
     /**
      * Mark event as failed
      */
     public boolean markAsFailed(Long eventId, String error) {
-        String sql = "SELECT mark_outbox_event_failed(:eventId, :error)";
-        
+        String sql = """
+            UPDATE outbox_events
+            SET processed_at = CURRENT_TIMESTAMP,
+                status = 'FAILED',
+                retry_count = retry_count + 1,
+                last_error = :error
+            WHERE id = :eventId
+              AND status IN ('PENDING', 'PROCESSING', 'FAILED')
+            """;
+
         MapSqlParameterSource params = new MapSqlParameterSource()
             .addValue("eventId", eventId)
             .addValue("error", error);
-        
-        return namedParameterJdbcTemplate.queryForObject(sql, params, Boolean.class);
+
+        return namedParameterJdbcTemplate.update(sql, params) == 1;
     }
     
     /**
@@ -164,14 +179,17 @@ public class OutboxEventRepository {
     private static class OutboxEventRowMapper implements RowMapper<OutboxEvent> {
         @Override
         public OutboxEvent mapRow(ResultSet rs, int rowNum) throws SQLException {
+            OffsetDateTime createdAt = rs.getObject("created_at", OffsetDateTime.class);
+            OffsetDateTime processedAt = rs.getObject("processed_at", OffsetDateTime.class);
+
             return OutboxEvent.builder()
                 .id(rs.getLong("id"))
                 .aggregateType(rs.getString("aggregate_type"))
                 .aggregateId(rs.getString("aggregate_id"))
                 .eventType(rs.getString("event_type"))
                 .eventData(rs.getString("event_data"))
-                .createdAt(rs.getObject("created_at", ZonedDateTime.class))
-                .processedAt(rs.getObject("processed_at", ZonedDateTime.class))
+                .createdAt(createdAt == null ? null : createdAt.toZonedDateTime())
+                .processedAt(processedAt == null ? null : processedAt.toZonedDateTime())
                 .status(rs.getString("status"))
                 .retryCount(rs.getInt("retry_count"))
                 .lastError(rs.getString("last_error"))

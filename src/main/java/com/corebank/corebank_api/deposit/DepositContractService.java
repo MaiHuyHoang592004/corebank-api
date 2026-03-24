@@ -163,9 +163,7 @@ public class DepositContractService {
 		DepositContract contract = depositContractRepository.findById(request.contractId())
 				.orElseThrow(() -> new CoreBankException("Deposit contract not found: " + request.contractId()));
 
-		if (!"ACTIVE".equals(contract.getStatus())) {
-			throw new CoreBankException("Deposit contract is not active");
-		}
+		ensureActiveContract(contract, "accrue interest");
 
 		// Check if accrual already exists for today
 		LocalDate today = LocalDate.now();
@@ -249,12 +247,14 @@ public class DepositContractService {
 		DepositContract contract = depositContractRepository.findById(request.contractId())
 				.orElseThrow(() -> new CoreBankException("Deposit contract not found: " + request.contractId()));
 
-		if (!"ACTIVE".equals(contract.getStatus())) {
-			throw new CoreBankException("Deposit contract is not active");
-		}
+		ensureActiveContract(contract, "process maturity");
 
 		if (contract.getMaturityDate().isAfter(LocalDate.now())) {
 			throw new CoreBankException("Deposit contract has not matured yet");
+		}
+
+		if (contract.isAutoRenew()) {
+			throw new CoreBankException("Auto-renew deposit maturity processing is not supported in this slice");
 		}
 
 		// Get total accrued interest
@@ -414,6 +414,12 @@ public class DepositContractService {
 				contract.isAutoRenew(),
 				Timestamp.from(contract.getCreatedAt()),
 				Timestamp.from(contract.getUpdatedAt()));
+	}
+
+	private void ensureActiveContract(DepositContract contract, String action) {
+		if (!"ACTIVE".equals(contract.getStatus())) {
+			throw new CoreBankException("Deposit contract must be ACTIVE to " + action);
+		}
 	}
 
 	public record OpenDepositRequest(

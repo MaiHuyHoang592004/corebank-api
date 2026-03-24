@@ -1,6 +1,7 @@
 package com.corebank.corebank_api.deposit;
 
 import com.corebank.corebank_api.integration.IdempotencyService;
+import com.corebank.corebank_api.integration.OutboxMetadata;
 import com.corebank.corebank_api.integration.OutboxService;
 import com.corebank.corebank_api.ledger.LedgerCommandService;
 import com.corebank.corebank_api.ops.audit.AuditService;
@@ -105,7 +106,8 @@ public class DepositApplicationService {
 					"DEPOSIT_CONTRACT",
 					contractResponse.contractId().toString(),
 					"DEPOSIT_OPENED",
-					responseJson);
+					response,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
 
 			idempotencyService.markSucceeded(
 					request.idempotencyKey(),
@@ -173,7 +175,8 @@ public class DepositApplicationService {
 					"DEPOSIT_ACCRUAL",
 					contractResponse.accrualId().toString(),
 					"DEPOSIT_ACCRUED",
-					responseJson);
+					response,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
 
 			idempotencyService.markSucceeded(
 					request.idempotencyKey(),
@@ -241,7 +244,8 @@ public class DepositApplicationService {
 					"DEPOSIT_CONTRACT",
 					contractResponse.contractId().toString(),
 					"DEPOSIT_MATURED",
-					responseJson);
+					response,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
 
 			idempotencyService.markSucceeded(
 					request.idempotencyKey(),

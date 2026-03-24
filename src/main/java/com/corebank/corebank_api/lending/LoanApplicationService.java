@@ -1,6 +1,7 @@
 package com.corebank.corebank_api.lending;
 
 import com.corebank.corebank_api.integration.IdempotencyService;
+import com.corebank.corebank_api.integration.OutboxMetadata;
 import com.corebank.corebank_api.integration.OutboxService;
 import com.corebank.corebank_api.ops.audit.AuditService;
 import com.corebank.corebank_api.ops.system.SystemModeService;
@@ -100,7 +101,8 @@ public class LoanApplicationService {
 					"LOAN_CONTRACT",
 					disbursement.contractId().toString(),
 					"LOAN_DISBURSED",
-					responseJson);
+					response,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
 
 			idempotencyService.markSucceeded(
 					request.idempotencyKey(),
@@ -171,7 +173,8 @@ public class LoanApplicationService {
 					"LOAN_CONTRACT",
 					request.contractId().toString(),
 					"LOAN_REPAID",
-					responseJson);
+					response,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
 
 			idempotencyService.markSucceeded(
 					request.idempotencyKey(),
@@ -222,7 +225,8 @@ public class LoanApplicationService {
 					"LOAN_CONTRACT",
 					result.contractId().toString(),
 					"LOAN_OVERDUE",
-					payloadJson);
+					payload,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
 		}
 
 		List<UUID> affectedContractIds = transitioned.stream()
@@ -234,6 +238,53 @@ public class LoanApplicationService {
 				affectedContractIds.size(),
 				affectedInstallmentCount,
 				affectedContractIds);
+	}
+
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public LoanDefaultTransitionResponse markContractDefaulted(LoanDefaultTransitionRequest request) {
+		systemModeService.enforceWriteAllowed();
+
+		LoanContractService.DefaultTransitionResult result = loanContractService.markContractDefaulted(
+				request.contractId(),
+				request.asOfDate());
+
+		if (result.transitioned()) {
+			DefaultTransitionPayload payload = new DefaultTransitionPayload(
+					request.asOfDate(),
+					result.contractId(),
+					result.outstandingPrincipalMinor(),
+					result.overdueInstallmentCount(),
+					result.contractStatus());
+
+			String payloadJson = toJson(payload);
+
+			auditService.appendEvent(new AuditService.AuditCommand(
+					request.actor(),
+					"LOAN_DEFAULTED",
+					"LOAN_CONTRACT",
+					result.contractId().toString(),
+					request.correlationId(),
+					request.requestId(),
+					request.sessionId(),
+					request.traceId(),
+					null,
+					payloadJson));
+
+			outboxService.appendMessage(
+					"LOAN_CONTRACT",
+					result.contractId().toString(),
+					"LOAN_DEFAULTED",
+					payload,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
+		}
+
+		return new LoanDefaultTransitionResponse(
+				request.contractId(),
+				request.asOfDate(),
+				result.outstandingPrincipalMinor(),
+				result.overdueInstallmentCount(),
+				result.transitioned(),
+				result.contractStatus());
 	}
 
 	private String toJson(Object value) {
@@ -326,12 +377,39 @@ public class LoanApplicationService {
 			List<UUID> affectedContractIds) {
 	}
 
+	public record LoanDefaultTransitionRequest(
+			UUID contractId,
+			LocalDate asOfDate,
+			String actor,
+			UUID correlationId,
+			UUID requestId,
+			UUID sessionId,
+			String traceId) {
+	}
+
+	public record LoanDefaultTransitionResponse(
+			UUID contractId,
+			LocalDate asOfDate,
+			long outstandingPrincipalMinor,
+			int overdueInstallmentCount,
+			boolean transitioned,
+			String status) {
+	}
+
 	private record OverdueTransitionContractPayload(
 			LocalDate asOfDate,
 			UUID contractId,
 			int overdueInstallmentCount,
 			long overdueAmountMinor,
 			long outstandingPrincipalMinor,
+			String status) {
+	}
+
+	private record DefaultTransitionPayload(
+			LocalDate asOfDate,
+			UUID contractId,
+			long outstandingPrincipalMinor,
+			int overdueInstallmentCount,
 			String status) {
 	}
 }
