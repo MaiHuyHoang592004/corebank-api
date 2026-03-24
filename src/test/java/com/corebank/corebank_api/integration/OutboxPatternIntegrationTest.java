@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -289,5 +290,42 @@ class OutboxPatternIntegrationTest {
 				eventId);
 		assertEquals("FAILED", row.get("status"));
 		assertEquals(3, ((Number) row.get("retry_count")).intValue());
+	}
+
+	@Test
+	void addToDeadLetter_isIdempotentForExhaustedFailedEvent() {
+		outboxService.appendMessage(
+				"PAYMENT_ORDER",
+				"pay-dead-letter-1",
+				"PAYMENT_SETTLEMENT",
+				Map.of("amountMinor", 230_000L));
+
+		List<OutboxEvent> claimed = outboxEventRepository.getPendingEvents(10, 3, 30, 300);
+		assertEquals(1, claimed.size());
+		Long eventId = claimed.get(0).getId();
+
+		assertTrue(outboxEventRepository.markAsFailed(eventId, "attempt-1"));
+		assertTrue(outboxEventRepository.markAsFailed(eventId, "attempt-2"));
+		assertTrue(outboxEventRepository.markAsFailed(eventId, "attempt-3"));
+
+		boolean firstInsert = outboxEventRepository.addToDeadLetter(eventId);
+		boolean duplicateInsert = outboxEventRepository.addToDeadLetter(eventId);
+		assertTrue(firstInsert);
+		assertFalse(duplicateInsert);
+
+		Map<String, Object> row = jdbcTemplate.queryForMap(
+				"""
+				SELECT outbox_event_id,
+				       event_type,
+				       retry_count,
+				       last_error
+				FROM outbox_dead_letters
+				WHERE outbox_event_id = ?
+				""",
+				eventId);
+		assertEquals(eventId, ((Number) row.get("outbox_event_id")).longValue());
+		assertEquals("PAYMENT_SETTLEMENT", row.get("event_type"));
+		assertEquals(3, ((Number) row.get("retry_count")).intValue());
+		assertTrue(String.valueOf(row.get("last_error")).contains("attempt-3"));
 	}
 }

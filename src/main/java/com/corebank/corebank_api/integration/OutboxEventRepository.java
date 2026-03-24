@@ -144,6 +144,39 @@ public class OutboxEventRepository {
 
         return namedParameterJdbcTemplate.update(sql, params) == 1;
     }
+
+    /**
+     * Persist a dead-letter snapshot for an exhausted outbox event.
+     */
+    public boolean addToDeadLetter(Long eventId) {
+        String sql = """
+            INSERT INTO outbox_dead_letters (
+                outbox_event_id,
+                aggregate_type,
+                aggregate_id,
+                event_type,
+                event_data,
+                retry_count,
+                last_error
+            )
+            SELECT id,
+                   aggregate_type,
+                   aggregate_id,
+                   event_type,
+                   event_data,
+                   retry_count,
+                   last_error
+            FROM outbox_events
+            WHERE id = :eventId
+              AND status = 'FAILED'
+            ON CONFLICT (outbox_event_id) DO NOTHING
+            """;
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+            .addValue("eventId", eventId);
+
+        return namedParameterJdbcTemplate.update(sql, params) == 1;
+    }
     
     /**
      * Get event by ID
