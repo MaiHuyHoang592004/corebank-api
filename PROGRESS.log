@@ -384,3 +384,44 @@
   - derive one typed dashboard/query model from `read_model_event_feed`
   - add projector lag/health metrics
   - add a broker-backed end-to-end projector delivery test when Kafka is available in local integration runtime
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.4 - Typed Dashboard Summary)
+
+### Scope
+- Add the first typed dashboard/query model derived from the non-authoritative event feed
+- Keep summary updates idempotent by coupling them to successful event-feed insertions
+- Add rebuild proof that restores both feed and summary from persisted outbox events
+
+### Changes Applied
+- `V18__read_model_aggregate_activity.sql`:
+  - added `read_model_aggregate_activity` keyed by `(aggregate_type, aggregate_id)`
+  - tracks latest event, latest actor/correlation, and aggregate event count
+- `ReadModelProjector`:
+  - now updates `read_model_aggregate_activity` only when a new event-feed row is inserted
+  - keeps summary latest-event fields aligned to the newest projected event
+- `ReadModelReplayService`:
+  - added `rebuildFromOutbox()` to clear non-authoritative read models and replay outbox history deterministically
+- `ReadModelProjectorIntegrationTest`:
+  - now verifies typed summary population
+  - verifies summary idempotency on duplicate event projection
+  - verifies latest-event replacement for same aggregate
+  - verifies rebuild restores both event feed and typed summary
+
+### Focused Verification Results
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear during local tests without a broker.
+- The dashboard summary intentionally tracks event-derived activity only; it must not be used as a balance or contract source of truth.
+- Next useful slice:
+  - add projector lag/health metrics and operational visibility
+  - add a broker-backed end-to-end delivery test for publisher -> projector flow
+  - only after that, consider notification consumers or saga persistence
