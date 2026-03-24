@@ -51,6 +51,7 @@ class OutboxKafkaProjectorE2EIntegrationTest {
 	void setUp() {
 		jdbcTemplate.update("DELETE FROM read_model_aggregate_activity");
 		jdbcTemplate.update("DELETE FROM read_model_event_feed");
+		jdbcTemplate.update("DELETE FROM read_model_notification_inbox");
 		jdbcTemplate.update("DELETE FROM outbox_events");
 	}
 
@@ -79,6 +80,10 @@ class OutboxKafkaProjectorE2EIntegrationTest {
 				"SELECT COUNT(*) FROM read_model_event_feed WHERE event_id = CAST(? AS uuid)",
 				eventId);
 		assertEquals(1, feedCount);
+		int notificationCount = count(
+				"SELECT COUNT(*) FROM read_model_notification_inbox WHERE event_id = CAST(? AS uuid)",
+				eventId);
+		assertEquals(1, notificationCount);
 
 		Map<String, Object> summary = jdbcTemplate.queryForMap(
 				"""
