@@ -126,7 +126,7 @@ public class OutboxEventPublisher {
     /**
      * Determine Kafka topic based on event type
      */
-    private String determineTopic(String aggregateType, String eventType) {
+    String determineTopic(String aggregateType, String eventType) {
         String aggregate = aggregateType == null ? "" : aggregateType.trim().toUpperCase(Locale.ROOT);
         String event = eventType == null ? "" : eventType.trim().toUpperCase(Locale.ROOT);
 
@@ -138,6 +138,8 @@ public class OutboxEventPublisher {
             return KafkaConfig.TOPIC_PAYMENT_EVENTS;
         } else if (aggregate.contains("DEPOSIT") || event.contains("DEPOSIT")) {
             return KafkaConfig.TOPIC_DEPOSIT_EVENTS;
+        } else if (aggregate.contains("LOAN") || event.contains("LOAN")) {
+            return KafkaConfig.TOPIC_LOAN_EVENTS;
         } else if (aggregate.contains("LEDGER") || event.contains("LEDGER")) {
             return KafkaConfig.TOPIC_LEDGER_EVENTS;
         } else {
