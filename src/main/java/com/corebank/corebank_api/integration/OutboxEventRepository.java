@@ -177,6 +177,63 @@ public class OutboxEventRepository {
 
         return namedParameterJdbcTemplate.update(sql, params) == 1;
     }
+
+    /**
+     * Requeue a dead-lettered outbox event for another publish attempt.
+     */
+    public DeadLetterRequeueStatus requeueDeadLetter(Long eventId) {
+        String sql = """
+            WITH target AS (
+                SELECT dl.outbox_event_id
+                FROM outbox_dead_letters dl
+                WHERE dl.outbox_event_id = :eventId
+                FOR UPDATE
+            ),
+            updated AS (
+                UPDATE outbox_events oe
+                SET status = 'PENDING',
+                    processed_at = NULL,
+                    processing_started_at = NULL,
+                    retry_count = 0,
+                    last_error = NULL
+                WHERE oe.id = :eventId
+                  AND oe.status = 'FAILED'
+                  AND EXISTS (SELECT 1 FROM target t WHERE t.outbox_event_id = oe.id)
+                RETURNING oe.id
+            ),
+            deleted AS (
+                DELETE FROM outbox_dead_letters dl
+                WHERE dl.outbox_event_id IN (SELECT id FROM updated)
+                RETURNING dl.outbox_event_id
+            )
+            SELECT EXISTS (SELECT 1 FROM target) AS dead_letter_exists,
+                   (SELECT status FROM outbox_events WHERE id = :eventId) AS current_status,
+                   (SELECT COUNT(*) FROM updated) AS updated_count,
+                   (SELECT COUNT(*) FROM deleted) AS deleted_count
+            """;
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+            .addValue("eventId", eventId);
+
+        RequeueOutcome outcome = namedParameterJdbcTemplate.queryForObject(
+            sql,
+            params,
+            (rs, rowNum) -> new RequeueOutcome(
+                rs.getBoolean("dead_letter_exists"),
+                rs.getString("current_status"),
+                rs.getInt("updated_count"),
+                rs.getInt("deleted_count")));
+
+        if (outcome == null || !outcome.deadLetterExists()) {
+            return DeadLetterRequeueStatus.NOT_FOUND;
+        }
+
+        if (outcome.updatedCount() == 1 && outcome.deletedCount() == 1) {
+            return DeadLetterRequeueStatus.REQUEUED;
+        }
+
+        return DeadLetterRequeueStatus.CONFLICT;
+    }
     
     /**
      * Get event by ID
@@ -275,5 +332,18 @@ public class OutboxEventRepository {
         private long failed;
         private long createdLastHour;
         private long processedLastHour;
+    }
+
+    private record RequeueOutcome(
+        boolean deadLetterExists,
+        String currentStatus,
+        int updatedCount,
+        int deletedCount) {
+    }
+
+    public enum DeadLetterRequeueStatus {
+        REQUEUED,
+        NOT_FOUND,
+        CONFLICT
     }
 }

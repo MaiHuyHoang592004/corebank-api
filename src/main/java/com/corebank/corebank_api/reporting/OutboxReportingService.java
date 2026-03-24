@@ -1,11 +1,14 @@
 package com.corebank.corebank_api.reporting;
 
+import com.corebank.corebank_api.integration.OutboxEventRepository;
+import com.corebank.corebank_api.ops.audit.AuditService;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class OutboxReportingService {
@@ -13,9 +16,16 @@ public class OutboxReportingService {
 	private static final int MAX_LIMIT = 200;
 
 	private final JdbcTemplate jdbcTemplate;
+	private final OutboxEventRepository outboxEventRepository;
+	private final AuditService auditService;
 
-	public OutboxReportingService(JdbcTemplate jdbcTemplate) {
+	public OutboxReportingService(
+			JdbcTemplate jdbcTemplate,
+			OutboxEventRepository outboxEventRepository,
+			AuditService auditService) {
 		this.jdbcTemplate = jdbcTemplate;
+		this.outboxEventRepository = outboxEventRepository;
+		this.auditService = auditService;
 	}
 
 	public OutboxSummary summary() {
@@ -96,6 +106,42 @@ public class OutboxReportingService {
 		return new OutboxDeadLetterPage(safeLimit, items);
 	}
 
+	@Transactional
+	public OutboxDeadLetterRequeueResponse requeueDeadLetter(long outboxEventId, String actor) {
+		OutboxEventRepository.DeadLetterRequeueStatus status =
+				outboxEventRepository.requeueDeadLetter(outboxEventId);
+
+		if (status == OutboxEventRepository.DeadLetterRequeueStatus.REQUEUED) {
+			auditService.appendEvent(new AuditService.AuditCommand(
+					safeActor(actor),
+					"OUTBOX_DEAD_LETTER_REQUEUED",
+					"OUTBOX_EVENT",
+					String.valueOf(outboxEventId),
+					null,
+					null,
+					null,
+					null,
+					"{\"status\":\"FAILED\",\"deadLettered\":true}",
+					"{\"status\":\"PENDING\",\"deadLettered\":false}"));
+			return new OutboxDeadLetterRequeueResponse(
+					outboxEventId,
+					"REQUEUED",
+					"Outbox event was requeued from dead-letter.");
+		}
+
+		if (status == OutboxEventRepository.DeadLetterRequeueStatus.NOT_FOUND) {
+			return new OutboxDeadLetterRequeueResponse(
+					outboxEventId,
+					"NOT_FOUND",
+					"Dead-letter outbox event was not found.");
+		}
+
+		return new OutboxDeadLetterRequeueResponse(
+				outboxEventId,
+				"CONFLICT",
+				"Outbox event cannot be requeued from its current state.");
+	}
+
 	private long retryQueueAgeSeconds(Instant oldestRetryQueueCreatedAt) {
 		if (oldestRetryQueueCreatedAt == null) {
 			return 0L;
@@ -115,6 +161,10 @@ public class OutboxReportingService {
 
 	private Instant readInstant(Timestamp timestamp) {
 		return timestamp == null ? null : timestamp.toInstant();
+	}
+
+	private String safeActor(String actor) {
+		return actor == null || actor.isBlank() ? "system" : actor;
 	}
 
 	private record OutboxStatusCounters(
@@ -149,5 +199,11 @@ public class OutboxReportingService {
 			int retryCount,
 			String lastError,
 			Instant deadLetteredAt) {
+	}
+
+	public record OutboxDeadLetterRequeueResponse(
+			long outboxEventId,
+			String status,
+			String message) {
 	}
 }

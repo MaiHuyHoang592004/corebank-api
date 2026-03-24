@@ -14,6 +14,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @Import(TestcontainersConfiguration.class)
@@ -327,5 +328,55 @@ class OutboxPatternIntegrationTest {
 		assertEquals("PAYMENT_SETTLEMENT", row.get("event_type"));
 		assertEquals(3, ((Number) row.get("retry_count")).intValue());
 		assertTrue(String.valueOf(row.get("last_error")).contains("attempt-3"));
+	}
+
+	@Test
+	void requeueDeadLetter_movesFailedEventBackToPendingAndClearsDeadLetter() {
+		outboxService.appendMessage(
+				"TRANSFER",
+				"trf-requeue-1",
+				"TRANSFER_COMPLETED",
+				Map.of("amountMinor", 90_000L));
+
+		List<OutboxEvent> claimed = outboxEventRepository.getPendingEvents(10, 3, 30, 300);
+		assertEquals(1, claimed.size());
+		Long eventId = claimed.get(0).getId();
+
+		assertTrue(outboxEventRepository.markAsFailed(eventId, "attempt-1"));
+		assertTrue(outboxEventRepository.markAsFailed(eventId, "attempt-2"));
+		assertTrue(outboxEventRepository.markAsFailed(eventId, "attempt-3"));
+		assertTrue(outboxEventRepository.addToDeadLetter(eventId));
+
+		OutboxEventRepository.DeadLetterRequeueStatus result = outboxEventRepository.requeueDeadLetter(eventId);
+		assertEquals(OutboxEventRepository.DeadLetterRequeueStatus.REQUEUED, result);
+
+		Map<String, Object> row = jdbcTemplate.queryForMap(
+				"""
+				SELECT status,
+				       retry_count,
+				       processed_at,
+				       processing_started_at,
+				       last_error
+				FROM outbox_events
+				WHERE id = ?
+				""",
+				eventId);
+		assertEquals("PENDING", row.get("status"));
+		assertEquals(0, ((Number) row.get("retry_count")).intValue());
+		assertNull(row.get("processed_at"));
+		assertNull(row.get("processing_started_at"));
+		assertNull(row.get("last_error"));
+
+		Integer deadLetterCount = jdbcTemplate.queryForObject(
+				"SELECT COUNT(*) FROM outbox_dead_letters WHERE outbox_event_id = ?",
+				Integer.class,
+				eventId);
+		assertEquals(0, deadLetterCount);
+	}
+
+	@Test
+	void requeueDeadLetter_returnsNotFoundWhenNoDeadLetterExists() {
+		OutboxEventRepository.DeadLetterRequeueStatus result = outboxEventRepository.requeueDeadLetter(9_999_999L);
+		assertEquals(OutboxEventRepository.DeadLetterRequeueStatus.NOT_FOUND, result);
 	}
 }
