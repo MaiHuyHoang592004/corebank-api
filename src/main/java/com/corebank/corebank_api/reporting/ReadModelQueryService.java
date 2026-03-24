@@ -3,6 +3,8 @@ package com.corebank.corebank_api.reporting;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -63,8 +65,34 @@ public class ReadModelQueryService {
 		return new AggregateActivityPage(safePage, safeSize, safeTotalItems, items);
 	}
 
-	public AggregateEventPage findAggregateEvents(String aggregateType, String aggregateId, int limit) {
+	public AggregateEventPage findAggregateEvents(
+			String aggregateType,
+			String aggregateId,
+			String eventType,
+			Instant fromOccurredAt,
+			Instant toOccurredAt,
+			int limit) {
 		int safeLimit = Math.min(Math.max(limit, 1), MAX_EVENT_LIMIT);
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+
+		conditions.add("aggregate_type = ?");
+		args.add(aggregateType);
+		conditions.add("aggregate_id = ?");
+		args.add(aggregateId);
+		if (eventType != null && !eventType.isBlank()) {
+			conditions.add("event_type = ?");
+			args.add(eventType.trim());
+		}
+		if (fromOccurredAt != null) {
+			conditions.add("occurred_at >= ?");
+			args.add(OffsetDateTime.ofInstant(fromOccurredAt, ZoneOffset.UTC));
+		}
+		if (toOccurredAt != null) {
+			conditions.add("occurred_at < ?");
+			args.add(OffsetDateTime.ofInstant(toOccurredAt, ZoneOffset.UTC));
+		}
+		args.add(safeLimit);
 
 		String sql = """
 				SELECT event_id,
@@ -80,17 +108,15 @@ public class ReadModelQueryService {
 				       payload::text AS payload_json,
 				       projected_at
 				FROM read_model_event_feed
-				WHERE aggregate_type = ? AND aggregate_id = ?
+				WHERE %s
 				ORDER BY occurred_at DESC, event_id DESC
 				LIMIT ?
-				""";
+				""".formatted(String.join(" AND ", conditions));
 
 		List<AggregateEventItem> items = jdbcTemplate.query(
 				sql,
 				this::mapAggregateEventItem,
-				aggregateType,
-				aggregateId,
-				safeLimit);
+				args.toArray());
 
 		return new AggregateEventPage(aggregateType, aggregateId, safeLimit, items);
 	}

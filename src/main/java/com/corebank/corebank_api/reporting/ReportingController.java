@@ -1,11 +1,14 @@
 package com.corebank.corebank_api.reporting;
 
+import java.time.Instant;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/reporting")
@@ -32,9 +35,19 @@ public class ReportingController {
 	public ResponseEntity<ReadModelQueryService.AggregateEventPage> aggregateEvents(
 			@PathVariable String aggregateType,
 			@PathVariable String aggregateId,
+			@RequestParam(required = false) String eventType,
+			@RequestParam(required = false) Instant fromOccurredAt,
+			@RequestParam(required = false) Instant toOccurredAt,
 			@RequestParam(defaultValue = "50") int limit) {
+		if (fromOccurredAt != null && toOccurredAt != null && fromOccurredAt.isAfter(toOccurredAt)) {
+			throw new ResponseStatusException(
+					HttpStatus.BAD_REQUEST,
+					"fromOccurredAt must be earlier than or equal to toOccurredAt");
+		}
+
 		ReadModelQueryService.AggregateEventPage response =
-				readModelQueryService.findAggregateEvents(aggregateType, aggregateId, limit);
+				readModelQueryService.findAggregateEvents(
+						aggregateType, aggregateId, eventType, fromOccurredAt, toOccurredAt, limit);
 		return ResponseEntity.ok(response);
 	}
 }
