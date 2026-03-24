@@ -464,3 +464,39 @@
 ### Risks / Follow-up
 - Kafka admin reconnect warnings to `localhost:9092` still appear in logs for tests that do not bind a broker; focused verification remains green.
 - Kafka producer value serializer is still `JsonSerializer` (deprecated warning in `KafkaConfig`); migration to non-deprecated serializer can be handled in a separate low-risk slice.
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.6 - Read-Only Reporting API)
+
+### Scope
+- Add minimal read-only REST API on top of non-authoritative read models
+- Keep scope narrow: dashboard aggregate activity list + aggregate event history
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Added `ReadModelQueryService`:
+  - paged query for `read_model_aggregate_activity` with optional `aggregateType`/`aggregateId` filter
+  - bounded query for `read_model_event_feed` by `(aggregate_type, aggregate_id)` with deterministic sort
+- Added `ReportingController` endpoints:
+  - `GET /api/reporting/aggregate-activity`
+  - `GET /api/reporting/aggregate-activity/{aggregateType}/{aggregateId}/events`
+- Added `ReportingControllerIntegrationTest` (`MockMvc` + `@WithMockUser`) to verify:
+  - pagination and filter behavior
+  - aggregate-scoped event listing behavior and limit enforcement
+
+### Focused Verification Results
+- `ReportingControllerIntegrationTest`: **2/2 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- API returns read-model data only; it must remain explicitly non-authoritative for balances/ledger truth.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local tests without a broker; focused suite remains green.
