@@ -35,4 +35,11 @@ public class ReadModelReplayService {
 		}
 		return projectedCount;
 	}
+
+	@Transactional
+	public int rebuildFromOutbox() {
+		jdbcTemplate.update("DELETE FROM read_model_aggregate_activity");
+		jdbcTemplate.update("DELETE FROM read_model_event_feed");
+		return replayFromOutbox();
+	}
 }
