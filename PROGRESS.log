@@ -587,3 +587,48 @@
 - Notification inbox currently stores payload copy from event envelope; if future notification channels need PII minimization, payload projection should be reduced/filtered per channel policy.
 - Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
 - Notification delivery status workflow (`UNREAD` -> `SENT/FAILED`) is intentionally out of scope for this baseline slice.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.9 - Saga Persistence Foundation)
+
+### Scope
+- Add minimal saga persistence foundation for orchestration resume/retry safety
+- Keep scope strictly non-authoritative and independent from ledger/balance write path
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Added migration `V20__saga_state_foundation.sql`:
+  - extended existing `saga_instances` with optimistic `version` column (if missing)
+  - extended existing `saga_steps` with optional `step_key` for step idempotency keying
+  - added unique index for `(saga_instance_id, step_name, direction, step_key)` when `step_key` is present
+  - added operational index on saga step status/start time
+  - kept existing V3 saga tables and status semantics intact (no destructive schema changes)
+- Added `SagaStateService` (`integration/saga`):
+  - `startSaga(...)` idempotent by `(saga_type, business_key)`
+  - `updateSagaState(...)` with optimistic version check (`WHERE version = expectedVersion`)
+  - `appendStepLog(...)` idempotent via unique constraints (`ON CONFLICT DO NOTHING`)
+  - query helpers for saga instance and ordered step logs
+- Added `SagaStateServiceIntegrationTest`:
+  - saga start idempotency proof
+  - step-log idempotency proof using shared `step_key`
+  - optimistic concurrency proof for resume/update path (stale version rejected)
+
+### Focused Verification Results
+- `SagaStateServiceIntegrationTest`: **3/3 passed**
+- `NotificationProjectorIntegrationTest`: **3/3 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Saga status vocabulary currently reuses legacy V3 values (`PENDING/RUNNING/COMPLETED/...`) to preserve compatibility; if a new status contract is needed, migration/update should be planned explicitly.
+- `step_key` is optional for backward compatibility; orchestration callers must provide stable keys for retry idempotency guarantees.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
