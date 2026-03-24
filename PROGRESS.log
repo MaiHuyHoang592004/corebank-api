@@ -825,3 +825,51 @@
 - Manual requeue can still reproduce duplicate downstream effects if any consumer is not truly idempotent; this remains a consumer-contract dependency.
 - Requeue endpoint currently lives under reporting controller for minimal surface change; if stricter command/query separation is required, move to an ops controller in a follow-up slice.
 - Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.14 - Outbox Ops UX Hardening)
+
+### Scope
+- Harden dead-letter requeue operations with explicit ops-only authorization
+- Add bounded bulk requeue by explicit event IDs for controlled operator workflows
+- Extend dead-letter reporting with optional filters while preserving backward compatibility and no deployment/env config changes
+
+### Changes Applied
+- Updated `ReportingController`:
+  - hardened `POST /api/reporting/outbox/dead-letters/{outboxEventId}/requeue` with role guard (`ROLE_OPS` or `ROLE_ADMIN`)
+  - added `POST /api/reporting/outbox/dead-letters/requeue-bulk`
+    - request: `{ "outboxEventIds": [long, ...] }`
+    - validation: non-null, non-empty, all positive, max 100 IDs
+    - returns aggregated result counts and per-ID status details
+  - extended `GET /api/reporting/outbox/dead-letters` with optional filters:
+    - `eventType`
+    - `aggregateType`
+    - `fromDeadLetteredAt`
+    - `toDeadLetteredAt`
+  - added query-time validation for invalid filter ranges (`fromDeadLetteredAt > toDeadLetteredAt` -> `400`)
+- Updated `OutboxReportingService`:
+  - added filtered dead-letter query path with bounded limit and typed timestamp/text filter handling
+  - added bulk requeue orchestration with ID deduplication and aggregate counters:
+    - `requestedCount`, `requeuedCount`, `notFoundCount`, `conflictCount`
+  - reuses existing single requeue flow so successful requeue actions still append `audit_events(OUTBOX_DEAD_LETTER_REQUEUED)`
+- Expanded `OutboxReportingControllerIntegrationTest`:
+  - single requeue auth matrix:
+    - `USER` => `403`
+    - `OPS`/`ADMIN` => `200`
+  - bulk requeue mixed-result contract (`REQUEUED` + `NOT_FOUND` + `CONFLICT`) with aggregate counters
+  - bulk validation proofs (`empty`, `null body`, `>100 IDs`) => `400`
+  - dead-letter filter proofs and invalid range `400` behavior
+
+### Focused Verification Results
+- `OutboxEventPublisherDeadLetterTest`: **2/2 passed**
+- `OutboxPatternIntegrationTest`: **12/12 passed**
+- `OutboxReportingControllerIntegrationTest`: **14/14 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Bulk requeue remains a manual operator action; downstream consumers must stay idempotent to tolerate replay.
+- Role checks currently use direct authority-name matching in controller (`ROLE_OPS`/`ROLE_ADMIN`); if security policy centralization is introduced later, move this guard into shared auth policy components.
+- Requeue command endpoints are still under reporting controller for minimal-scope compatibility; command/query controller split can be a later refactor.
