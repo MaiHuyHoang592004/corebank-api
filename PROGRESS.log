@@ -632,3 +632,44 @@
 - Saga status vocabulary currently reuses legacy V3 values (`PENDING/RUNNING/COMPLETED/...`) to preserve compatibility; if a new status contract is needed, migration/update should be planned explicitly.
 - `step_key` is optional for backward compatibility; orchestration callers must provide stable keys for retry idempotency guarantees.
 - Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.10 - Saga Reporting API)
+
+### Scope
+- Add minimal read-only saga reporting endpoints for operational visibility
+- Keep authoritative money path untouched (ledger/balance semantics unchanged)
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Added `SagaQueryService`:
+  - paged query for `saga_instances` with optional `sagaType`/`status`/`businessKey` filters
+  - bounded query for `saga_steps` by `saga_instance_id` with deterministic ordering
+  - pagination and limit bounding for safe operational reads
+- Extended `ReportingController` endpoints:
+  - `GET /api/reporting/sagas`
+  - `GET /api/reporting/sagas/{sagaInstanceId}/steps`
+- Added `SagaReportingControllerIntegrationTest`:
+  - pagination + filter behavior for saga list endpoint
+  - saga-scoped step history behavior and limit enforcement
+
+### Focused Verification Results
+- `SagaReportingControllerIntegrationTest`: **2/2 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `SagaStateServiceIntegrationTest`: **3/3 passed**
+- `NotificationProjectorIntegrationTest`: **3/3 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Saga reporting endpoints return orchestration state only; they must remain non-authoritative for balances/ledger truth.
+- `GET /api/reporting/sagas/{sagaInstanceId}/steps` currently returns empty `items` for unknown saga ids; consumers should not infer saga existence from step list alone.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
