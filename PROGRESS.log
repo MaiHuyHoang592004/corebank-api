@@ -1,0 +1,233 @@
+# CoreBank API - Progress Log
+
+## Phase 1: Financial Core Slice
+
+### Task 1: Internal Transfer Workflow
+**Status**: COMPLETED (5/5 tests passed)
+**Started**: 2026-03-22 04:12
+**Completed**: 2026-03-23 00:49
+**Checkpoint**: N/A
+**Notes**: 
+- Đã implement TransferService với đầy đủ chức năng
+- Đã sửa vấn đề updatePostedBalance (transfer chỉ ảnh hưởng available balance)
+- Đã sửa test transferCannotOverspend để filter theo correlation_id
+- Tất cả 5 tests đều PASSED (5/5)
+- BUILD SUCCESS
+
+### Task 2: System Mode Control
+**Status**: COMPLETED (7/7 tests passed)
+**Started**: 2026-03-23 01:46
+**Completed**: 2026-03-23 01:55
+**Checkpoint**: N/A
+**Notes**: 
+- Đã implement SystemModeService với đầy đủ chức năng
+- Đã tích hợp SystemModeService vào TransferService
+- Đã thêm system mode blocking tests (EOD_LOCK, MAINTENANCE)
+- Tất cả 7 tests đều PASSED (7/7)
+- BUILD SUCCESS
+
+### Task 3: Limit Checking
+**Status**: COMPLETED (8/8 tests passed)
+**Started**: 2026-03-23 04:53
+**Completed**: 2026-03-23 05:01
+**Checkpoint**: N/A
+**Notes**: 
+- Đã implement LimitCheckService với đầy đủ chức năng
+- Đã tạo database migration V7__limit_checking.sql
+- Đã tích hợp vào TransferService
+- Đã viết tests với 8 test cases
+- Đã fix compilation error (type mismatch)
+- Đã fix counter creation issue (RETURNING counter_id)
+- Tất cả 8 tests đều PASSED (8/8)
+- BUILD SUCCESS
+
+## Phase 2: Operations Baseline
+
+### Task 4: Exception Queue
+**Status**: COMPLETED (8/8 tests passed)
+**Started**: 2026-03-23 05:52
+**Completed**: 2026-03-23 05:54
+**Checkpoint**: N/A
+**Notes**: 
+- Đã tạo database migration V9__exception_queue.sql
+- Đã implement ExceptionQueueService với đầy đủ chức năng
+- Đã viết tests với 8 test cases
+- BUILD SUCCESS
+
+### Task 5: Batch Run Registry
+**Status**: COMPLETED (8/8 tests passed)
+**Started**: 2026-03-23 06:05
+**Completed**: 2026-03-23 06:08
+**Checkpoint**: N/A
+**Notes**: 
+- Đã tạo database migration V10__batch_run_registry.sql
+- Đã implement BatchRunService với đầy đủ chức năng
+- Đã viết tests với 8 test cases
+- Tất cả 8 tests đều PASSED (8/8)
+- BUILD SUCCESS
+
+### Task 6: Daily Snapshots
+**Status**: COMPLETED (5/5 tests passed)
+**Started**: 2026-03-23 06:17
+**Completed**: 2026-03-23 06:22
+**Checkpoint**: N/A
+**Notes**: 
+- Đã tạo database migration V11__daily_snapshots.sql
+- Đã implement SnapshotService với đầy đủ chức năng
+- Đã viết tests với 5 test cases
+- Đã fix migration error (DROP TABLE IF EXISTS)
+- Tất cả 5 tests đều PASSED (5/5)
+- BUILD SUCCESS
+
+## Phase 3: Banking Domain Expansion
+
+### Task 7: Deposit Flows
+**Status**: IN PROGRESS (open/accrue/maturity slice verified)
+**Started**: 2026-03-24 00:xx
+**Checkpoint**: N/A
+**Notes**:
+- Deposit application/contract flows implemented for open, accrue, maturity paths
+- Focused integration verification available in this log (6/6 pass)
+- Remaining: explicit productized closure policy details and expanded failure-mode coverage
+
+### Task 8: Lending Foundation
+**Status**: IN PROGRESS (disbursement + repayment allocation v1 implemented and verified)
+**Started**: 2026-03-24 01:24
+**Checkpoint**: `checkpoint/lending-foundation-f9ad6b8`
+**Notes**:
+- Added additive migration `V15__lending_disbursement_foundation.sql`
+- Implemented `LoanContractService` for disbursement transaction:
+  - create loan contract
+  - generate repayment schedule snapshot
+  - post balanced disbursement journal
+  - append `loan_events(DISBURSED)`
+- Implemented `LoanApplicationService` orchestration:
+  - idempotency
+  - system mode guard
+  - audit append
+  - outbox append
+- Added `LoanApplicationServiceIntegrationTest` with focused proofs:
+  - disbursement happy-path persistence/journal/audit/outbox/balance checks
+  - replay idempotency (no double writes)
+  - EOD lock blocks write-path
+- Implemented repayment allocation workflow (v1) for scheduled repayment command:
+  - borrower settlement account enforcement
+  - contract/account currency validation
+  - idempotency + system mode enforcement on application service
+  - allocation policy: fees -> interest -> principal
+  - lock contract + payer account + open schedules before mutation
+  - update `repayment_schedules.*_paid_minor` and `repayment_schedules.status`
+  - update `loan_contracts.outstanding_principal_minor` and contract status closure condition
+  - post balanced repayment journal
+  - append `loan_events(REPAYMENT)`, `audit_events(LOAN_REPAID)`, `outbox_events(LOAN_REPAID)`
+- Verification:
+  - `LoanApplicationServiceIntegrationTest`: PASSED (repayment + disbursement scenarios)
+  - `TransferServiceIntegrationTest`: 9/9 PASSED (regression sanity)
+- Remaining in Task 8:
+  - contract-level closure/default policy orchestration
+  - explicit manual `DEFAULTED` transition policy + safeguards
+  - overdue/default edge-policy hardening after default-policy proof
+
+## Last Updated
+**Time**: 2026-03-24 17:25
+**Current Task**: Task 8 - Lending Foundation (Overdue transition orchestration)
+**Next Action**: Plan and implement manual `DEFAULTED` contract transition slice
+
+---
+
+## Verification Session: 2026-03-24
+
+### Scope
+- Re-verify deposit integration path and idempotency serialization behavior
+- Restore outbox integration test against current contracts
+- Re-run transfer/deposit/outbox focused regression
+
+### Checkpoint
+**Type**: Local working-tree checkpoint before risky edits (manual)
+**Note**: Finance-sensitive edits constrained to serialization, JDBC timestamp binding, and integration tests.
+
+### Changes Applied
+- Injected shared `ObjectMapper` into `DepositApplicationService` (removed ad-hoc mapper usage)
+- Added Java time Jackson module wiring via `JacksonConfig` and dependency `jackson-datatype-jsr310`
+- Fixed `DepositContractService` maturity status update to persist `updated_at` as SQL `Timestamp`
+- Updated `DepositApplicationServiceIntegrationTest` assertions to avoid fragile JSONB-to-String mapping paths
+- Restored `OutboxPatternIntegrationTest` from disabled placeholder to executable integration coverage
+
+### Focused Verification Results
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **6/6 passed**
+- `OutboxPatternIntegrationTest`: **2/2 passed**
+
+### Risks / Follow-up
+- Kafka connection warnings remain in test logs when broker is absent (`localhost:9092`), but focused tests above pass.
+- Outbox verification currently covers persistence + status transition; end-to-end publish delivery assertions can be added later.
+
+---
+
+## Verification Session: 2026-03-24 (Lending Repayment Hardening Closeout)
+
+### Scope
+- Close repayment hardening slice with executable integration evidence
+- Re-run lending integration suite on Docker/Testcontainers runtime
+
+### Checkpoint
+**Type**: Local working-tree checkpoint branch before finance-sensitive edits  
+**Ref**: `checkpoint/lending-repayment-hardening-evidence-20260324`
+
+### Changes Applied
+- Hardened lending integration proofs in `LoanApplicationServiceIntegrationTest`:
+  - explicit allocation regression with non-zero fee/interest/principal (`fees -> interest -> principal`)
+  - repayment replay idempotency with no double-write assertions (event/audit/outbox/postings counts stable)
+  - same-key different-payload conflict assertion (`IdempotencyConflictException`)
+- Stabilized one flaky negative-path assertion in `disburseLoan_blockedWhenEodLock`:
+  - replaced global `loan_contracts` count check with borrower-scoped check to avoid cross-test data interference
+
+### Focused Verification Results
+- Command: `mvn -Dtest=LoanApplicationServiceIntegrationTest test`
+- Result: **PASSED** (`Tests run: 6, Failures: 0, Errors: 0, Skipped: 0`)
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear in logs during tests; does not block lending integration pass.
+- Next planned slice remains overdue/default transition orchestration for lending contracts.
+
+---
+
+## Verification Session: 2026-03-24 (Lending Overdue Transition Orchestration)
+
+### Scope
+- Add automatic overdue transition orchestration (`PENDING`/`PARTIALLY_PAID` -> `OVERDUE`) with idempotent rerun behavior
+- Append lending overdue side effects in `loan_events`, `audit_events`, and `outbox_events`
+- Keep `DEFAULTED` manual (no auto-default policy in this slice)
+
+### Checkpoint
+**Type**: Local working-tree checkpoint branch before finance-sensitive edits  
+**Ref**: `checkpoint/lending-overdue-orchestration-slice-20260324`
+
+### Changes Applied
+- `LoanContractService`:
+  - added `markOverdueInstallments(asOfDate)` with overdue predicate:
+    - schedule status in `PENDING`/`PARTIALLY_PAID`
+    - `due_date < asOfDate`
+    - remaining due amount > 0
+  - updates matching schedules to `OVERDUE`
+  - appends `loan_events(OVERDUE)` per affected contract
+- `LoanApplicationService`:
+  - added orchestration method `markOverdueInstallments(...)`
+  - appends `audit_events(LOAN_OVERDUE_MARKED)` and `outbox_events(LOAN_OVERDUE)` per affected contract
+  - returns transition summary (affected contracts/installments)
+- `LoanApplicationServiceIntegrationTest`:
+  - added 4 overdue-focused scenarios:
+    - overdue mark + side effects
+    - paid installment skip
+    - rerun idempotency (no double write)
+    - repayment still works on overdue schedule and journal remains balanced
+- Added migration `V16__lending_overdue_event_type.sql`:
+  - expands `loan_events_event_type_check` to include `OVERDUE`
+
+### Focused Verification Results
+- Command: `mvn -Dtest=LoanApplicationServiceIntegrationTest test`
+- Result: **PASSED** (`Tests run: 10, Failures: 0, Errors: 0, Skipped: 0`)
+
+### Risks / Follow-up
+- Schema change was required to support `loan_events(OVERDUE)` due existing DB check constraint.
+- Kafka admin reconnect warnings to `localhost:9092` still appear during tests, but slice verification passes.
