@@ -2,7 +2,11 @@ package com.corebank.corebank_api.reporting;
 
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -124,6 +128,115 @@ class OutboxReportingControllerIntegrationTest {
 				.andExpect(jsonPath("$.items.length()").value(2))
 				.andExpect(jsonPath("$.items[*].eventType",
 						containsInAnyOrder("FAILED_DEAD_EVT_OLD", "FAILED_DEAD_EVT_NEW")));
+	}
+
+	@Test
+	void requeueDeadLetter_requeuesFailedEventAndWritesAudit() throws Exception {
+		append("FAILED_DEAD_REQUEUE_EVT", "failed-dead-requeue-1");
+		jdbcTemplate.update(
+				"""
+				UPDATE outbox_events
+				SET status = 'FAILED',
+				    retry_count = 3,
+				    processed_at = CURRENT_TIMESTAMP,
+				    last_error = 'exhausted'
+				WHERE event_type = 'FAILED_DEAD_REQUEUE_EVT'
+				""");
+		insertDeadLetterFor("FAILED_DEAD_REQUEUE_EVT", "2026-03-25T04:10:00Z");
+
+		Long eventId = jdbcTemplate.queryForObject(
+				"SELECT id FROM outbox_events WHERE event_type = ?",
+				Long.class,
+				"FAILED_DEAD_REQUEUE_EVT");
+
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/{outboxEventId}/requeue", eventId)
+						.with(csrf()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.outboxEventId").value(eventId))
+				.andExpect(jsonPath("$.status").value("REQUEUED"));
+
+		Map<String, Object> outboxRow = jdbcTemplate.queryForMap(
+				"""
+				SELECT status,
+				       retry_count,
+				       processed_at,
+				       processing_started_at,
+				       last_error
+				FROM outbox_events
+				WHERE id = ?
+				""",
+				eventId);
+		assertEquals("PENDING", outboxRow.get("status"));
+		assertEquals(0, ((Number) outboxRow.get("retry_count")).intValue());
+		assertNull(outboxRow.get("processed_at"));
+		assertNull(outboxRow.get("processing_started_at"));
+		assertNull(outboxRow.get("last_error"));
+
+		Integer deadLetterCount = jdbcTemplate.queryForObject(
+				"SELECT COUNT(*) FROM outbox_dead_letters WHERE outbox_event_id = ?",
+				Integer.class,
+				eventId);
+		assertEquals(0, deadLetterCount);
+
+		Integer auditCount = jdbcTemplate.queryForObject(
+				"""
+				SELECT COUNT(*)
+				FROM audit_events
+				WHERE action = 'OUTBOX_DEAD_LETTER_REQUEUED'
+				  AND resource_type = 'OUTBOX_EVENT'
+				  AND resource_id = ?
+				""",
+				Integer.class,
+				String.valueOf(eventId));
+		assertEquals(1, auditCount);
+	}
+
+	@Test
+	void requeueDeadLetter_returnsNotFoundWhenDeadLetterDoesNotExist() throws Exception {
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/{outboxEventId}/requeue", 987654321L)
+						.with(csrf()))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.status").value("NOT_FOUND"));
+	}
+
+	@Test
+	void requeueDeadLetter_returnsConflictWhenEventNotFailed() throws Exception {
+		append("FAILED_DEAD_CONFLICT_EVT", "failed-dead-conflict-1");
+
+		jdbcTemplate.update(
+				"""
+				UPDATE outbox_events
+				SET status = 'FAILED',
+				    retry_count = 3,
+				    processed_at = CURRENT_TIMESTAMP,
+				    last_error = 'exhausted'
+				WHERE event_type = 'FAILED_DEAD_CONFLICT_EVT'
+				""");
+		insertDeadLetterFor("FAILED_DEAD_CONFLICT_EVT", "2026-03-25T04:20:00Z");
+		jdbcTemplate.update(
+				"UPDATE outbox_events SET status = 'PROCESSED' WHERE event_type = 'FAILED_DEAD_CONFLICT_EVT'");
+
+		Long eventId = jdbcTemplate.queryForObject(
+				"SELECT id FROM outbox_events WHERE event_type = ?",
+				Long.class,
+				"FAILED_DEAD_CONFLICT_EVT");
+
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/{outboxEventId}/requeue", eventId)
+						.with(csrf()))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.status").value("CONFLICT"));
+
+		Map<String, Object> outboxRow = jdbcTemplate.queryForMap(
+				"SELECT status, retry_count FROM outbox_events WHERE id = ?",
+				eventId);
+		assertEquals("PROCESSED", outboxRow.get("status"));
+		assertEquals(3, ((Number) outboxRow.get("retry_count")).intValue());
+
+		Integer deadLetterCount = jdbcTemplate.queryForObject(
+				"SELECT COUNT(*) FROM outbox_dead_letters WHERE outbox_event_id = ?",
+				Integer.class,
+				eventId);
+		assertEquals(1, deadLetterCount);
 	}
 
 	private void append(String eventType, String aggregateId) {
