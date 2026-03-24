@@ -193,4 +193,101 @@ class OutboxPatternIntegrationTest {
 		assertEquals(2, ((Number) second.get("retry_count")).intValue());
 		assertTrue(String.valueOf(second.get("last_error")).contains("retry"));
 	}
+
+	@Test
+	void getPendingEvents_reclaimsStaleProcessingClaim() {
+		outboxService.appendMessage(
+				"TRANSFER",
+				"trf-stale-1",
+				"TRANSFER_INITIATED",
+				Map.of("amountMinor", 10_000L));
+
+		List<OutboxEvent> firstClaim = outboxEventRepository.getPendingEvents(10, 3, 30, 300);
+		assertEquals(1, firstClaim.size());
+		Long eventId = firstClaim.get(0).getId();
+
+		jdbcTemplate.update(
+				"""
+				UPDATE outbox_events
+				SET processing_started_at = CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+				WHERE id = ?
+				""",
+				eventId);
+
+		List<OutboxEvent> reclaimed = outboxEventRepository.getPendingEvents(10, 3, 30, 60);
+		assertEquals(1, reclaimed.size());
+		assertEquals(eventId, reclaimed.get(0).getId());
+
+		Map<String, Object> row = jdbcTemplate.queryForMap(
+				"SELECT status, retry_count, processing_started_at FROM outbox_events WHERE id = ?",
+				eventId);
+		assertEquals("PROCESSING", row.get("status"));
+		assertEquals(0, ((Number) row.get("retry_count")).intValue());
+		assertNotNull(row.get("processing_started_at"));
+	}
+
+	@Test
+	void getPendingEvents_retriesFailedEventAfterBackoffWithinMaxRetries() {
+		outboxService.appendMessage(
+				"PAYMENT_ORDER",
+				"pay-retry-1",
+				"PAYMENT_CAPTURE_FAILED",
+				Map.of("amountMinor", 50_000L));
+
+		List<OutboxEvent> claimed = outboxEventRepository.getPendingEvents(10, 3, 30, 300);
+		assertEquals(1, claimed.size());
+		Long eventId = claimed.get(0).getId();
+
+		boolean failed = outboxEventRepository.markAsFailed(eventId, "transient kafka outage");
+		assertTrue(failed);
+
+		List<OutboxEvent> immediateRetryBlocked = outboxEventRepository.getPendingEvents(10, 3, 300, 300);
+		assertTrue(immediateRetryBlocked.isEmpty());
+
+		jdbcTemplate.update(
+				"""
+				UPDATE outbox_events
+				SET processed_at = CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+				WHERE id = ?
+				""",
+				eventId);
+
+		List<OutboxEvent> retried = outboxEventRepository.getPendingEvents(10, 3, 60, 300);
+		assertEquals(1, retried.size());
+		assertEquals(eventId, retried.get(0).getId());
+	}
+
+	@Test
+	void getPendingEvents_skipsFailedEventAtMaxRetryLimit() {
+		outboxService.appendMessage(
+				"LOAN_CONTRACT",
+				"loan-retry-limit-1",
+				"LOAN_DISBURSEMENT_FAILED",
+				Map.of("amountMinor", 120_000L));
+
+		List<OutboxEvent> claimed = outboxEventRepository.getPendingEvents(10, 3, 30, 300);
+		assertEquals(1, claimed.size());
+		Long eventId = claimed.get(0).getId();
+
+		assertTrue(outboxEventRepository.markAsFailed(eventId, "attempt-1"));
+		assertTrue(outboxEventRepository.markAsFailed(eventId, "attempt-2"));
+		assertTrue(outboxEventRepository.markAsFailed(eventId, "attempt-3"));
+
+		jdbcTemplate.update(
+				"""
+				UPDATE outbox_events
+				SET processed_at = CURRENT_TIMESTAMP - INTERVAL '10 minutes'
+				WHERE id = ?
+				""",
+				eventId);
+
+		List<OutboxEvent> blocked = outboxEventRepository.getPendingEvents(10, 3, 0, 300);
+		assertTrue(blocked.isEmpty());
+
+		Map<String, Object> row = jdbcTemplate.queryForMap(
+				"SELECT status, retry_count FROM outbox_events WHERE id = ?",
+				eventId);
+		assertEquals("FAILED", row.get("status"));
+		assertEquals(3, ((Number) row.get("retry_count")).intValue());
+	}
 }
