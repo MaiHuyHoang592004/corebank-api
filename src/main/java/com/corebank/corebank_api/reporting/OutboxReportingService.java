@@ -5,8 +5,13 @@ import com.corebank.corebank_api.ops.audit.AuditService;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,16 +19,20 @@ import org.springframework.transaction.annotation.Transactional;
 public class OutboxReportingService {
 
 	private static final int MAX_LIMIT = 200;
+	private static final int MAX_BULK_REQUEUE_SIZE = 100;
 
 	private final JdbcTemplate jdbcTemplate;
+	private final NamedParameterJdbcTemplate namedParameterJdbcTemplate;
 	private final OutboxEventRepository outboxEventRepository;
 	private final AuditService auditService;
 
 	public OutboxReportingService(
 			JdbcTemplate jdbcTemplate,
+			NamedParameterJdbcTemplate namedParameterJdbcTemplate,
 			OutboxEventRepository outboxEventRepository,
 			AuditService auditService) {
 		this.jdbcTemplate = jdbcTemplate;
+		this.namedParameterJdbcTemplate = namedParameterJdbcTemplate;
 		this.outboxEventRepository = outboxEventRepository;
 		this.auditService = auditService;
 	}
@@ -76,9 +85,29 @@ public class OutboxReportingService {
 	}
 
 	public OutboxDeadLetterPage deadLetters(int limit) {
-		int safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
+		return deadLetters(limit, null, null, null, null);
+	}
 
-		List<OutboxDeadLetterItem> items = jdbcTemplate.query(
+	public OutboxDeadLetterPage deadLetters(
+			int limit,
+			String eventType,
+			String aggregateType,
+			Instant fromDeadLetteredAt,
+			Instant toDeadLetteredAt) {
+		int safeLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
+		String safeEventType = normalizeFilter(eventType);
+		String safeAggregateType = normalizeFilter(aggregateType);
+		Timestamp fromTimestamp = asTimestamp(fromDeadLetteredAt);
+		Timestamp toTimestamp = asTimestamp(toDeadLetteredAt);
+
+		MapSqlParameterSource params = new MapSqlParameterSource()
+				.addValue("limit", safeLimit)
+				.addValue("eventType", safeEventType)
+				.addValue("aggregateType", safeAggregateType)
+				.addValue("fromDeadLetteredAt", fromTimestamp)
+				.addValue("toDeadLetteredAt", toTimestamp);
+
+		List<OutboxDeadLetterItem> items = namedParameterJdbcTemplate.query(
 				"""
 				SELECT dead_letter_id,
 				       outbox_event_id,
@@ -89,9 +118,14 @@ public class OutboxReportingService {
 				       last_error,
 				       dead_lettered_at
 				FROM outbox_dead_letters
+				WHERE (CAST(:eventType AS TEXT) IS NULL OR event_type = CAST(:eventType AS TEXT))
+				  AND (CAST(:aggregateType AS TEXT) IS NULL OR aggregate_type = CAST(:aggregateType AS TEXT))
+				  AND (CAST(:fromDeadLetteredAt AS TIMESTAMPTZ) IS NULL OR dead_lettered_at >= CAST(:fromDeadLetteredAt AS TIMESTAMPTZ))
+				  AND (CAST(:toDeadLetteredAt AS TIMESTAMPTZ) IS NULL OR dead_lettered_at < CAST(:toDeadLetteredAt AS TIMESTAMPTZ))
 				ORDER BY dead_lettered_at DESC, dead_letter_id DESC
-				LIMIT ?
+				LIMIT :limit
 				""",
+				params,
 				(rs, rowNum) -> new OutboxDeadLetterItem(
 						rs.getLong("dead_letter_id"),
 						rs.getLong("outbox_event_id"),
@@ -100,8 +134,7 @@ public class OutboxReportingService {
 						rs.getString("event_type"),
 						rs.getInt("retry_count"),
 						rs.getString("last_error"),
-						readInstant(rs.getTimestamp("dead_lettered_at"))),
-				safeLimit);
+						readInstant(rs.getTimestamp("dead_lettered_at"))));
 
 		return new OutboxDeadLetterPage(safeLimit, items);
 	}
@@ -142,6 +175,40 @@ public class OutboxReportingService {
 				"Outbox event cannot be requeued from its current state.");
 	}
 
+	@Transactional
+	public OutboxDeadLetterBulkRequeueResponse requeueDeadLetters(List<Long> outboxEventIds, String actor) {
+		Set<Long> deduped = new LinkedHashSet<>(outboxEventIds);
+		List<OutboxDeadLetterRequeueResponse> items = new ArrayList<>(deduped.size());
+
+		int requeuedCount = 0;
+		int notFoundCount = 0;
+		int conflictCount = 0;
+
+		for (Long outboxEventId : deduped) {
+			OutboxDeadLetterRequeueResponse result = requeueDeadLetter(outboxEventId, actor);
+			items.add(result);
+
+			if ("REQUEUED".equals(result.status())) {
+				requeuedCount++;
+			} else if ("NOT_FOUND".equals(result.status())) {
+				notFoundCount++;
+			} else if ("CONFLICT".equals(result.status())) {
+				conflictCount++;
+			}
+		}
+
+		return new OutboxDeadLetterBulkRequeueResponse(
+				deduped.size(),
+				requeuedCount,
+				notFoundCount,
+				conflictCount,
+				items);
+	}
+
+	public int maxBulkRequeueSize() {
+		return MAX_BULK_REQUEUE_SIZE;
+	}
+
 	private long retryQueueAgeSeconds(Instant oldestRetryQueueCreatedAt) {
 		if (oldestRetryQueueCreatedAt == null) {
 			return 0L;
@@ -161,6 +228,18 @@ public class OutboxReportingService {
 
 	private Instant readInstant(Timestamp timestamp) {
 		return timestamp == null ? null : timestamp.toInstant();
+	}
+
+	private Timestamp asTimestamp(Instant instant) {
+		return instant == null ? null : Timestamp.from(instant);
+	}
+
+	private String normalizeFilter(String value) {
+		if (value == null) {
+			return null;
+		}
+		String trimmed = value.trim();
+		return trimmed.isEmpty() ? null : trimmed;
 	}
 
 	private String safeActor(String actor) {
@@ -205,5 +284,13 @@ public class OutboxReportingService {
 			long outboxEventId,
 			String status,
 			String message) {
+	}
+
+	public record OutboxDeadLetterBulkRequeueResponse(
+			int requestedCount,
+			int requeuedCount,
+			int notFoundCount,
+			int conflictCount,
+			List<OutboxDeadLetterRequeueResponse> items) {
 	}
 }

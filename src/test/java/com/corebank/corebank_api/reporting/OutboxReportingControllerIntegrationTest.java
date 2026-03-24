@@ -12,7 +12,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.corebank.corebank_api.TestcontainersConfiguration;
 import com.corebank.corebank_api.integration.OutboxService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +42,8 @@ class OutboxReportingControllerIntegrationTest {
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
 
+	private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+
 	@BeforeEach
 	void setUp() {
 		jdbcTemplate.update("DELETE FROM outbox_dead_letters");
@@ -46,11 +52,11 @@ class OutboxReportingControllerIntegrationTest {
 
 	@Test
 	void outboxSummary_returnsOperationalCounts() throws Exception {
-		append("PENDING_EVT", "pending-1");
-		append("PROCESSING_EVT", "processing-1");
-		append("FAILED_RETRYABLE_EVT", "failed-retryable-1");
-		append("FAILED_DEAD_EVT", "failed-dead-1");
-		append("PROCESSED_EVT", "processed-1");
+		append("OPS_TEST", "PENDING_EVT", "pending-1");
+		append("OPS_TEST", "PROCESSING_EVT", "processing-1");
+		append("OPS_TEST", "FAILED_RETRYABLE_EVT", "failed-retryable-1");
+		append("OPS_TEST", "FAILED_DEAD_EVT", "failed-dead-1");
+		append("OPS_TEST", "PROCESSED_EVT", "processed-1");
 
 		jdbcTemplate.update(
 				"UPDATE outbox_events SET status = 'PROCESSING', processing_started_at = CURRENT_TIMESTAMP WHERE event_type = 'PROCESSING_EVT'");
@@ -89,27 +95,11 @@ class OutboxReportingControllerIntegrationTest {
 
 	@Test
 	void outboxDeadLetters_returnsPagedData() throws Exception {
-		append("FAILED_DEAD_EVT_OLD", "failed-dead-old");
-		append("FAILED_DEAD_EVT_NEW", "failed-dead-new");
+		append("OPS_TEST", "FAILED_DEAD_EVT_OLD", "failed-dead-old");
+		append("OPS_TEST", "FAILED_DEAD_EVT_NEW", "failed-dead-new");
 
-		jdbcTemplate.update(
-				"""
-				UPDATE outbox_events
-				SET status = 'FAILED',
-				    retry_count = 3,
-				    processed_at = CURRENT_TIMESTAMP,
-				    last_error = 'exhausted-old'
-				WHERE event_type = 'FAILED_DEAD_EVT_OLD'
-				""");
-		jdbcTemplate.update(
-				"""
-				UPDATE outbox_events
-				SET status = 'FAILED',
-				    retry_count = 3,
-				    processed_at = CURRENT_TIMESTAMP,
-				    last_error = 'exhausted-new'
-				WHERE event_type = 'FAILED_DEAD_EVT_NEW'
-				""");
+		markAsFailed("FAILED_DEAD_EVT_OLD", 3, "exhausted-old");
+		markAsFailed("FAILED_DEAD_EVT_NEW", 3, "exhausted-new");
 
 		insertDeadLetterFor("FAILED_DEAD_EVT_OLD", "2026-03-25T04:00:00Z");
 		insertDeadLetterFor("FAILED_DEAD_EVT_NEW", "2026-03-25T04:05:00Z");
@@ -131,23 +121,62 @@ class OutboxReportingControllerIntegrationTest {
 	}
 
 	@Test
+	void outboxDeadLetters_filtersByEventAggregateAndTimeWindow() throws Exception {
+		append("TRANSFER", "FAILED_TRANSFER_EVT", "dead-transfer");
+		append("PAYMENT", "FAILED_PAYMENT_EVT", "dead-payment");
+
+		markAsFailed("FAILED_TRANSFER_EVT", 3, "transfer-exhausted");
+		markAsFailed("FAILED_PAYMENT_EVT", 3, "payment-exhausted");
+
+		insertDeadLetterFor("FAILED_TRANSFER_EVT", "2026-03-25T04:02:00Z");
+		insertDeadLetterFor("FAILED_PAYMENT_EVT", "2026-03-25T04:07:00Z");
+
+		mockMvc.perform(get("/api/reporting/outbox/dead-letters")
+						.queryParam("limit", "20")
+						.queryParam("eventType", "FAILED_PAYMENT_EVT")
+						.queryParam("aggregateType", "PAYMENT")
+						.queryParam("fromDeadLetteredAt", "2026-03-25T04:05:00Z")
+						.queryParam("toDeadLetteredAt", "2026-03-25T04:10:00Z"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.items.length()").value(1))
+				.andExpect(jsonPath("$.items[0].eventType").value("FAILED_PAYMENT_EVT"))
+				.andExpect(jsonPath("$.items[0].aggregateType").value("PAYMENT"));
+	}
+
+	@Test
+	void outboxDeadLetters_returnsBadRequestWhenTimeRangeInvalid() throws Exception {
+		mockMvc.perform(get("/api/reporting/outbox/dead-letters")
+						.queryParam("fromDeadLetteredAt", "2026-03-25T04:10:00Z")
+						.queryParam("toDeadLetteredAt", "2026-03-25T04:05:00Z"))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void requeueDeadLetter_forbiddenForUserRole() throws Exception {
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/{outboxEventId}/requeue", 12345L)
+						.with(csrf()))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void bulkRequeueDeadLetters_forbiddenForUserRole() throws Exception {
+		String body = objectMapper.writeValueAsString(Map.of("outboxEventIds", List.of(1L, 2L)));
+
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/requeue-bulk")
+						.with(csrf())
+						.contentType("application/json")
+						.content(body))
+				.andExpect(status().isForbidden());
+	}
+
+	@Test
+	@WithMockUser(username = "ops-user", roles = "OPS")
 	void requeueDeadLetter_requeuesFailedEventAndWritesAudit() throws Exception {
-		append("FAILED_DEAD_REQUEUE_EVT", "failed-dead-requeue-1");
-		jdbcTemplate.update(
-				"""
-				UPDATE outbox_events
-				SET status = 'FAILED',
-				    retry_count = 3,
-				    processed_at = CURRENT_TIMESTAMP,
-				    last_error = 'exhausted'
-				WHERE event_type = 'FAILED_DEAD_REQUEUE_EVT'
-				""");
+		append("OPS_TEST", "FAILED_DEAD_REQUEUE_EVT", "failed-dead-requeue-1");
+		markAsFailed("FAILED_DEAD_REQUEUE_EVT", 3, "exhausted");
 		insertDeadLetterFor("FAILED_DEAD_REQUEUE_EVT", "2026-03-25T04:10:00Z");
 
-		Long eventId = jdbcTemplate.queryForObject(
-				"SELECT id FROM outbox_events WHERE event_type = ?",
-				Long.class,
-				"FAILED_DEAD_REQUEUE_EVT");
+		Long eventId = eventIdByType("FAILED_DEAD_REQUEUE_EVT");
 
 		mockMvc.perform(post("/api/reporting/outbox/dead-letters/{outboxEventId}/requeue", eventId)
 						.with(csrf()))
@@ -192,6 +221,22 @@ class OutboxReportingControllerIntegrationTest {
 	}
 
 	@Test
+	@WithMockUser(username = "admin-user", roles = "ADMIN")
+	void requeueDeadLetter_allowsAdminRole() throws Exception {
+		append("OPS_TEST", "FAILED_DEAD_ADMIN_EVT", "failed-dead-admin-1");
+		markAsFailed("FAILED_DEAD_ADMIN_EVT", 3, "exhausted-admin");
+		insertDeadLetterFor("FAILED_DEAD_ADMIN_EVT", "2026-03-25T04:11:00Z");
+
+		Long eventId = eventIdByType("FAILED_DEAD_ADMIN_EVT");
+
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/{outboxEventId}/requeue", eventId)
+						.with(csrf()))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("REQUEUED"));
+	}
+
+	@Test
+	@WithMockUser(username = "ops-user", roles = "OPS")
 	void requeueDeadLetter_returnsNotFoundWhenDeadLetterDoesNotExist() throws Exception {
 		mockMvc.perform(post("/api/reporting/outbox/dead-letters/{outboxEventId}/requeue", 987654321L)
 						.with(csrf()))
@@ -200,26 +245,16 @@ class OutboxReportingControllerIntegrationTest {
 	}
 
 	@Test
+	@WithMockUser(username = "ops-user", roles = "OPS")
 	void requeueDeadLetter_returnsConflictWhenEventNotFailed() throws Exception {
-		append("FAILED_DEAD_CONFLICT_EVT", "failed-dead-conflict-1");
+		append("OPS_TEST", "FAILED_DEAD_CONFLICT_EVT", "failed-dead-conflict-1");
 
-		jdbcTemplate.update(
-				"""
-				UPDATE outbox_events
-				SET status = 'FAILED',
-				    retry_count = 3,
-				    processed_at = CURRENT_TIMESTAMP,
-				    last_error = 'exhausted'
-				WHERE event_type = 'FAILED_DEAD_CONFLICT_EVT'
-				""");
+		markAsFailed("FAILED_DEAD_CONFLICT_EVT", 3, "exhausted");
 		insertDeadLetterFor("FAILED_DEAD_CONFLICT_EVT", "2026-03-25T04:20:00Z");
 		jdbcTemplate.update(
 				"UPDATE outbox_events SET status = 'PROCESSED' WHERE event_type = 'FAILED_DEAD_CONFLICT_EVT'");
 
-		Long eventId = jdbcTemplate.queryForObject(
-				"SELECT id FROM outbox_events WHERE event_type = ?",
-				Long.class,
-				"FAILED_DEAD_CONFLICT_EVT");
+		Long eventId = eventIdByType("FAILED_DEAD_CONFLICT_EVT");
 
 		mockMvc.perform(post("/api/reporting/outbox/dead-letters/{outboxEventId}/requeue", eventId)
 						.with(csrf()))
@@ -239,12 +274,127 @@ class OutboxReportingControllerIntegrationTest {
 		assertEquals(1, deadLetterCount);
 	}
 
-	private void append(String eventType, String aggregateId) {
+	@Test
+	@WithMockUser(username = "ops-user", roles = "OPS")
+	void bulkRequeueDeadLetters_returnsMixedResultSummary() throws Exception {
+		append("OPS_TEST", "FAILED_DEAD_BULK_OK_EVT", "failed-dead-bulk-ok");
+		markAsFailed("FAILED_DEAD_BULK_OK_EVT", 3, "exhausted-ok");
+		insertDeadLetterFor("FAILED_DEAD_BULK_OK_EVT", "2026-03-25T04:30:00Z");
+		Long requeueId = eventIdByType("FAILED_DEAD_BULK_OK_EVT");
+
+		append("OPS_TEST", "FAILED_DEAD_BULK_CONFLICT_EVT", "failed-dead-bulk-conflict");
+		markAsFailed("FAILED_DEAD_BULK_CONFLICT_EVT", 3, "exhausted-conflict");
+		insertDeadLetterFor("FAILED_DEAD_BULK_CONFLICT_EVT", "2026-03-25T04:31:00Z");
+		jdbcTemplate.update(
+				"UPDATE outbox_events SET status = 'PROCESSED' WHERE event_type = 'FAILED_DEAD_BULK_CONFLICT_EVT'");
+		Long conflictId = eventIdByType("FAILED_DEAD_BULK_CONFLICT_EVT");
+
+		Long missingId = 90909090L;
+		String body = objectMapper.writeValueAsString(
+				Map.of("outboxEventIds", List.of(requeueId, missingId, conflictId, requeueId)));
+
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/requeue-bulk")
+						.with(csrf())
+						.contentType("application/json")
+						.content(body))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.requestedCount").value(3))
+				.andExpect(jsonPath("$.requeuedCount").value(1))
+				.andExpect(jsonPath("$.notFoundCount").value(1))
+				.andExpect(jsonPath("$.conflictCount").value(1))
+				.andExpect(jsonPath("$.items.length()").value(3))
+				.andExpect(jsonPath("$.items[*].status",
+						containsInAnyOrder("REQUEUED", "NOT_FOUND", "CONFLICT")));
+
+		Map<String, Object> requeuedRow = jdbcTemplate.queryForMap(
+				"SELECT status, retry_count FROM outbox_events WHERE id = ?",
+				requeueId);
+		assertEquals("PENDING", requeuedRow.get("status"));
+		assertEquals(0, ((Number) requeuedRow.get("retry_count")).intValue());
+
+		Map<String, Object> conflictRow = jdbcTemplate.queryForMap(
+				"SELECT status, retry_count FROM outbox_events WHERE id = ?",
+				conflictId);
+		assertEquals("PROCESSED", conflictRow.get("status"));
+		assertEquals(3, ((Number) conflictRow.get("retry_count")).intValue());
+
+		Integer requeueAuditCount = jdbcTemplate.queryForObject(
+				"""
+				SELECT COUNT(*)
+				FROM audit_events
+				WHERE action = 'OUTBOX_DEAD_LETTER_REQUEUED'
+				  AND resource_type = 'OUTBOX_EVENT'
+				  AND resource_id = ?
+				""",
+				Integer.class,
+				String.valueOf(requeueId));
+		assertEquals(1, requeueAuditCount);
+	}
+
+	@Test
+	@WithMockUser(username = "ops-user", roles = "OPS")
+	void bulkRequeueDeadLetters_returnsBadRequestForEmptyList() throws Exception {
+		String body = objectMapper.writeValueAsString(Map.of("outboxEventIds", List.of()));
+
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/requeue-bulk")
+						.with(csrf())
+						.contentType("application/json")
+						.content(body))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	@WithMockUser(username = "ops-user", roles = "OPS")
+	void bulkRequeueDeadLetters_returnsBadRequestForNullBody() throws Exception {
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/requeue-bulk")
+						.with(csrf())
+						.contentType("application/json"))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	@WithMockUser(username = "ops-user", roles = "OPS")
+	void bulkRequeueDeadLetters_returnsBadRequestWhenOverLimit() throws Exception {
+		List<Long> ids = IntStream.rangeClosed(1, 101)
+				.mapToObj(i -> (long) i)
+				.collect(Collectors.toList());
+		String body = objectMapper.writeValueAsString(Map.of("outboxEventIds", ids));
+
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/requeue-bulk")
+						.with(csrf())
+						.contentType("application/json")
+						.content(body))
+				.andExpect(status().isBadRequest());
+	}
+
+	private void append(String aggregateType, String eventType, String aggregateId) {
 		outboxService.appendMessage(
-				"OPS_TEST",
+				aggregateType,
 				aggregateId,
 				eventType,
 				Map.of("marker", eventType));
+	}
+
+	private void markAsFailed(String eventType, int retryCount, String lastError) {
+		jdbcTemplate.update(
+				"""
+				UPDATE outbox_events
+				SET status = 'FAILED',
+				    retry_count = ?,
+				    processed_at = CURRENT_TIMESTAMP,
+				    last_error = ?
+				WHERE event_type = ?
+				""",
+				retryCount,
+				lastError,
+				eventType);
+	}
+
+	private Long eventIdByType(String eventType) {
+		return jdbcTemplate.queryForObject(
+				"SELECT id FROM outbox_events WHERE event_type = ?",
+				Long.class,
+				eventType);
 	}
 
 	private void insertDeadLetterFor(String eventType, String deadLetteredAtIso8601) {
