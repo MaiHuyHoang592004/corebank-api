@@ -7,7 +7,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.KafkaHeaders;
-import org.springframework.kafka.support.Acknowledgment;
 import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -44,12 +43,8 @@ public class ReadModelProjector {
 			groupId = "read-model-projector")
 	public void project(
 			@Payload String eventData,
-			@Header(KafkaHeaders.RECEIVED_TOPIC) String sourceTopic,
-			Acknowledgment acknowledgment) {
+			@Header(KafkaHeaders.RECEIVED_TOPIC) String sourceTopic) {
 		projectEvent(sourceTopic, eventData);
-		if (acknowledgment != null) {
-			acknowledgment.acknowledge();
-		}
 	}
 
 	@Transactional

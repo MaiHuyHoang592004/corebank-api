@@ -1,6 +1,8 @@
 package com.corebank.corebank_api.integration;
 
 import lombok.extern.slf4j.Slf4j;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
@@ -32,6 +34,7 @@ public class OutboxEventPublisher {
     private static final int MAX_RETRIES = 3;
     private static final long PROCESSING_INTERVAL_MS = 5000; // 5 seconds
     private static final long PUBLISH_TIMEOUT_SECONDS = 10;
+    private static final ObjectMapper EVENT_DATA_MAPPER = new ObjectMapper().findAndRegisterModules();
     
     @Autowired
     public OutboxEventPublisher(OutboxEventRepository outboxEventRepository, 
@@ -152,9 +155,17 @@ public class OutboxEventPublisher {
      * Parse event data from JSON string to Object
      */
     private Object parseEventData(String eventData) {
-        // In a real implementation, you might use a JSON library like Jackson
-        // For now, return as String - the Kafka template will handle serialization
-        return eventData;
+        if (eventData == null) {
+            return null;
+        }
+
+        try {
+            JsonNode jsonNode = EVENT_DATA_MAPPER.readTree(eventData);
+            return jsonNode;
+        } catch (Exception ex) {
+            log.debug("Falling back to raw event_data string for non-JSON payload");
+            return eventData;
+        }
     }
     
     /**
