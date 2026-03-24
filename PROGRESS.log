@@ -425,3 +425,42 @@
   - add projector lag/health metrics and operational visibility
   - add a broker-backed end-to-end delivery test for publisher -> projector flow
   - only after that, consider notification consumers or saga persistence
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.5 - Read-Model Health Metrics + Broker E2E)
+
+### Scope
+- Add operational visibility for non-authoritative read-model projection lag/backlog
+- Add broker-backed integration proof for `outbox publisher -> Kafka -> read-model projector`
+- Keep backward compatibility and avoid deployment/env configuration changes
+
+### Changes Applied
+- Added read-model health and metrics components:
+  - `ReadModelHealthService` (feed count, summary count, pending outbox, lag seconds)
+  - `ReadModelHealthIndicator` (Actuator `HealthIndicator` details for projection health)
+  - `ReadModelMetricsBinder` (Micrometer gauges for feed/summary/backlog/lag)
+- Added integration tests:
+  - `ReadModelHealthServiceIntegrationTest`
+  - `OutboxKafkaProjectorE2EIntegrationTest` (Testcontainers Kafka runtime)
+- Added Kafka test runtime dependency:
+  - `org.testcontainers:testcontainers-kafka` (test scope)
+- Applied minimal compatibility fixes found during broker E2E:
+  - `OutboxEventPublisher.parseEventData(...)` now parses JSON payload before Kafka publish (fallback to raw string for non-JSON payloads)
+  - `ReadModelProjector` listener removed unsupported `Acknowledgment` argument when container is not in manual-ack mode
+  - E2E test stabilized with `spring.kafka.consumer.auto-offset-reset=earliest`
+
+### Focused Verification Results
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear in logs for tests that do not bind a broker; focused verification remains green.
+- Kafka producer value serializer is still `JsonSerializer` (deprecated warning in `KafkaConfig`); migration to non-deprecated serializer can be handled in a separate low-risk slice.
