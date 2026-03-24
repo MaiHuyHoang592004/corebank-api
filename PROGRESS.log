@@ -776,3 +776,52 @@
 - Dead-letter capture currently uses static retry threshold (`MAX_RETRIES = 3`) in publisher; if per-topic thresholds are needed, add explicit configuration contract in a separate slice.
 - Dead-letter table stores full `event_data` snapshot for operator debugging; if payload retention policy tightens, apply redaction/retention controls in a follow-up migration.
 - Outbox rows remain in `FAILED` after dead-lettering; operational runbooks should treat dead-letter table as the terminal queue indicator.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.13 - Dead-Letter Requeue Control)
+
+### Scope
+- Add minimal manual requeue control for dead-lettered outbox events
+- Keep authoritative money path untouched (ledger/balance semantics unchanged)
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Updated `OutboxEventRepository`:
+  - added `requeueDeadLetter(eventId)` with bounded statuses (`REQUEUED`, `NOT_FOUND`, `CONFLICT`)
+  - requeue logic is atomic and claim-safe:
+    - verifies dead-letter row exists
+    - only allows requeue when `outbox_events.status = FAILED`
+    - transitions event to `PENDING`
+    - clears `processed_at`, `processing_started_at`, `last_error`
+    - resets `retry_count` to `0` for a fresh retry window
+    - deletes matching dead-letter row only when transition succeeds
+- Updated `OutboxReportingService`:
+  - added transactional `requeueDeadLetter(...)` orchestration
+  - appends `audit_events` row for successful operator requeue action (`OUTBOX_DEAD_LETTER_REQUEUED`)
+- Extended `ReportingController`:
+  - added `POST /api/reporting/outbox/dead-letters/{outboxEventId}/requeue`
+  - returns:
+    - `200` on `REQUEUED`
+    - `404` on `NOT_FOUND`
+    - `409` on `CONFLICT`
+- Expanded integration coverage:
+  - `OutboxPatternIntegrationTest`:
+    - requeue success path with dead-letter cleanup and retry reset assertions
+    - not-found status proof
+  - `OutboxReportingControllerIntegrationTest`:
+    - requeue success + audit append proof
+    - not-found and conflict HTTP contract proofs
+
+### Focused Verification Results
+- `OutboxEventPublisherDeadLetterTest`: **2/2 passed**
+- `OutboxPatternIntegrationTest`: **12/12 passed**
+- `OutboxReportingControllerIntegrationTest`: **5/5 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Manual requeue can still reproduce duplicate downstream effects if any consumer is not truly idempotent; this remains a consumer-contract dependency.
+- Requeue endpoint currently lives under reporting controller for minimal surface change; if stricter command/query separation is required, move to an ops controller in a follow-up slice.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
