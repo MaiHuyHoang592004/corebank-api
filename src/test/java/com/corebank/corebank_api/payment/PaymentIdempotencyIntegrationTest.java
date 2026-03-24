@@ -102,7 +102,7 @@ class PaymentIdempotencyIntegrationTest {
 				"SELECT COUNT(*) FROM audit_events WHERE action = 'PAYMENT_HOLD_CAPTURED' AND resource_id = ?",
 				first.holdId().toString()));
 		assertEquals(1, count(
-				"SELECT COUNT(*) FROM outbox_messages WHERE event_type = 'PAYMENT_CAPTURED' AND aggregate_id = ?",
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'PAYMENT_CAPTURED' AND aggregate_id = ?",
 				first.holdId().toString()));
 	}
 
@@ -129,7 +129,7 @@ class PaymentIdempotencyIntegrationTest {
 				"SELECT COUNT(*) FROM audit_events WHERE action = 'PAYMENT_HOLD_VOIDED' AND resource_id = ?",
 				first.holdId().toString()));
 		assertEquals(1, count(
-				"SELECT COUNT(*) FROM outbox_messages WHERE event_type = 'PAYMENT_VOIDED' AND aggregate_id = ?",
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'PAYMENT_VOIDED' AND aggregate_id = ?",
 				first.holdId().toString()));
 	}
 

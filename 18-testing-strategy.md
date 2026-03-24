@@ -82,7 +82,7 @@ Canonical scenarios:
 - authorize hold -> capture -> verify balances and events
 - authorize hold -> void -> verify available restored
 - create loan -> disburse -> repay installment -> verify split
-- switch system mode to `EOD` -> verify blocked writes
+- switch system mode to `EOD_LOCK` -> verify blocked writes
 
 ## Test data strategy
 - use deterministic seed data for demo scenarios
