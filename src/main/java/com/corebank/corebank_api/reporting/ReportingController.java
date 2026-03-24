@@ -18,12 +18,15 @@ public class ReportingController {
 
 	private final ReadModelQueryService readModelQueryService;
 	private final SagaQueryService sagaQueryService;
+	private final OutboxReportingService outboxReportingService;
 
 	public ReportingController(
 			ReadModelQueryService readModelQueryService,
-			SagaQueryService sagaQueryService) {
+			SagaQueryService sagaQueryService,
+			OutboxReportingService outboxReportingService) {
 		this.readModelQueryService = readModelQueryService;
 		this.sagaQueryService = sagaQueryService;
+		this.outboxReportingService = outboxReportingService;
 	}
 
 	@GetMapping("/aggregate-activity")
@@ -76,5 +79,16 @@ public class ReportingController {
 		SagaQueryService.SagaStepPage response =
 				sagaQueryService.findSagaSteps(sagaInstanceId, limit);
 		return ResponseEntity.ok(response);
+	}
+
+	@GetMapping("/outbox/summary")
+	public ResponseEntity<OutboxReportingService.OutboxSummary> outboxSummary() {
+		return ResponseEntity.ok(outboxReportingService.summary());
+	}
+
+	@GetMapping("/outbox/dead-letters")
+	public ResponseEntity<OutboxReportingService.OutboxDeadLetterPage> outboxDeadLetters(
+			@RequestParam(defaultValue = "50") int limit) {
+		return ResponseEntity.ok(outboxReportingService.deadLetters(limit));
 	}
 }

@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.Locale;
@@ -121,15 +122,30 @@ public class OutboxEventPublisher {
             boolean marked = outboxEventRepository.markAsFailed(event.getId(), errorMessage);
             
             if (marked) {
-                int attempt = (event.getRetryCount() == null ? 0 : event.getRetryCount()) + 1;
+                int attempt = currentRetryCount(event.getId());
                 log.warn("Failed to publish event {} (retry {}): {}", 
                         event.getId(), attempt, errorMessage);
+
+                if (attempt >= MAX_RETRIES) {
+                    boolean deadLettered = outboxEventRepository.addToDeadLetter(event.getId());
+                    if (deadLettered) {
+                        log.error("Outbox event {} moved to dead-letter after {} retries", event.getId(), attempt);
+                    }
+                }
             } else {
                 log.warn("Failed to mark event {} as failed", event.getId());
             }
         } catch (Exception e) {
             log.error("Error handling publish failure for event {}", event.getId(), e);
         }
+    }
+
+    private int currentRetryCount(Long eventId) {
+        Optional<OutboxEvent> latest = outboxEventRepository.findById(eventId);
+        if (latest.isPresent() && latest.get().getRetryCount() != null) {
+            return latest.get().getRetryCount();
+        }
+        return 0;
     }
     
     /**
