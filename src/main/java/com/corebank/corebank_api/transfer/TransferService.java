@@ -7,7 +7,9 @@ import com.corebank.corebank_api.common.InsufficientFundsException;
 import com.corebank.corebank_api.integration.IdempotencyService;
 import com.corebank.corebank_api.integration.OutboxService;
 import com.corebank.corebank_api.ledger.LedgerCommandService;
+import com.corebank.corebank_api.limits.LimitCheckService;
 import com.corebank.corebank_api.ops.audit.AuditService;
+import com.corebank.corebank_api.ops.system.SystemModeService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
@@ -28,6 +30,8 @@ public class TransferService {
 	private final IdempotencyService idempotencyService;
 	private final AuditService auditService;
 	private final OutboxService outboxService;
+	private final SystemModeService systemModeService;
+	private final LimitCheckService limitCheckService;
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	public TransferService(
@@ -35,12 +39,16 @@ public class TransferService {
 			LedgerCommandService ledgerCommandService,
 			IdempotencyService idempotencyService,
 			AuditService auditService,
-			OutboxService outboxService) {
+			OutboxService outboxService,
+			SystemModeService systemModeService,
+			LimitCheckService limitCheckService) {
 		this.accountBalanceRepository = accountBalanceRepository;
 		this.ledgerCommandService = ledgerCommandService;
 		this.idempotencyService = idempotencyService;
 		this.auditService = auditService;
 		this.outboxService = outboxService;
+		this.systemModeService = systemModeService;
+		this.limitCheckService = limitCheckService;
 	}
 
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -56,6 +64,9 @@ public class TransferService {
 		}
 
 		try {
+			// Check system mode
+			systemModeService.enforceWriteAllowed();
+
 			// Lock accounts in deterministic order to prevent deadlocks
 			List<CustomerAccount> lockedAccounts = accountBalanceRepository.lockByIdsInDeterministicOrder(
 					List.of(request.sourceAccountId(), request.destinationAccountId()));
@@ -107,7 +118,14 @@ public class TransferService {
 				throw new InsufficientFundsException("Insufficient available balance for transfer");
 			}
 
+			// Check limits for source account
+			limitCheckService.enforceLimits(request.sourceAccountId(), request.amountMinor(), request.currency());
+
 			// Calculate new balances
+			long sourcePostedBefore = sourceAccount.getPostedBalanceMinor();
+			long destinationPostedBefore = destinationAccount.getPostedBalanceMinor();
+			long sourcePostedAfter = sourcePostedBefore - request.amountMinor();
+			long destinationPostedAfter = destinationPostedBefore + request.amountMinor();
 			long sourceAvailableAfter = sourceAvailableBefore - request.amountMinor();
 			long destinationAvailableAfter = destinationAccount.getAvailableBalanceMinor() + request.amountMinor();
 
@@ -132,7 +150,8 @@ public class TransferService {
 			}
 
 			// Post balanced journal
-			// Note: updatePostedBalance = false for transfers - only available balance is affected
+			// Note: completed transfer updates posted balance via ledger posting, while
+			// available balance has already been updated above.
 			UUID journalId = ledgerCommandService.postJournal(
 					new LedgerCommandService.PostJournalCommand(
 							"INTERNAL_TRANSFER",
@@ -149,14 +168,14 @@ public class TransferService {
 											"D",
 											request.amountMinor(),
 											request.currency(),
-											false), // Do not update posted balance for transfers
+											true),
 									new LedgerCommandService.PostingInstruction(
 											request.creditLedgerAccountId(),
 											request.destinationAccountId(),
 											"C",
 											request.amountMinor(),
 											request.currency(),
-											false)))); // Do not update posted balance for transfers
+											true))));
 
 			// Build response
 			TransferResponse response = new TransferResponse(
@@ -165,10 +184,10 @@ public class TransferService {
 					request.destinationAccountId(),
 					request.amountMinor(),
 					request.currency(),
-					sourceAccount.getPostedBalanceMinor(),
+					sourcePostedAfter,
 					sourceAvailableBefore,
 					sourceAvailableAfter,
-					destinationAccount.getPostedBalanceMinor(),
+					destinationPostedAfter,
 					destinationAccount.getAvailableBalanceMinor(),
 					destinationAvailableAfter,
 					"COMPLETED");
@@ -201,6 +220,9 @@ public class TransferService {
 					startResult.requestHash(),
 					startResult.expiresAt(),
 					responseJson);
+
+			// Increment usage counter for limit tracking
+			limitCheckService.incrementUsage(request.sourceAccountId(), request.amountMinor(), request.currency());
 
 			return response;
 		} catch (RuntimeException ex) {

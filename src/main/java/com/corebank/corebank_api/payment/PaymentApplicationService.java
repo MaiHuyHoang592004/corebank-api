@@ -3,6 +3,7 @@ package com.corebank.corebank_api.payment;
 import com.corebank.corebank_api.integration.IdempotencyService;
 import com.corebank.corebank_api.integration.OutboxService;
 import com.corebank.corebank_api.ops.audit.AuditService;
+import com.corebank.corebank_api.ops.system.SystemModeService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
@@ -21,17 +22,20 @@ public class PaymentApplicationService {
 	private final HoldService holdService;
 	private final AuditService auditService;
 	private final OutboxService outboxService;
+	private final SystemModeService systemModeService;
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	public PaymentApplicationService(
 			IdempotencyService idempotencyService,
 			HoldService holdService,
 			AuditService auditService,
-			OutboxService outboxService) {
+			OutboxService outboxService,
+			SystemModeService systemModeService) {
 		this.idempotencyService = idempotencyService;
 		this.holdService = holdService;
 		this.auditService = auditService;
 		this.outboxService = outboxService;
+		this.systemModeService = systemModeService;
 	}
 
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -47,6 +51,8 @@ public class PaymentApplicationService {
 		}
 
 		try {
+			systemModeService.enforceWriteAllowed();
+
 			HoldService.AuthorizationResult authorization = holdService.authorizeHold(
 					new HoldService.AuthorizeHoldCommand(
 							request.payerAccountId(),
@@ -113,6 +119,8 @@ public class PaymentApplicationService {
 		}
 
 		try {
+			systemModeService.enforceWriteAllowed();
+
 			HoldService.CaptureResult capture = holdService.captureHold(
 					new HoldService.CaptureHoldCommand(
 							request.holdId(),
@@ -179,6 +187,8 @@ public class PaymentApplicationService {
 		}
 
 		try {
+			systemModeService.enforceWriteAllowed();
+
 			HoldService.VoidResult voidResult = holdService.voidHold(new HoldService.VoidHoldCommand(request.holdId()));
 
 			VoidHoldResponse response = new VoidHoldResponse(

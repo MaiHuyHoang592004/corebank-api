@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -114,6 +115,127 @@ public class LoanApplicationService {
 		}
 	}
 
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public LoanRepaymentResponse repayLoan(LoanRepaymentRequest request) {
+		String requestJson = toJson(request);
+		IdempotencyService.StartResult startResult = idempotencyService.checkBeforeExecution(
+				request.idempotencyKey(),
+				requestJson,
+				Instant.now().plus(IDEMPOTENCY_TTL));
+
+		if (startResult.replay()) {
+			return fromJson(startResult.responseBodyJson(), LoanRepaymentResponse.class);
+		}
+
+		try {
+			systemModeService.enforceWriteAllowed();
+
+			LoanContractService.RepaymentResponse repayment = loanContractService.repayLoan(
+					new LoanContractService.RepaymentRequest(
+							request.contractId(),
+							request.payerAccountId(),
+							request.amountMinor(),
+							request.currency(),
+							request.debitLedgerAccountId(),
+							request.creditLedgerAccountId(),
+							request.actor(),
+							request.correlationId()));
+
+			LoanRepaymentResponse response = new LoanRepaymentResponse(
+					repayment.contractId(),
+					repayment.journalId(),
+					repayment.payerAccountId(),
+					repayment.amountMinor(),
+					repayment.principalPaidMinor(),
+					repayment.interestPaidMinor(),
+					repayment.feesPaidMinor(),
+					repayment.outstandingPrincipalAfterMinor(),
+					repayment.status(),
+					repayment.updatedInstallmentCount());
+
+			String responseJson = toJson(response);
+
+			auditService.appendEvent(new AuditService.AuditCommand(
+					request.actor(),
+					"LOAN_REPAID",
+					"LOAN_CONTRACT",
+					request.contractId().toString(),
+					request.correlationId(),
+					request.requestId(),
+					request.sessionId(),
+					request.traceId(),
+					null,
+					responseJson));
+
+			outboxService.appendMessage(
+					"LOAN_CONTRACT",
+					request.contractId().toString(),
+					"LOAN_REPAID",
+					responseJson);
+
+			idempotencyService.markSucceeded(
+					request.idempotencyKey(),
+					startResult.requestHash(),
+					startResult.expiresAt(),
+					responseJson);
+
+			return response;
+		} catch (RuntimeException ex) {
+			idempotencyService.markFailed(request.idempotencyKey(), startResult.requestHash());
+			throw ex;
+		}
+	}
+
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public LoanOverdueTransitionResponse markOverdueInstallments(LoanOverdueTransitionRequest request) {
+		systemModeService.enforceWriteAllowed();
+
+		List<LoanContractService.OverdueTransitionResult> transitioned = loanContractService.markOverdueInstallments(request.asOfDate());
+		int affectedInstallmentCount = 0;
+
+		for (LoanContractService.OverdueTransitionResult result : transitioned) {
+			affectedInstallmentCount += result.overdueInstallmentCount();
+
+			OverdueTransitionContractPayload payload = new OverdueTransitionContractPayload(
+					request.asOfDate(),
+					result.contractId(),
+					result.overdueInstallmentCount(),
+					result.overdueAmountMinor(),
+					result.outstandingPrincipalMinor(),
+					result.contractStatus());
+
+			String payloadJson = toJson(payload);
+
+			auditService.appendEvent(new AuditService.AuditCommand(
+					request.actor(),
+					"LOAN_OVERDUE_MARKED",
+					"LOAN_CONTRACT",
+					result.contractId().toString(),
+					request.correlationId(),
+					request.requestId(),
+					request.sessionId(),
+					request.traceId(),
+					null,
+					payloadJson));
+
+			outboxService.appendMessage(
+					"LOAN_CONTRACT",
+					result.contractId().toString(),
+					"LOAN_OVERDUE",
+					payloadJson);
+		}
+
+		List<UUID> affectedContractIds = transitioned.stream()
+				.map(LoanContractService.OverdueTransitionResult::contractId)
+				.toList();
+
+		return new LoanOverdueTransitionResponse(
+				request.asOfDate(),
+				affectedContractIds.size(),
+				affectedInstallmentCount,
+				affectedContractIds);
+	}
+
 	private String toJson(Object value) {
 		try {
 			return objectMapper.writeValueAsString(value);
@@ -157,6 +279,59 @@ public class LoanApplicationService {
 			LocalDate disbursedDate,
 			LocalDate firstInstallmentDueDate,
 			int installmentCount,
+			String status) {
+	}
+
+	public record LoanRepaymentRequest(
+			String idempotencyKey,
+			UUID contractId,
+			UUID payerAccountId,
+			long amountMinor,
+			String currency,
+			UUID debitLedgerAccountId,
+			UUID creditLedgerAccountId,
+			String actor,
+			UUID correlationId,
+			UUID requestId,
+			UUID sessionId,
+			String traceId) {
+	}
+
+	public record LoanRepaymentResponse(
+			UUID contractId,
+			UUID journalId,
+			UUID payerAccountId,
+			long amountMinor,
+			long principalPaidMinor,
+			long interestPaidMinor,
+			long feesPaidMinor,
+			long outstandingPrincipalAfterMinor,
+			String status,
+			int updatedInstallmentCount) {
+	}
+
+	public record LoanOverdueTransitionRequest(
+			LocalDate asOfDate,
+			String actor,
+			UUID correlationId,
+			UUID requestId,
+			UUID sessionId,
+			String traceId) {
+	}
+
+	public record LoanOverdueTransitionResponse(
+			LocalDate asOfDate,
+			int affectedContractCount,
+			int affectedInstallmentCount,
+			List<UUID> affectedContractIds) {
+	}
+
+	private record OverdueTransitionContractPayload(
+			LocalDate asOfDate,
+			UUID contractId,
+			int overdueInstallmentCount,
+			long overdueAmountMinor,
+			long outstandingPrincipalMinor,
 			String status) {
 	}
 }
