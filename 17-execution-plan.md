@@ -17,8 +17,8 @@ It is intended to answer: **what should be built first so the system works smoot
 - Phase 1: completed and regression-verified for transfer/system-mode/limits.
 - Phase 2: completed baseline for exception queue, batch run registry, snapshots.
 - Phase 3:
-  - Deposit: **in progress** (open/accrue/maturity slice verified).
-  - Lending: **in progress** (loan disbursement slice verified; repayment allocation pending).
+  - Deposit: **completed** (policy hardening and integration verification closed).
+  - Lending: **completed** (disbursement, repayment, overdue, and manual default transition verified).
 
 This snapshot reflects executable status and test evidence in `PROGRESS.log`.
 

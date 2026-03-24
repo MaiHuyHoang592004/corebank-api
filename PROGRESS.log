@@ -82,16 +82,17 @@
 ## Phase 3: Banking Domain Expansion
 
 ### Task 7: Deposit Flows
-**Status**: IN PROGRESS (open/accrue/maturity slice verified)
+**Status**: COMPLETED (policy hardening + integration verified)
 **Started**: 2026-03-24 00:xx
 **Checkpoint**: N/A
 **Notes**:
 - Deposit application/contract flows implemented for open, accrue, maturity paths
-- Focused integration verification available in this log (6/6 pass)
-- Remaining: explicit productized closure policy details and expanded failure-mode coverage
+- Focused integration verification available in this log (8/8 pass)
+- Explicit maturity policy now rejects unsupported auto-renew closeout in this slice
+- Added maturity replay-safety and failure-mode coverage for contract closeout paths
 
 ### Task 8: Lending Foundation
-**Status**: IN PROGRESS (disbursement + repayment allocation v1 implemented and verified)
+**Status**: COMPLETED (disbursement + repayment/default orchestration verified)
 **Started**: 2026-03-24 01:24
 **Checkpoint**: `checkpoint/lending-foundation-f9ad6b8`
 **Notes**:
@@ -123,15 +124,15 @@
 - Verification:
   - `LoanApplicationServiceIntegrationTest`: PASSED (repayment + disbursement scenarios)
   - `TransferServiceIntegrationTest`: 9/9 PASSED (regression sanity)
-- Remaining in Task 8:
-  - contract-level closure/default policy orchestration
-  - explicit manual `DEFAULTED` transition policy + safeguards
-  - overdue/default edge-policy hardening after default-policy proof
+- Closeout:
+  - added explicit manual `DEFAULTED` transition policy + safeguards
+  - verified replay-safe default transition without duplicate side effects
+  - contract-level closure/default policy now closed for Phase 3 scope
 
 ## Last Updated
-**Time**: 2026-03-24 17:25
-**Current Task**: Task 8 - Lending Foundation (Overdue transition orchestration)
-**Next Action**: Plan and implement manual `DEFAULTED` contract transition slice
+**Time**: 2026-03-24 19:10
+**Current Task**: Phase 3 closeout verification
+**Next Action**: Review residual risks and choose Phase 4 async/CQRS or deeper auth baseline
 
 ---
 
@@ -231,3 +232,109 @@
 ### Risks / Follow-up
 - Schema change was required to support `loan_events(OVERDUE)` due existing DB check constraint.
 - Kafka admin reconnect warnings to `localhost:9092` still appear during tests, but slice verification passes.
+
+---
+
+## Verification Session: 2026-03-24 (Phase 3 Closeout)
+
+### Scope
+- Close the remaining deposit maturity-policy gap with minimal backward-compatible guardrails
+- Add explicit manual loan default transition and replay-safe side-effect handling
+- Re-run focused financial regression to confirm no spillover into payment/transfer baselines
+
+### Changes Applied
+- `DepositContractService`:
+  - centralized ACTIVE-state validation for accrual/maturity commands
+  - blocked unsupported auto-renew maturity payout in this slice
+- `DepositApplicationServiceIntegrationTest`:
+  - added auto-renew maturity rejection coverage
+  - added maturity replay safety assertions (event/audit/outbox counts stable)
+- `LoanContractService`:
+  - added manual `markContractDefaulted(contractId, asOfDate)` orchestration
+  - default transition requires overdue installments and preserves existing repayment/disbursement behavior
+- `LoanApplicationService`:
+  - added audit/outbox orchestration for `LOAN_DEFAULTED`
+- `LoanApplicationServiceIntegrationTest`:
+  - added default happy-path, replay-safe rerun, and invalid-transition rejection coverage
+
+### Focused Verification Results
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `PaymentIdempotencyIntegrationTest`: **7/7 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear during tests when no broker is available; focused regression remains green.
+- Repo-local auth/permission abstractions are still absent beyond default Spring Security bootstrapping, so no auth hardening was added to avoid widening scope beyond Phase 3.
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.1 - Outbox Reliability Hardening)
+
+### Scope
+- Harden outbox status transitions and publisher behavior without touching deployment/env config
+- Keep Phase 4 implementation minimal: claim/process/fail reliability first, no wide CQRS projector rollout
+
+### Changes Applied
+- `OutboxEventRepository`:
+  - made `markAsProcessed` accept claimed `PROCESSING` events (and `PENDING`) atomically
+  - made `markAsFailed` update retry/error state for `PENDING`/`PROCESSING`/`FAILED`
+  - fixed timestamp mapping compatibility (`timestamptz` -> `OffsetDateTime` -> `ZonedDateTime`)
+- `OutboxEventPublisher`:
+  - changed publish flow to deterministic synchronous completion with timeout
+  - strengthened topic resolution using `aggregateType`/`eventType` normalization
+  - kept fallback topic deterministic (`ledger-events`) instead of dropping to unknown topic
+- `OutboxPatternIntegrationTest`:
+  - added processing-claim assertion (`PENDING -> PROCESSING`)
+  - added processed transition assertion from claimed events
+  - added failed-retry counter assertion for repeated failure handling
+
+### Focused Verification Results
+- `OutboxPatternIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` remain expected in local tests without broker.
+- Phase 4 still has pending slices:
+  - event envelope standardization across producers
+  - non-placeholder read-model projector and rebuild strategy
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.2 - Outbox Event Envelope Standardization)
+
+### Scope
+- Standardize `outbox_events.event_data` with a stable envelope while keeping backward compatibility
+- Migrate core financial producers (payment, transfer, deposit, lending) to pass correlation/request/actor metadata
+- Avoid deployment/env changes and avoid schema rewrites
+
+### Changes Applied
+- Added integration envelope/value objects:
+  - `OutboxEnvelope` (eventId, aggregateType, aggregateId, eventType, occurredAt, schemaVersion, correlationId, requestId, actor, payload)
+  - `OutboxMetadata` (trace metadata + legacy causation support)
+- Updated `OutboxService` to build and persist `OutboxEnvelope` in `event_data` for all new outbox writes
+  - kept legacy overloads for compatibility
+  - preserved `correlation_id`/`causation_id` persistence behavior
+- Migrated producer call sites to metadata-aware outbox append:
+  - `PaymentApplicationService`
+  - `TransferService`
+  - `DepositApplicationService`
+  - `LoanApplicationService`
+- Hardened integration coverage:
+  - `OutboxPatternIntegrationTest` now validates envelope fields and metadata propagation
+  - added envelope assertions in payment/transfer/deposit/lending happy-path integration tests
+
+### Focused Verification Results
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear in test logs when local broker is absent.
+- Envelope is now standardized for new writes, but historical outbox rows remain mixed-shape by design (backward-compatible choice).
+- Phase 4 next slice remains pending:
+  - implement a real non-placeholder read-model projector with explicit non-authoritative read model semantics and replay/rebuild proof.
