@@ -543,3 +543,47 @@
 - Time-window semantics currently use inclusive lower bound and exclusive upper bound; downstream consumers should keep this contract when adding UI filters.
 - API remains read-model based and non-authoritative; no balance/ledger source-of-truth semantics were changed.
 - Kafka admin reconnect warnings to `localhost:9092` may still appear in local runs without broker for non-broker tests.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.8 - Notification Consumer Baseline)
+
+### Scope
+- Add a minimal non-authoritative notification consumer baseline on top of event envelopes
+- Keep authoritative money path untouched (ledger/balance logic unchanged)
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Added migration `V19__read_model_notification_inbox.sql`:
+  - new table `read_model_notification_inbox` with `event_id` primary key (idempotent projection key)
+  - indexes for inbox query shape (`occurred_at DESC`, `status + occurred_at`)
+  - explicit non-authoritative comments for payload semantics
+- Added `NotificationProjector`:
+  - Kafka consumer group `notification-projector` on account/transfer/payment/deposit/loan topics
+  - envelope schema validation (`schemaVersion = v1`)
+  - idempotent insert via `ON CONFLICT (event_id) DO NOTHING`
+  - skips legacy/non-envelope payloads safely
+- Added `NotificationProjectorIntegrationTest`:
+  - envelope projection persistence proof
+  - idempotency proof for duplicate event replay
+  - legacy/non-envelope payload skip proof
+- Extended `OutboxKafkaProjectorE2EIntegrationTest`:
+  - validates event is projected into `read_model_notification_inbox` after outbox publish to Kafka
+
+### Focused Verification Results
+- `NotificationProjectorIntegrationTest`: **3/3 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Notification inbox currently stores payload copy from event envelope; if future notification channels need PII minimization, payload projection should be reduced/filtered per channel policy.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+- Notification delivery status workflow (`UNREAD` -> `SENT/FAILED`) is intentionally out of scope for this baseline slice.
