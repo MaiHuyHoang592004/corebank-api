@@ -3,12 +3,24 @@ package com.corebank.corebank_api.transfer;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.corebank.corebank_api.TestcontainersConfiguration;
+import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.common.IdempotencyConflictException;
 import com.corebank.corebank_api.common.InsufficientFundsException;
+import com.corebank.corebank_api.ops.system.SystemModeService;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -25,8 +37,17 @@ class TransferServiceIntegrationTest {
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
 
+	@Autowired
+	private SystemModeService systemModeService;
+
+	@BeforeEach
+	void setUp() {
+		// Reset system mode to RUNNING before each test
+		systemModeService.setMode(SystemModeService.SystemMode.RUNNING, "test");
+	}
+
 	@Test
-	void transferReducesAvailableBalanceAndWritesAuditAndOutbox() {
+	void transferUpdatesPostedAndAvailableBalancesAndWritesAuditAndOutbox() {
 		SeededAccounts seededAccounts = seedAccounts(10_000L, 10_000L, 5_000L, 5_000L, "VND");
 		SeededLedgerAccounts ledgerAccounts = seedLedgerAccounts("VND");
 
@@ -50,28 +71,28 @@ class TransferServiceIntegrationTest {
 		assertEquals(seededAccounts.sourceAccountId(), response.sourceAccountId());
 		assertEquals(seededAccounts.destinationAccountId(), response.destinationAccountId());
 		assertEquals(3_000L, response.amountMinor());
-		assertEquals(10_000L, response.sourcePostedBalanceMinor());
+		assertEquals(7_000L, response.sourcePostedBalanceMinor());
 		assertEquals(10_000L, response.sourceAvailableBalanceBeforeMinor());
 		assertEquals(7_000L, response.sourceAvailableBalanceAfterMinor());
-		assertEquals(5_000L, response.destinationPostedBalanceMinor());
+		assertEquals(8_000L, response.destinationPostedBalanceMinor());
 		assertEquals(5_000L, response.destinationAvailableBalanceBeforeMinor());
 		assertEquals(8_000L, response.destinationAvailableBalanceAfterMinor());
 		assertEquals("COMPLETED", response.status());
 
-		// Verify source account balances - posted balance should NOT change for transfers
+		// Verify source account balances
 		Map<String, Object> sourceAccountRow = jdbcTemplate.queryForMap(
 				"SELECT posted_balance_minor, available_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
 				seededAccounts.sourceAccountId());
 
-		assertEquals(10_000L, ((Number) sourceAccountRow.get("posted_balance_minor")).longValue());
+		assertEquals(7_000L, ((Number) sourceAccountRow.get("posted_balance_minor")).longValue());
 		assertEquals(7_000L, ((Number) sourceAccountRow.get("available_balance_minor")).longValue());
 
-		// Verify destination account balances - posted balance should NOT change for transfers
+		// Verify destination account balances
 		Map<String, Object> destAccountRow = jdbcTemplate.queryForMap(
 				"SELECT posted_balance_minor, available_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
 				seededAccounts.destinationAccountId());
 
-		assertEquals(5_000L, ((Number) destAccountRow.get("posted_balance_minor")).longValue());
+		assertEquals(8_000L, ((Number) destAccountRow.get("posted_balance_minor")).longValue());
 		assertEquals(8_000L, ((Number) destAccountRow.get("available_balance_minor")).longValue());
 
 		// Verify balanced journal
@@ -96,7 +117,7 @@ class TransferServiceIntegrationTest {
 
 		// Verify outbox message
 		assertEquals(1, count(
-				"SELECT COUNT(*) FROM outbox_messages WHERE event_type = 'TRANSFER_COMPLETED' AND aggregate_id = ?",
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'TRANSFER_COMPLETED' AND aggregate_id = ?",
 				response.journalId().toString()));
 
 		// Verify idempotency succeeded
@@ -198,7 +219,7 @@ class TransferServiceIntegrationTest {
 
 		// Verify only one outbox message
 		assertEquals(1, count(
-				"SELECT COUNT(*) FROM outbox_messages WHERE event_type = 'TRANSFER_COMPLETED' AND aggregate_id = ?",
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'TRANSFER_COMPLETED' AND aggregate_id = ?",
 				first.journalId().toString()));
 	}
 
@@ -206,6 +227,7 @@ class TransferServiceIntegrationTest {
 	void transferRejectsSameKeyWithDifferentPayload() {
 		SeededAccounts seededAccounts = seedAccounts(10_000L, 10_000L, 5_000L, 5_000L, "VND");
 		SeededLedgerAccounts ledgerAccounts = seedLedgerAccounts("VND");
+		UUID firstCorrelationId = UUID.randomUUID();
 
 		transferService.transfer(
 				new TransferService.TransferRequest(
@@ -218,7 +240,7 @@ class TransferServiceIntegrationTest {
 						ledgerAccounts.creditLedgerAccountId(),
 						"first transfer",
 						"tester",
-						UUID.randomUUID(),
+						firstCorrelationId,
 						UUID.randomUUID(),
 						UUID.randomUUID(),
 						"trace-transfer-4a"));
@@ -243,7 +265,8 @@ class TransferServiceIntegrationTest {
 
 		// Verify only one transfer was processed
 		assertEquals(1, count(
-				"SELECT COUNT(*) FROM ledger_journals WHERE reference_type = 'TRANSFER'"));
+				"SELECT COUNT(*) FROM ledger_journals WHERE reference_type = 'TRANSFER' AND correlation_id = ?",
+				firstCorrelationId));
 
 		// Verify idempotency succeeded for first request
 		assertEquals(1, count(
@@ -288,6 +311,245 @@ class TransferServiceIntegrationTest {
 		assertEquals(totalDebit, totalCredit, "Journal must be balanced: total debit must equal total credit");
 		assertEquals(1_500L, totalDebit);
 		assertEquals(1_500L, totalCredit);
+	}
+
+	@Test
+	void transferBlockedWhenEodLock() {
+		SeededAccounts seededAccounts = seedAccounts(10_000L, 10_000L, 5_000L, 5_000L, "VND");
+		SeededLedgerAccounts ledgerAccounts = seedLedgerAccounts("VND");
+
+		// Set system to EOD_LOCK
+		systemModeService.setMode(SystemModeService.SystemMode.EOD_LOCK, "operator1");
+
+		// Try to transfer - should fail
+		assertThrows(
+				CoreBankException.class,
+				() -> transferService.transfer(
+						new TransferService.TransferRequest(
+								"idem-eod-transfer",
+								seededAccounts.sourceAccountId(),
+								seededAccounts.destinationAccountId(),
+								1_000L,
+								"VND",
+								ledgerAccounts.debitLedgerAccountId(),
+								ledgerAccounts.creditLedgerAccountId(),
+								"transfer in EOD",
+								"tester",
+								UUID.randomUUID(),
+								UUID.randomUUID(),
+								UUID.randomUUID(),
+								"trace-eod-transfer")));
+
+		// Verify source account balances unchanged
+		Map<String, Object> sourceAccountRow = jdbcTemplate.queryForMap(
+				"SELECT posted_balance_minor, available_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
+				seededAccounts.sourceAccountId());
+
+		assertEquals(10_000L, ((Number) sourceAccountRow.get("posted_balance_minor")).longValue());
+		assertEquals(10_000L, ((Number) sourceAccountRow.get("available_balance_minor")).longValue());
+
+		// Verify destination account balances unchanged
+		Map<String, Object> destAccountRow = jdbcTemplate.queryForMap(
+				"SELECT posted_balance_minor, available_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
+				seededAccounts.destinationAccountId());
+
+		assertEquals(5_000L, ((Number) destAccountRow.get("posted_balance_minor")).longValue());
+		assertEquals(5_000L, ((Number) destAccountRow.get("available_balance_minor")).longValue());
+
+		// Verify idempotency failed
+		assertEquals(1, count(
+				"SELECT COUNT(*) FROM idempotency_keys WHERE idempotency_key = ? AND status = 'FAILED'",
+				"idem-eod-transfer"));
+	}
+
+	@Test
+	void transferBlockedWhenMaintenance() {
+		SeededAccounts seededAccounts = seedAccounts(10_000L, 10_000L, 5_000L, 5_000L, "VND");
+		SeededLedgerAccounts ledgerAccounts = seedLedgerAccounts("VND");
+
+		// Set system to MAINTENANCE
+		systemModeService.setMode(SystemModeService.SystemMode.MAINTENANCE, "operator1");
+
+		// Try to transfer - should fail
+		assertThrows(
+				CoreBankException.class,
+				() -> transferService.transfer(
+						new TransferService.TransferRequest(
+								"idem-maint-transfer",
+								seededAccounts.sourceAccountId(),
+								seededAccounts.destinationAccountId(),
+								1_000L,
+								"VND",
+								ledgerAccounts.debitLedgerAccountId(),
+								ledgerAccounts.creditLedgerAccountId(),
+								"transfer in MAINTENANCE",
+								"tester",
+								UUID.randomUUID(),
+								UUID.randomUUID(),
+								UUID.randomUUID(),
+								"trace-maint-transfer")));
+
+		// Verify source account balances unchanged
+		Map<String, Object> sourceAccountRow = jdbcTemplate.queryForMap(
+				"SELECT posted_balance_minor, available_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
+				seededAccounts.sourceAccountId());
+
+		assertEquals(10_000L, ((Number) sourceAccountRow.get("posted_balance_minor")).longValue());
+		assertEquals(10_000L, ((Number) sourceAccountRow.get("available_balance_minor")).longValue());
+
+		// Verify destination account balances unchanged
+		Map<String, Object> destAccountRow = jdbcTemplate.queryForMap(
+				"SELECT posted_balance_minor, available_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
+				seededAccounts.destinationAccountId());
+
+		assertEquals(5_000L, ((Number) destAccountRow.get("posted_balance_minor")).longValue());
+		assertEquals(5_000L, ((Number) destAccountRow.get("available_balance_minor")).longValue());
+
+		// Verify idempotency failed
+		assertEquals(1, count(
+				"SELECT COUNT(*) FROM idempotency_keys WHERE idempotency_key = ? AND status = 'FAILED'",
+				"idem-maint-transfer"));
+	}
+
+	@Test
+	void concurrentOppositeDirectionTransfersDoNotDeadlockAndPreserveBalances() throws Exception {
+		SeededAccounts seededAccounts = seedAccounts(10_000L, 10_000L, 5_000L, 5_000L, "VND");
+		SeededLedgerAccounts ledgerAccounts = seedLedgerAccounts("VND");
+
+		TransferService.TransferRequest firstRequest = new TransferService.TransferRequest(
+				"idem-transfer-concurrent-a2b",
+				seededAccounts.sourceAccountId(),
+				seededAccounts.destinationAccountId(),
+				1_000L,
+				"VND",
+				ledgerAccounts.debitLedgerAccountId(),
+				ledgerAccounts.creditLedgerAccountId(),
+				"A to B",
+				"tester",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"trace-transfer-concurrent-a2b");
+
+		TransferService.TransferRequest secondRequest = new TransferService.TransferRequest(
+				"idem-transfer-concurrent-b2a",
+				seededAccounts.destinationAccountId(),
+				seededAccounts.sourceAccountId(),
+				2_000L,
+				"VND",
+				ledgerAccounts.debitLedgerAccountId(),
+				ledgerAccounts.creditLedgerAccountId(),
+				"B to A",
+				"tester",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"trace-transfer-concurrent-b2a");
+
+		List<InvocationOutcome<TransferService.TransferResponse>> outcomes = invokeConcurrently(
+				() -> transferService.transfer(firstRequest),
+				() -> transferService.transfer(secondRequest));
+
+		assertEquals(2L, outcomes.stream().filter(outcome -> outcome.response() != null).count());
+		assertEquals(0L, outcomes.stream().filter(outcome -> outcome.error() != null).count());
+
+		Map<String, Object> sourceAccountRow = jdbcTemplate.queryForMap(
+				"SELECT posted_balance_minor, available_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
+				seededAccounts.sourceAccountId());
+		Map<String, Object> destinationAccountRow = jdbcTemplate.queryForMap(
+				"SELECT posted_balance_minor, available_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
+				seededAccounts.destinationAccountId());
+
+		assertEquals(11_000L, ((Number) sourceAccountRow.get("posted_balance_minor")).longValue());
+		assertEquals(11_000L, ((Number) sourceAccountRow.get("available_balance_minor")).longValue());
+		assertEquals(4_000L, ((Number) destinationAccountRow.get("posted_balance_minor")).longValue());
+		assertEquals(4_000L, ((Number) destinationAccountRow.get("available_balance_minor")).longValue());
+
+		assertEquals(2, count(
+				"SELECT COUNT(*) FROM ledger_journals WHERE correlation_id IN (?, ?)",
+				firstRequest.correlationId(),
+				secondRequest.correlationId()));
+		assertEquals(4, count(
+				"""
+				SELECT COUNT(*)
+				FROM ledger_postings lp
+				JOIN ledger_journals lj ON lj.journal_id = lp.journal_id
+				WHERE lj.correlation_id IN (?, ?)
+				""",
+				firstRequest.correlationId(),
+				secondRequest.correlationId()));
+	}
+
+	@Test
+	void concurrentCompetingTransfersCannotOverspendSameSourceAccount() throws Exception {
+		SeededAccounts firstPair = seedAccounts(10_000L, 10_000L, 0L, 0L, "VND");
+		SeededAccounts secondPair = seedAccounts(0L, 0L, 0L, 0L, "VND");
+		SeededLedgerAccounts ledgerAccounts = seedLedgerAccounts("VND");
+
+		UUID sourceAccountId = firstPair.sourceAccountId();
+		UUID firstDestinationAccountId = firstPair.destinationAccountId();
+		UUID secondDestinationAccountId = secondPair.destinationAccountId();
+
+		TransferService.TransferRequest firstRequest = new TransferService.TransferRequest(
+				"idem-transfer-race-1",
+				sourceAccountId,
+				firstDestinationAccountId,
+				7_000L,
+				"VND",
+				ledgerAccounts.debitLedgerAccountId(),
+				ledgerAccounts.creditLedgerAccountId(),
+				"race 1",
+				"tester",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"trace-transfer-race-1");
+
+		TransferService.TransferRequest secondRequest = new TransferService.TransferRequest(
+				"idem-transfer-race-2",
+				sourceAccountId,
+				secondDestinationAccountId,
+				7_000L,
+				"VND",
+				ledgerAccounts.debitLedgerAccountId(),
+				ledgerAccounts.creditLedgerAccountId(),
+				"race 2",
+				"tester",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"trace-transfer-race-2");
+
+		List<InvocationOutcome<TransferService.TransferResponse>> outcomes = invokeConcurrently(
+				() -> transferService.transfer(firstRequest),
+				() -> transferService.transfer(secondRequest));
+
+		assertEquals(1L, outcomes.stream().filter(outcome -> outcome.response() != null).count());
+		assertEquals(1L, outcomes.stream().filter(outcome -> outcome.error() != null).count());
+		assertTrue(outcomes.stream()
+				.filter(outcome -> outcome.error() != null)
+				.anyMatch(outcome -> outcome.error() instanceof InsufficientFundsException));
+
+		Map<String, Object> sourceAccountRow = jdbcTemplate.queryForMap(
+				"SELECT posted_balance_minor, available_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
+				sourceAccountId);
+		assertEquals(3_000L, ((Number) sourceAccountRow.get("posted_balance_minor")).longValue());
+		assertEquals(3_000L, ((Number) sourceAccountRow.get("available_balance_minor")).longValue());
+
+		long firstDestinationPosted = ((Number) jdbcTemplate.queryForMap(
+				"SELECT posted_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
+				firstDestinationAccountId).get("posted_balance_minor")).longValue();
+		long secondDestinationPosted = ((Number) jdbcTemplate.queryForMap(
+				"SELECT posted_balance_minor FROM customer_accounts WHERE customer_account_id = ?",
+				secondDestinationAccountId).get("posted_balance_minor")).longValue();
+		assertEquals(7_000L, firstDestinationPosted + secondDestinationPosted);
+
+		assertEquals(1, count(
+				"SELECT COUNT(*) FROM ledger_journals WHERE correlation_id IN (?, ?)",
+				firstRequest.correlationId(),
+				secondRequest.correlationId()));
+		assertEquals(1, count("SELECT COUNT(*) FROM idempotency_keys WHERE status = 'SUCCEEDED' AND idempotency_key IN ('idem-transfer-race-1', 'idem-transfer-race-2')"));
+		assertEquals(1, count("SELECT COUNT(*) FROM idempotency_keys WHERE status = 'FAILED' AND idempotency_key IN ('idem-transfer-race-1', 'idem-transfer-race-2')"));
 	}
 
 	private SeededAccounts seedAccounts(
@@ -471,9 +733,46 @@ class TransferServiceIntegrationTest {
 		return count == null ? 0 : count;
 	}
 
+	private <T> List<InvocationOutcome<T>> invokeConcurrently(Callable<T> first, Callable<T> second) throws Exception {
+		ExecutorService executorService = Executors.newFixedThreadPool(2);
+		CountDownLatch ready = new CountDownLatch(2);
+		CountDownLatch start = new CountDownLatch(1);
+
+		try {
+			Future<InvocationOutcome<T>> firstFuture = executorService.submit(() -> executeConcurrentCallable(first, ready, start));
+			Future<InvocationOutcome<T>> secondFuture = executorService.submit(() -> executeConcurrentCallable(second, ready, start));
+
+			assertTrue(ready.await(5, TimeUnit.SECONDS));
+			start.countDown();
+
+			List<InvocationOutcome<T>> outcomes = new ArrayList<>();
+			outcomes.add(firstFuture.get(20, TimeUnit.SECONDS));
+			outcomes.add(secondFuture.get(20, TimeUnit.SECONDS));
+			return outcomes;
+		} finally {
+			executorService.shutdownNow();
+		}
+	}
+
+	private <T> InvocationOutcome<T> executeConcurrentCallable(
+			Callable<T> callable,
+			CountDownLatch ready,
+			CountDownLatch start) {
+		ready.countDown();
+		try {
+			assertTrue(start.await(5, TimeUnit.SECONDS));
+			return new InvocationOutcome<>(callable.call(), null);
+		} catch (Throwable throwable) {
+			return new InvocationOutcome<>(null, throwable);
+		}
+	}
+
 	private record SeededAccounts(UUID sourceAccountId, UUID destinationAccountId) {
 	}
 
 	private record SeededLedgerAccounts(UUID debitLedgerAccountId, UUID creditLedgerAccountId) {
+	}
+
+	private record InvocationOutcome<T>(T response, Throwable error) {
 	}
 }
