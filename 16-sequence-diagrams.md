@@ -38,7 +38,7 @@ sequenceDiagram
     LED->>DB: lock accounts in deterministic order
     LED->>DB: insert ledger_journals
     LED->>DB: insert ledger_postings
-    LED->>DB: update account_balances_current
+    LED->>DB: update account.customer_accounts (current balance source)
     LED->>OUT: stage domain event
     OUT->>DB: insert integration.outbox_messages
     LED->>DB: COMMIT
@@ -323,7 +323,7 @@ sequenceDiagram
 
     C->>API: money-moving request
     API->>MODE: assert system writable
-    MODE->>DB: read iam.system_configs
+    MODE->>DB: read system_configs
     DB-->>MODE: RUNNING or EOD_LOCK
 
     alt RUNNING

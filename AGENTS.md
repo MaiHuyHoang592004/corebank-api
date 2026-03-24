@@ -1,211 +1,70 @@
-# AGENTS.md
+# Corebank workspace rules
 
-## Purpose
-This repository contains a **production-like core banking / fintech backend portfolio project**.
-It is designed to be implemented with **Cline as the primary AI coding agent**, under human supervision.
+This is a finance-sensitive repository.
+Optimize for correctness, narrow scope, and verifiable progress.
 
-The main objective is to model a bank-grade backend with strong accounting correctness, not just CRUD features.
+## Operating mode
+- Follow: Plan -> Act -> Test -> Review.
+- For risky tasks, start in plan mode first.
+- List exact files you intend to inspect before scanning broadly.
+- Prefer narrow reads and small reversible edits.
 
-Any AI agent working on this project must prioritize:
-1. financial correctness
-2. data integrity
-3. idempotency
-4. append-only history
-5. deterministic behavior
-6. explicit invariants over convenience
-7. safe Cline workflows (Plan -> Act -> Test -> Review)
+## High-risk changes
+Treat these as high-risk:
+- ledger
+- balances
+- posted vs available semantics
+- hold, capture, void
+- payments
+- deposits
+- lending
+- approvals
+- outbox, projectors, workers
+- Flyway, SQL, constraints, snapshots, limits
+- hooks, policies, permissions
 
-## Cline-first operating model
-This repository is optimized for **Cline**. That means:
-- Use **Plan mode first** for anything beyond a tiny edit.
-- Use **Act mode** only after the plan is accepted.
-- Use **Checkpoints** before risky edits, schema changes, or refactors.
-- Use **Auto-Approve** only for low-risk reads/searches and safe test/lint commands.
-- Use **manual approval** for write-heavy changes, shell commands with side effects, browser automation, and MCP servers.
-- Do not use headless/YOLO mode on this repo unless explicitly requested and policy is constrained.
+For high-risk work:
+- create a checkpoint before writing
+- change the smallest safe slice
+- avoid speculative refactors
+- run the smallest test that proves the change
 
-## Absolute financial rules
-- **Ledger is the financial source of truth**
-- Never mutate history in ledger or audit tables
-- Reversals must be done via compensating entries, not UPDATE/DELETE
-- Available balance and posted balance are not the same
-- A hold reduces available balance, not posted balance
-- A capture posts accounting entries and reduces hold remaining amount
-- A void/expiry restores available balance from remaining hold
-- Idempotency is mandatory for all money-moving write commands
-- Async messaging must go through outbox, never publish directly from uncommitted transactions
-- Read models are projections, not financial truth
-- Redis is never a source of truth for money
-- Kafka is never a source of truth for balances
-- Product configuration must be versioned
-- Approvals/maker-checker must not be bypassed for high-risk operations
+## Financial invariants
+- Never break ledger integrity.
+- Never blur posted balance and available balance semantics.
+- Never treat cache, projections, Redis, or Kafka as the source of truth for money.
+- Never bypass Flyway with ad-hoc database edits.
+- Never make destructive schema changes unless explicitly justified and reviewed.
 
-## Cline guardrails
-### Approve automatically only for
-- read-only file access
-- search/grep/find operations
-- git status / git diff
-- safe local test/lint/typecheck commands
-- safe docs generation inside repo
+## Execution discipline
+- Inspect current behavior before changing code.
+- Prefer exact symbol/file targeting over wide search.
+- Use GitNexus or equivalent repo context tools before editing important symbols.
+- Keep changes localized unless the task explicitly requires wider refactoring.
 
-### Require manual approval for
-- schema migrations
-- updates to ledger/payment/deposit/lending modules
-- commands that change database state
-- commands with redirects, pipes, sudo, curl, rm, chmod, docker exec into prod-like services
-- creation or enabling of MCP servers
-- git push
+## Completion standard
+Do not claim completion unless you provide:
+- files changed
+- tests or verification run
+- remaining risks or follow-up items
+- For finance-sensitive domain tasks, use the corebank-safe-executor skill.
 
-### Never allow by default
-- rm -rf
-- sudo
-- curl to unknown endpoints
-- ssh/scp/nc
-- database commands against non-local environments
-- direct writes to deployment configs without explicit request
+## GitNexus usage
+- This repository is indexed by GitNexus.
+- For finance-sensitive or multi-file code changes, use GitNexus before editing important symbols.
+- Run impact/context analysis before changing core symbols in ledger, balances, payments, deposits, lending, outbox, projectors, workers, hooks, or policies.
+- If GitNexus reports HIGH or CRITICAL risk, warn before proceeding.
+- After refactors or wider changes, verify scope with detect_changes.
+- Prefer GitNexus over broad grep when exploring unfamiliar execution flows.
 
-## System intent
-This project is intended to evolve in this order:
-1. modular monolith
-2. production-like async integration
-3. selected service extraction if needed
+## Workflow guidance
+- When producing a plan, suggest the most relevant workflow if the task is non-trivial or finance-sensitive.
+- Do not force workflows for simple or low-risk tasks.
+- If the task touches high-risk areas (ledger, balances, payments, deposits, lending, approvals, outbox, projectors, workers, Flyway, SQL, hooks, policies), recommend using a workflow before implementation.
 
-Do not introduce microservices prematurely unless explicitly requested.
+Suggested mapping:
+- General feature work → /financial-feature.md
+- Schema or SQL changes → /schema-safe-change.md
+- Bugs, inconsistencies, or balance issues → /incident-balance-debug.md
 
-## Tech stack intent
-- Spring Boot = application orchestration
-- PostgreSQL = financial source of truth
-- Kafka = async backbone
-- Redis = cache/coordination/rate limit
-- Flyway = schema migration
-- jOOQ or JdbcTemplate = money-critical SQL paths
-- JPA/Hibernate = non-critical CRUD modules
-
-## Where to place logic
-### Keep in application layer
-- business workflow orchestration
-- authorization
-- approval flow
-- product selection
-- limit/risk decisions
-- saga state transitions
-- event publishing through outbox
-- Cline task-specific orchestration prompts and templates
-
-### Keep in database layer
-- constraints
-- atomic money mutation
-- accounting posting
-- append-only enforcement
-- hot-account slot persistence
-- partitioned event storage
-
-## How Cline should execute work
-### For feature work
-1. Read `21-cline-operating-model.md`
-2. Read relevant domain docs
-3. Produce a short plan first
-4. List exact files to inspect
-5. Make changes in small steps
-6. Run minimum tests after each meaningful step
-7. Summarize changes, risks, and remaining gaps
-
-### For schema changes
-1. Read `06-database-context.md`, `07-financial-invariants.md`, and `22-cline-policy-kit.md`
-2. Propose migration impact explicitly
-3. Create/modify Flyway migration, not ad-hoc SQL
-4. Explain backfill/replay impact
-5. Run DB tests / integration tests
-
-### For debugging
-1. Start in Plan mode
-2. Identify likely failing layer: API / service / DB / projector / worker
-3. Reproduce with the smallest command/test possible
-4. Avoid broad refactors during diagnosis
-5. Use checkpoints before risky fixes
-
-## When modifying schema
-Any schema change must answer:
-- Does this break ledger invariants?
-- Does this break replayability or auditability?
-- Does this break product versioning?
-- Does this change financial meaning of historical contracts?
-- Does this require migration/backfill?
-- Does this affect read model projection?
-
-## When writing code
-Agent should avoid:
-- loading many ledger rows into memory to compute balance
-- summing historical postings on hot paths
-- bypassing idempotency
-- directly updating read model as source of truth
-- embedding raw SQL table knowledge deep inside business code
-- making large multi-module edits in one Act step
-
-Agent should prefer:
-- service abstractions like `BalanceQueryService`
-- explicit command handlers
-- immutable domain events
-- integration tests around money flows
-- transaction boundaries around financial commands
-- Plan -> Act -> Test -> Review loops
-
-## Required reading order
-1. `AGENTS.md`
-2. `01-project-overview.md`
-3. `04-system-architecture.md`
-4. `05-domain-modules.md`
-5. `06-database-context.md`
-6. `07-financial-invariants.md`
-7. `08-core-workflows.md`
-8. `09-application-architecture.md`
-9. `14-source-of-truth-map.md`
-10. `17-execution-plan.md`
-11. `18-testing-strategy.md`
-12. `19-runtime-failure-modes.md`
-13. `20-acceptance-criteria.md`
-14. `21-cline-operating-model.md`
-15. `22-cline-policy-kit.md`
-16. `23-cline-workflows.md`
-17. `24-cline-prompts-and-task-templates.md`
-18. `25-cline-model-strategy.md`
-19. `26-cline-troubleshooting.md`
-
-## Vocabulary
-- posted balance = accounting balance
-- available balance = spendable balance
-- hold = reserved funds
-- capture = accounting realization of held funds
-- void = release remaining hold
-- reversal = compensating accounting journal
-- read model = query projection
-- source of truth = authoritative state for a concern
-- Plan mode = Cline analysis/proposal mode, no file changes
-- Act mode = Cline execution mode, may edit files and run tools
-- Checkpoint = reversible snapshot created during work
-
-## If context conflicts
-Priority order:
-1. explicit financial invariants
-2. schema semantics
-3. workflow docs
-4. Cline guardrails and policy kit
-5. application architecture docs
-6. roadmap
-
-## Expected engineering style
-- explicit > implicit
-- deterministic > magical
-- correctness > shortcut
-- reversible operations > destructive operations
-- auditable state > hidden side effects
-- smaller agent steps > large speculative changes
-
-## Non-negotiable delivery rule
-A feature is not finished just because the endpoint works.
-For money-moving or operationally sensitive work, the agent must also consider:
-- migration impact
-- invariant tests
-- failure mode behavior
-- acceptance criteria in `20-acceptance-criteria.md`
-- whether the chosen Cline workflow was safe for the task
+- If a workflow is recommended, briefly explain why it fits the task.

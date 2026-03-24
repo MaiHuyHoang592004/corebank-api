@@ -35,7 +35,7 @@ Use:
 ## System runtime modes
 Recommended `system_configs` examples:
 - RUNNING
-- EOD
+- EOD_LOCK
 - MAINTENANCE
 - READ_ONLY
 
