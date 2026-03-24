@@ -1,6 +1,8 @@
 package com.corebank.corebank_api.reporting;
 
+import com.corebank.corebank_api.integration.saga.SagaQueryService;
 import java.time.Instant;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,9 +17,13 @@ import org.springframework.web.server.ResponseStatusException;
 public class ReportingController {
 
 	private final ReadModelQueryService readModelQueryService;
+	private final SagaQueryService sagaQueryService;
 
-	public ReportingController(ReadModelQueryService readModelQueryService) {
+	public ReportingController(
+			ReadModelQueryService readModelQueryService,
+			SagaQueryService sagaQueryService) {
 		this.readModelQueryService = readModelQueryService;
+		this.sagaQueryService = sagaQueryService;
 	}
 
 	@GetMapping("/aggregate-activity")
@@ -48,6 +54,27 @@ public class ReportingController {
 		ReadModelQueryService.AggregateEventPage response =
 				readModelQueryService.findAggregateEvents(
 						aggregateType, aggregateId, eventType, fromOccurredAt, toOccurredAt, limit);
+		return ResponseEntity.ok(response);
+	}
+
+	@GetMapping("/sagas")
+	public ResponseEntity<SagaQueryService.SagaInstancePage> sagas(
+			@RequestParam(required = false) String sagaType,
+			@RequestParam(required = false) String status,
+			@RequestParam(required = false) String businessKey,
+			@RequestParam(defaultValue = "0") int page,
+			@RequestParam(defaultValue = "20") int size) {
+		SagaQueryService.SagaInstancePage response =
+				sagaQueryService.findSagas(sagaType, status, businessKey, page, size);
+		return ResponseEntity.ok(response);
+	}
+
+	@GetMapping("/sagas/{sagaInstanceId}/steps")
+	public ResponseEntity<SagaQueryService.SagaStepPage> sagaSteps(
+			@PathVariable UUID sagaInstanceId,
+			@RequestParam(defaultValue = "100") int limit) {
+		SagaQueryService.SagaStepPage response =
+				sagaQueryService.findSagaSteps(sagaInstanceId, limit);
 		return ResponseEntity.ok(response);
 	}
 }
