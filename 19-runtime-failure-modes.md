@@ -75,7 +75,7 @@ Expected behavior:
 - duplicate publish is tolerated by idempotent consumers
 - no committed business transaction is rolled back because publisher failed later
 
-## Failure mode: system mode = `EOD` or `MAINTENANCE`
+## Failure mode: system mode = `EOD_LOCK` or `MAINTENANCE`
 Expected behavior:
 - new money-moving commands are blocked unless explicitly whitelisted
 - read operations continue where safe

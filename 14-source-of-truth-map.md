@@ -30,6 +30,10 @@ Chúng không được quyết định số dư thật.
 
 ## 2.1 Financial truth
 
+### Current implementation note
+- Hiện tại source table cho current balance là `account.customer_accounts`
+- Tên `account.account_balances_current` trong tài liệu mang tính target/logical naming cho giai đoạn refactor sau
+
 ### Authoritative
 - `ledger.ledger_journals`
 - `ledger.ledger_postings`
@@ -159,6 +163,10 @@ Chúng không được quyết định số dư thật.
 ---
 
 ## 2.10 Reconciliation truth
+
+### Current implementation note
+- `ops.reconciliation_breaks` đã có nền tảng schema
+- `ops.reconciliation_runs` đang là target-state, chưa phải contract vật lý hiện tại
 
 ### Authoritative
 - `ops.reconciliation_runs`
