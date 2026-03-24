@@ -12,6 +12,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.Locale;
 
 /**
  * Outbox event publisher service.
@@ -29,6 +31,7 @@ public class OutboxEventPublisher {
     private static final int BATCH_SIZE = 10;
     private static final int MAX_RETRIES = 3;
     private static final long PROCESSING_INTERVAL_MS = 5000; // 5 seconds
+    private static final long PUBLISH_TIMEOUT_SECONDS = 10;
     
     @Autowired
     public OutboxEventPublisher(OutboxEventRepository outboxEventRepository, 
@@ -67,7 +70,7 @@ public class OutboxEventPublisher {
     private void processEvent(OutboxEvent event) {
         try {
             // Determine topic based on event type
-            String topic = determineTopic(event.getEventType());
+            String topic = determineTopic(event.getAggregateType(), event.getEventType());
             
             // Publish to Kafka
             CompletableFuture<SendResult<String, Object>> future = kafkaTemplate.send(
@@ -75,19 +78,12 @@ public class OutboxEventPublisher {
                 event.getAggregateId(), 
                 parseEventData(event.getEventData())
             );
-            
-            // Handle success/failure asynchronously
-            future.whenComplete((result, throwable) -> {
-                if (throwable != null) {
-                    handlePublishFailure(event, throwable);
-                } else {
-                    handlePublishSuccess(event, result);
-                }
-            });
+
+            SendResult<String, Object> result = future.get(PUBLISH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            handlePublishSuccess(event, result);
             
         } catch (Exception e) {
-            log.error("Error processing event {}", event.getId(), e);
-            outboxEventRepository.markAsFailed(event.getId(), e.getMessage());
+            handlePublishFailure(event, e);
         }
     }
     
@@ -130,20 +126,23 @@ public class OutboxEventPublisher {
     /**
      * Determine Kafka topic based on event type
      */
-    private String determineTopic(String eventType) {
-        if (eventType.startsWith("Account")) {
+    private String determineTopic(String aggregateType, String eventType) {
+        String aggregate = aggregateType == null ? "" : aggregateType.trim().toUpperCase(Locale.ROOT);
+        String event = eventType == null ? "" : eventType.trim().toUpperCase(Locale.ROOT);
+
+        if (aggregate.contains("ACCOUNT") || event.contains("ACCOUNT")) {
             return KafkaConfig.TOPIC_ACCOUNT_EVENTS;
-        } else if (eventType.startsWith("Transfer")) {
+        } else if (aggregate.contains("TRANSFER") || event.contains("TRANSFER")) {
             return KafkaConfig.TOPIC_TRANSFER_EVENTS;
-        } else if (eventType.startsWith("Payment")) {
+        } else if (aggregate.contains("PAYMENT") || aggregate.contains("HOLD") || event.contains("PAYMENT") || event.contains("HOLD")) {
             return KafkaConfig.TOPIC_PAYMENT_EVENTS;
-        } else if (eventType.startsWith("Deposit")) {
+        } else if (aggregate.contains("DEPOSIT") || event.contains("DEPOSIT")) {
             return KafkaConfig.TOPIC_DEPOSIT_EVENTS;
-        } else if (eventType.startsWith("Ledger")) {
+        } else if (aggregate.contains("LEDGER") || event.contains("LEDGER")) {
             return KafkaConfig.TOPIC_LEDGER_EVENTS;
         } else {
-            // Default topic for unknown events
-            return "unknown-events";
+            // Default to ledger-events instead of dropping to unknown topic.
+            return KafkaConfig.TOPIC_LEDGER_EVENTS;
         }
     }
     

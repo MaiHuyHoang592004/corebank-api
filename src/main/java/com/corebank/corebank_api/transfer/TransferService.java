@@ -5,6 +5,7 @@ import com.corebank.corebank_api.account.CustomerAccount;
 import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.common.InsufficientFundsException;
 import com.corebank.corebank_api.integration.IdempotencyService;
+import com.corebank.corebank_api.integration.OutboxMetadata;
 import com.corebank.corebank_api.integration.OutboxService;
 import com.corebank.corebank_api.ledger.LedgerCommandService;
 import com.corebank.corebank_api.limits.LimitCheckService;
@@ -212,7 +213,8 @@ public class TransferService {
 					"TRANSFER",
 					journalId.toString(),
 					"TRANSFER_COMPLETED",
-					responseJson);
+					response,
+					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
 
 			// Mark idempotency as succeeded
 			idempotencyService.markSucceeded(

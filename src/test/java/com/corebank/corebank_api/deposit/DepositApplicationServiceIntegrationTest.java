@@ -159,6 +159,8 @@ public class DepositApplicationServiceIntegrationTest {
 	@Test
 	void testOpenDeposit_Success() {
 		// Arrange
+		UUID correlationId = UUID.randomUUID();
+		UUID requestId = UUID.randomUUID();
 		DepositApplicationService.OpenDepositRequest request = new DepositApplicationService.OpenDepositRequest(
 				"test-idempotency-key",
 				customerAccountId,
@@ -173,8 +175,8 @@ public class DepositApplicationServiceIntegrationTest {
 				debitLedgerAccountId,
 				creditLedgerAccountId,
 				"test-actor",
-				UUID.randomUUID(),
-				UUID.randomUUID(),
+				correlationId,
+				requestId,
 				UUID.randomUUID(),
 				"test-trace"
 		);
@@ -202,6 +204,29 @@ public class DepositApplicationServiceIntegrationTest {
 		assertTrue(count(
 				"SELECT COUNT(*) FROM deposit_events WHERE contract_id = ?",
 				response.contractId()) > 0);
+
+		// Verify outbox envelope metadata
+		assertEquals(1, count(
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'DEPOSIT_OPENED' AND aggregate_id = ?",
+				response.contractId().toString()));
+
+		var outboxEnvelope = jdbcTemplate.queryForMap(
+				"""
+				SELECT event_data->>'schemaVersion' AS schema_version,
+				       event_data->>'correlationId' AS correlation_id,
+				       event_data->>'requestId' AS request_id,
+				       event_data->>'actor' AS actor
+				FROM outbox_events
+				WHERE event_type = 'DEPOSIT_OPENED' AND aggregate_id = ?
+				ORDER BY id DESC
+				LIMIT 1
+				""",
+				response.contractId().toString());
+
+		assertEquals("v1", outboxEnvelope.get("schema_version"));
+		assertEquals(correlationId.toString(), outboxEnvelope.get("correlation_id"));
+		assertEquals(requestId.toString(), outboxEnvelope.get("request_id"));
+		assertEquals("test-actor", outboxEnvelope.get("actor"));
 
 		// Verify idempotency
 		DepositApplicationService.OpenDepositResponse response2 = depositApplicationService.openDeposit(request);
@@ -472,6 +497,137 @@ public class DepositApplicationServiceIntegrationTest {
 		assertTrue(count(
 				"SELECT COUNT(*) FROM deposit_events WHERE contract_id = ? AND event_type = 'MATURED'",
 				contractId) > 0);
+	}
+
+	@Test
+	void testProcessMaturity_AutoRenewContractRejectedWithoutSideEffects() {
+		DepositApplicationService.OpenDepositResponse openResponse = depositApplicationService.openDeposit(
+				new DepositApplicationService.OpenDepositRequest(
+						"test-idempotency-key-12",
+						customerAccountId,
+						productId,
+						productVersionId,
+						5000000L,
+						"VND",
+						6.5,
+						12,
+						1.0,
+						true,
+						debitLedgerAccountId,
+						creditLedgerAccountId,
+						"test-actor",
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						"test-trace"));
+
+		UUID contractId = openResponse.contractId();
+		depositApplicationService.accrueInterest(new DepositApplicationService.AccrueInterestRequest(
+				"test-idempotency-key-13",
+				contractId,
+				debitLedgerAccountId,
+				creditLedgerAccountId,
+				"test-actor",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"test-trace"));
+
+		jdbcTemplate.update(
+				"UPDATE deposit_contracts SET start_date = CURRENT_DATE - INTERVAL '1 day', maturity_date = CURRENT_DATE WHERE contract_id = ?",
+				contractId);
+
+		assertThrows(
+				CoreBankException.class,
+				() -> depositApplicationService.processMaturity(new DepositApplicationService.MaturityRequest(
+						"test-idempotency-key-14",
+						contractId,
+						debitLedgerAccountId,
+						creditLedgerAccountId,
+						"test-actor",
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						"test-trace")));
+
+		DepositContract contract = depositContractRepository.findById(contractId).orElseThrow();
+		assertEquals("ACTIVE", contract.getStatus());
+		assertEquals(0, count(
+				"SELECT COUNT(*) FROM deposit_events WHERE contract_id = ? AND event_type = 'MATURED'",
+				contractId));
+		assertEquals(0, count(
+				"SELECT COUNT(*) FROM audit_events WHERE action = 'DEPOSIT_MATURED' AND resource_id = ?",
+				contractId.toString()));
+		assertEquals(0, count(
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'DEPOSIT_MATURED' AND aggregate_id = ?",
+				contractId.toString()));
+		assertEquals(1, count(
+				"SELECT COUNT(*) FROM idempotency_keys WHERE idempotency_key = 'test-idempotency-key-14' AND status = 'FAILED'"));
+	}
+
+	@Test
+	void testProcessMaturity_ReplayReturnsSameResultWithoutDoubleWrites() {
+		DepositApplicationService.OpenDepositResponse openResponse = depositApplicationService.openDeposit(
+				new DepositApplicationService.OpenDepositRequest(
+						"test-idempotency-key-15",
+						customerAccountId,
+						productId,
+						productVersionId,
+						5000000L,
+						"VND",
+						6.5,
+						12,
+						1.0,
+						false,
+						debitLedgerAccountId,
+						creditLedgerAccountId,
+						"test-actor",
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						"test-trace"));
+
+		UUID contractId = openResponse.contractId();
+		depositApplicationService.accrueInterest(new DepositApplicationService.AccrueInterestRequest(
+				"test-idempotency-key-16",
+				contractId,
+				debitLedgerAccountId,
+				creditLedgerAccountId,
+				"test-actor",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"test-trace"));
+
+		jdbcTemplate.update(
+				"UPDATE deposit_contracts SET start_date = CURRENT_DATE - INTERVAL '1 day', maturity_date = CURRENT_DATE WHERE contract_id = ?",
+				contractId);
+
+		DepositApplicationService.MaturityRequest request = new DepositApplicationService.MaturityRequest(
+				"test-idempotency-key-17",
+				contractId,
+				debitLedgerAccountId,
+				creditLedgerAccountId,
+				"test-actor",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"test-trace");
+
+		DepositApplicationService.MaturityResponse first = depositApplicationService.processMaturity(request);
+		DepositApplicationService.MaturityResponse second = depositApplicationService.processMaturity(request);
+
+		assertEquals(first.contractId(), second.contractId());
+		assertEquals(first.totalAccruedInterest(), second.totalAccruedInterest());
+		assertEquals(1, count(
+				"SELECT COUNT(*) FROM deposit_events WHERE contract_id = ? AND event_type = 'MATURED'",
+				contractId));
+		assertEquals(1, count(
+				"SELECT COUNT(*) FROM audit_events WHERE action = 'DEPOSIT_MATURED' AND resource_id = ?",
+				contractId.toString()));
+		assertEquals(1, count(
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'DEPOSIT_MATURED' AND aggregate_id = ?",
+				contractId.toString()));
 	}
 
 	private int count(String sql, Object... args) {
