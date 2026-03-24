@@ -500,3 +500,46 @@
 ### Risks / Follow-up
 - API returns read-model data only; it must remain explicitly non-authoritative for balances/ledger truth.
 - Kafka admin reconnect warnings to `localhost:9092` still appear in local tests without a broker; focused suite remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.7 - Reporting Event Filters)
+
+### Scope
+- Extend read-only aggregate event history API with optional filters while preserving existing behavior by default
+- Keep scope minimal: `eventType`, `fromOccurredAt`, `toOccurredAt`, and existing `limit`
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Updated `ReportingController` aggregate events endpoint:
+  - added optional query params: `eventType`, `fromOccurredAt`, `toOccurredAt`
+  - added input guard returning `400` when `fromOccurredAt > toOccurredAt`
+- Updated `ReadModelQueryService.findAggregateEvents(...)`:
+  - added dynamic SQL filters with bound parameters only
+  - `eventType` exact match filter (when provided)
+  - time-window filters:
+    - lower bound: `occurred_at >= fromOccurredAt`
+    - upper bound: `occurred_at < toOccurredAt`
+  - converted time args to UTC `OffsetDateTime` for PostgreSQL parameter compatibility
+- Expanded `ReportingControllerIntegrationTest`:
+  - event-type filter proof
+  - occurred-at range filter proof
+  - combined event-type + occurred-at filter proof
+  - invalid datetime query param returns `400`
+
+### Focused Verification Results
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Time-window semantics currently use inclusive lower bound and exclusive upper bound; downstream consumers should keep this contract when adding UI filters.
+- API remains read-model based and non-authoritative; no balance/ledger source-of-truth semantics were changed.
+- Kafka admin reconnect warnings to `localhost:9092` may still appear in local runs without broker for non-broker tests.
