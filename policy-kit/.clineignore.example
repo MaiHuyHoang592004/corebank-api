@@ -1,0 +1,31 @@
+# Secrets
+.env
+.env.*
+secrets/
+*.pem
+*.key
+
+# Build artifacts
+build/
+target/
+dist/
+out/
+coverage/
+
+# Dependencies
+node_modules/
+
+# Logs and dumps
+*.log
+logs/
+*.dump
+*.sql.gz
+
+# IDE noise
+.idea/
+.vscode/
+
+# Generated files
+*.class
+*.jar
+*.war
