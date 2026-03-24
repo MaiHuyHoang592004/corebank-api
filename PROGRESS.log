@@ -724,3 +724,55 @@
 - Stale-claim reclaim depends on wall-clock timeout; if publish latency exceeds reclaim timeout, duplicate processing attempts may occur (consumers remain idempotent by design).
 - Retry/backoff thresholds are currently static in code; if operational tuning is required later, move these values to controlled config with explicit rollout plan.
 - Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.12 - Outbox Dead-Letter and Ops Visibility)
+
+### Scope
+- Add dead-letter capture for outbox events that exhaust retry budget
+- Add read-only reporting endpoints for outbox operational visibility
+- Keep authoritative money path untouched and avoid deployment/env config changes
+
+### Changes Applied
+- Added migration `V22__outbox_dead_letter_ops.sql`:
+  - new table `outbox_dead_letters` with unique `outbox_event_id`
+  - indexes for operator query shape (`dead_lettered_at DESC`, `event_type + dead_lettered_at`)
+  - explicit table/column comments for operational intent
+- Updated `OutboxEventRepository`:
+  - added `addToDeadLetter(eventId)` snapshot insert with `ON CONFLICT DO NOTHING` (idempotent)
+- Updated `OutboxEventPublisher`:
+  - on publish failure, re-reads current retry count
+  - auto-records event into dead-letter table when retry count reaches `MAX_RETRIES`
+- Added `OutboxReportingService`:
+  - `summary()` for outbox operational counters and retry-queue age
+  - `deadLetters(limit)` for latest dead-letter entries with bounded limit
+- Extended `ReportingController`:
+  - `GET /api/reporting/outbox/summary`
+  - `GET /api/reporting/outbox/dead-letters`
+- Added tests:
+  - `OutboxEventPublisherDeadLetterTest` (publisher dead-letter decision path)
+  - `OutboxReportingControllerIntegrationTest` (summary + dead-letter endpoints)
+  - expanded `OutboxPatternIntegrationTest` with dead-letter idempotency proof
+
+### Focused Verification Results
+- `OutboxEventPublisherDeadLetterTest`: **2/2 passed**
+- `OutboxReportingControllerIntegrationTest`: **2/2 passed**
+- `OutboxPatternIntegrationTest`: **10/10 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `NotificationProjectorIntegrationTest`: **3/3 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `SagaReportingControllerIntegrationTest`: **2/2 passed**
+- `SagaStateServiceIntegrationTest`: **3/3 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Dead-letter capture currently uses static retry threshold (`MAX_RETRIES = 3`) in publisher; if per-topic thresholds are needed, add explicit configuration contract in a separate slice.
+- Dead-letter table stores full `event_data` snapshot for operator debugging; if payload retention policy tightens, apply redaction/retention controls in a follow-up migration.
+- Outbox rows remain in `FAILED` after dead-lettering; operational runbooks should treat dead-letter table as the terminal queue indicator.
