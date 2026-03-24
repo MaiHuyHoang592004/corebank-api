@@ -139,6 +139,149 @@ class ReportingControllerIntegrationTest {
 				.andExpect(jsonPath("$.items.length()").value(1));
 	}
 
+	@Test
+	void aggregateEvents_supportsEventTypeFilter() throws Exception {
+		appendAndProject(
+				"LOAN_CONTRACT",
+				"loan-report-3",
+				"LOAN_DISBURSED",
+				KafkaConfig.TOPIC_LOAN_EVENTS,
+				"corr-event-filter-1",
+				"loan-officer");
+		appendAndProject(
+				"LOAN_CONTRACT",
+				"loan-report-3",
+				"LOAN_REPAID",
+				KafkaConfig.TOPIC_LOAN_EVENTS,
+				"corr-event-filter-2",
+				"loan-officer");
+
+		mockMvc.perform(get("/api/reporting/aggregate-activity/{aggregateType}/{aggregateId}/events",
+						"LOAN_CONTRACT",
+						"loan-report-3")
+						.queryParam("eventType", "LOAN_REPAID")
+						.queryParam("limit", "10"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.items.length()").value(1))
+				.andExpect(jsonPath("$.items[0].eventType").value("LOAN_REPAID"));
+	}
+
+	@Test
+	void aggregateEvents_supportsOccurredAtRangeFilter() throws Exception {
+		appendAndProject(
+				"LOAN_CONTRACT",
+				"loan-report-4",
+				"LOAN_DISBURSED",
+				KafkaConfig.TOPIC_LOAN_EVENTS,
+				"corr-range-1",
+				"loan-officer");
+		appendAndProject(
+				"LOAN_CONTRACT",
+				"loan-report-4",
+				"LOAN_REPAID",
+				KafkaConfig.TOPIC_LOAN_EVENTS,
+				"corr-range-2",
+				"loan-officer");
+		appendAndProject(
+				"LOAN_CONTRACT",
+				"loan-report-4",
+				"LOAN_OVERDUE",
+				KafkaConfig.TOPIC_LOAN_EVENTS,
+				"corr-range-3",
+				"loan-officer");
+
+		setOccurredAt("LOAN_CONTRACT", "loan-report-4", "LOAN_DISBURSED", "2026-01-01T00:00:00Z");
+		setOccurredAt("LOAN_CONTRACT", "loan-report-4", "LOAN_REPAID", "2026-01-02T00:00:00Z");
+		setOccurredAt("LOAN_CONTRACT", "loan-report-4", "LOAN_OVERDUE", "2026-01-03T00:00:00Z");
+
+		mockMvc.perform(get("/api/reporting/aggregate-activity/{aggregateType}/{aggregateId}/events",
+						"LOAN_CONTRACT",
+						"loan-report-4")
+						.queryParam("fromOccurredAt", "2026-01-02T00:00:00Z")
+						.queryParam("toOccurredAt", "2026-01-03T00:00:00Z")
+						.queryParam("limit", "10"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.items.length()").value(1))
+				.andExpect(jsonPath("$.items[0].eventType").value("LOAN_REPAID"));
+	}
+
+	@Test
+	void aggregateEvents_supportsCombinedEventTypeAndOccurredAtFilters() throws Exception {
+		appendAndProject(
+				"LOAN_CONTRACT",
+				"loan-report-5",
+				"LOAN_DISBURSED",
+				KafkaConfig.TOPIC_LOAN_EVENTS,
+				"corr-combined-1",
+				"loan-officer");
+		appendAndProject(
+				"LOAN_CONTRACT",
+				"loan-report-5",
+				"LOAN_REPAID",
+				KafkaConfig.TOPIC_LOAN_EVENTS,
+				"corr-combined-2",
+				"loan-officer");
+		appendAndProject(
+				"LOAN_CONTRACT",
+				"loan-report-5",
+				"LOAN_OVERDUE",
+				KafkaConfig.TOPIC_LOAN_EVENTS,
+				"corr-combined-3",
+				"loan-officer");
+
+		setOccurredAt("LOAN_CONTRACT", "loan-report-5", "LOAN_DISBURSED", "2026-01-01T00:00:00Z");
+		setOccurredAt("LOAN_CONTRACT", "loan-report-5", "LOAN_REPAID", "2026-01-02T00:00:00Z");
+		setOccurredAt("LOAN_CONTRACT", "loan-report-5", "LOAN_OVERDUE", "2026-01-03T00:00:00Z");
+
+		mockMvc.perform(get("/api/reporting/aggregate-activity/{aggregateType}/{aggregateId}/events",
+						"LOAN_CONTRACT",
+						"loan-report-5")
+						.queryParam("eventType", "LOAN_REPAID")
+						.queryParam("fromOccurredAt", "2026-01-02T00:00:00Z")
+						.queryParam("toOccurredAt", "2026-01-03T00:00:00Z")
+						.queryParam("limit", "10"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.items.length()").value(1))
+				.andExpect(jsonPath("$.items[0].eventType").value("LOAN_REPAID"));
+	}
+
+	@Test
+	void aggregateEvents_invalidOccurredAt_returnsBadRequest() throws Exception {
+		appendAndProject(
+				"LOAN_CONTRACT",
+				"loan-report-6",
+				"LOAN_DISBURSED",
+				KafkaConfig.TOPIC_LOAN_EVENTS,
+				"corr-invalid-date-1",
+				"loan-officer");
+
+		mockMvc.perform(get("/api/reporting/aggregate-activity/{aggregateType}/{aggregateId}/events",
+						"LOAN_CONTRACT",
+						"loan-report-6")
+						.queryParam("fromOccurredAt", "invalid-date-time")
+						.queryParam("limit", "10"))
+				.andExpect(status().isBadRequest());
+	}
+
+	private void setOccurredAt(
+			String aggregateType,
+			String aggregateId,
+			String eventType,
+			String occurredAtIso8601) {
+		jdbcTemplate.update(
+				"""
+				UPDATE read_model_event_feed
+				SET occurred_at = CAST(? AS TIMESTAMP WITH TIME ZONE)
+				WHERE aggregate_type = ?
+				  AND aggregate_id = ?
+				  AND event_type = ?
+				""",
+				occurredAtIso8601,
+				aggregateType,
+				aggregateId,
+				eventType);
+	}
+
 	private void appendAndProject(
 			String aggregateType,
 			String aggregateId,
