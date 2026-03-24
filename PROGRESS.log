@@ -338,3 +338,49 @@
 - Envelope is now standardized for new writes, but historical outbox rows remain mixed-shape by design (backward-compatible choice).
 - Phase 4 next slice remains pending:
   - implement a real non-placeholder read-model projector with explicit non-authoritative read model semantics and replay/rebuild proof.
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.3 - Minimal Read-Model Projector)
+
+### Scope
+- Replace the reporting projector placeholder with a minimal non-authoritative read model
+- Add replay/rebuild proof from persisted `outbox_events`
+- Close the loan-topic routing gap so lending events are not silently published to the ledger fallback topic
+
+### Changes Applied
+- `V17__read_model_event_feed.sql`:
+  - added `read_model_event_feed` for replayable, non-authoritative event history
+  - indexed by aggregate and occurrence time for dashboard/history use
+- `KafkaConfig`:
+  - added `loan-events` topic definition
+- `OutboxEventPublisher`:
+  - routes `LOAN_*` events to `loan-events`
+- `ReadModelProjector`:
+  - replaced placeholder with envelope-aware projection logic
+  - subscribes to `account/transfer/payment/deposit/loan/ledger` topics
+  - skips legacy/non-envelope payloads safely
+  - writes idempotently into `read_model_event_feed`
+- `ReadModelReplayService`:
+  - replays persisted `outbox_events` into the read model for rebuild proof without requiring a broker
+- Added focused tests:
+  - `OutboxEventPublisherTopicRoutingTest`
+  - `ReadModelProjectorIntegrationTest`
+
+### Focused Verification Results
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **4/4 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local test logs without a broker.
+- The current read model is an event-feed projection, not yet a typed dashboard/query table; it is intentionally non-authoritative.
+- Historical raw outbox rows are skipped during projection by design; only envelope-based events are rebuilt into the read model.
+- Next useful slice:
+  - derive one typed dashboard/query model from `read_model_event_feed`
+  - add projector lag/health metrics
+  - add a broker-backed end-to-end projector delivery test when Kafka is available in local integration runtime
