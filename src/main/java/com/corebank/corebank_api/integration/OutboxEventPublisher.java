@@ -10,8 +10,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -32,6 +30,8 @@ public class OutboxEventPublisher {
     // Configuration
     private static final int BATCH_SIZE = 10;
     private static final int MAX_RETRIES = 3;
+    private static final int RETRY_BACKOFF_SECONDS = 30;
+    private static final int RECLAIM_TIMEOUT_SECONDS = 300;
     private static final long PROCESSING_INTERVAL_MS = 5000; // 5 seconds
     private static final long PUBLISH_TIMEOUT_SECONDS = 10;
     private static final ObjectMapper EVENT_DATA_MAPPER = new ObjectMapper().findAndRegisterModules();
@@ -50,7 +50,12 @@ public class OutboxEventPublisher {
     @Transactional
     public void processPendingEvents() {
         try {
-            List<OutboxEvent> pendingEvents = outboxEventRepository.getPendingEvents(BATCH_SIZE);
+            List<OutboxEvent> pendingEvents = outboxEventRepository.getPendingEvents(
+                BATCH_SIZE,
+                MAX_RETRIES,
+                RETRY_BACKOFF_SECONDS,
+                RECLAIM_TIMEOUT_SECONDS
+            );
             
             if (pendingEvents.isEmpty()) {
                 return;
@@ -116,8 +121,9 @@ public class OutboxEventPublisher {
             boolean marked = outboxEventRepository.markAsFailed(event.getId(), errorMessage);
             
             if (marked) {
+                int attempt = (event.getRetryCount() == null ? 0 : event.getRetryCount()) + 1;
                 log.warn("Failed to publish event {} (retry {}): {}", 
-                        event.getId(), event.getRetryCount(), errorMessage);
+                        event.getId(), attempt, errorMessage);
             } else {
                 log.warn("Failed to mark event {} as failed", event.getId());
             }

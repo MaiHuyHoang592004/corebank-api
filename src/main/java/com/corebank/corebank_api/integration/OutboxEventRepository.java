@@ -21,6 +21,10 @@ import java.util.Optional;
 @Repository
 public class OutboxEventRepository {
     
+    private static final int DEFAULT_MAX_RETRIES = 3;
+    private static final int DEFAULT_RETRY_BACKOFF_SECONDS = 30;
+    private static final int DEFAULT_RECLAIM_TIMEOUT_SECONDS = 300;
+
     private final JdbcTemplate jdbcTemplate;
     private final NamedParameterJdbcTemplate namedParameterJdbcTemplate;
     
@@ -62,15 +66,39 @@ public class OutboxEventRepository {
      * Get pending events for processing
      */
     public List<OutboxEvent> getPendingEvents(int limit) {
+        return getPendingEvents(
+            limit,
+            DEFAULT_MAX_RETRIES,
+            DEFAULT_RETRY_BACKOFF_SECONDS,
+            DEFAULT_RECLAIM_TIMEOUT_SECONDS
+        );
+    }
+
+    /**
+     * Get claimable events for processing with retry/reclaim controls.
+     */
+    public List<OutboxEvent> getPendingEvents(
+            int limit,
+            int maxRetries,
+            int retryBackoffSeconds,
+            int reclaimTimeoutSeconds) {
         String sql = """
             SELECT id, aggregate_type, aggregate_id, event_type, event_data, 
                    created_at, processed_at, status, retry_count, last_error,
                    correlation_id, causation_id
-            FROM get_pending_outbox_events(:limit)
+            FROM get_pending_outbox_events(
+                :limit,
+                :maxRetries,
+                :retryBackoffSeconds,
+                :reclaimTimeoutSeconds
+            )
             """;
         
         MapSqlParameterSource params = new MapSqlParameterSource()
-            .addValue("limit", limit);
+            .addValue("limit", limit)
+            .addValue("maxRetries", maxRetries)
+            .addValue("retryBackoffSeconds", retryBackoffSeconds)
+            .addValue("reclaimTimeoutSeconds", reclaimTimeoutSeconds);
         
         return namedParameterJdbcTemplate.query(sql, params, rowMapper);
     }
@@ -82,6 +110,7 @@ public class OutboxEventRepository {
         String sql = """
             UPDATE outbox_events
             SET processed_at = CURRENT_TIMESTAMP,
+                processing_started_at = NULL,
                 status = :status
             WHERE id = :eventId
               AND status IN ('PENDING', 'PROCESSING')
@@ -101,6 +130,7 @@ public class OutboxEventRepository {
         String sql = """
             UPDATE outbox_events
             SET processed_at = CURRENT_TIMESTAMP,
+                processing_started_at = NULL,
                 status = 'FAILED',
                 retry_count = retry_count + 1,
                 last_error = :error

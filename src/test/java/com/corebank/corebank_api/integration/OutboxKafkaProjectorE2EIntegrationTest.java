@@ -69,7 +69,7 @@ class OutboxKafkaProjectorE2EIntegrationTest {
 				String.class);
 
 		outboxEventPublisher.processPendingEvents();
-		waitUntilProjected(eventId, Duration.ofSeconds(15));
+		waitUntilProjectedToReadModels(eventId, Duration.ofSeconds(15));
 
 		String outboxStatus = jdbcTemplate.queryForObject(
 				"SELECT status FROM outbox_events LIMIT 1",
@@ -97,18 +97,21 @@ class OutboxKafkaProjectorE2EIntegrationTest {
 		assertEquals(1L, ((Number) summary.get("event_count")).longValue());
 	}
 
-	private void waitUntilProjected(String eventId, Duration timeout) throws InterruptedException {
+	private void waitUntilProjectedToReadModels(String eventId, Duration timeout) throws InterruptedException {
 		Instant deadline = Instant.now().plus(timeout);
 		while (Instant.now().isBefore(deadline)) {
-			int projected = count(
+			int feedProjected = count(
 					"SELECT COUNT(*) FROM read_model_event_feed WHERE event_id = CAST(? AS uuid)",
 					eventId);
-			if (projected == 1) {
+			int notificationProjected = count(
+					"SELECT COUNT(*) FROM read_model_notification_inbox WHERE event_id = CAST(? AS uuid)",
+					eventId);
+			if (feedProjected == 1 && notificationProjected == 1) {
 				return;
 			}
 			Thread.sleep(250);
 		}
-		fail("Timed out waiting for projector to consume Kafka event");
+		fail("Timed out waiting for projector to consume Kafka event into all read models");
 	}
 
 	private int count(String sql, Object... args) {
