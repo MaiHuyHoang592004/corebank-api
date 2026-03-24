@@ -59,7 +59,7 @@ public class ReadModelProjector {
 			return 0;
 		}
 
-		return jdbcTemplate.update(
+		int inserted = jdbcTemplate.update(
 				"""
 				INSERT INTO read_model_event_feed (
 				    event_id,
@@ -87,11 +87,67 @@ public class ReadModelProjector {
 				envelope.requestId(),
 				envelope.actor(),
 				envelope.payloadJson());
+
+		if (inserted == 1) {
+			updateAggregateActivitySummary(envelope);
+		}
+
+		return inserted;
 	}
 
 	@Transactional
 	public int projectReplayedEvent(String eventData) {
 		return projectEvent(REPLAY_SOURCE_TOPIC, eventData);
+	}
+
+	private void updateAggregateActivitySummary(ProjectedEnvelope envelope) {
+		jdbcTemplate.update(
+				"""
+				INSERT INTO read_model_aggregate_activity (
+				    aggregate_type,
+				    aggregate_id,
+				    latest_event_id,
+				    latest_event_type,
+				    latest_occurred_at,
+				    last_actor,
+				    last_correlation_id,
+				    event_count,
+				    updated_at
+				) VALUES (?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+				ON CONFLICT (aggregate_type, aggregate_id) DO UPDATE
+				SET latest_event_id = CASE
+				        WHEN EXCLUDED.latest_occurred_at >= read_model_aggregate_activity.latest_occurred_at
+				            THEN EXCLUDED.latest_event_id
+				        ELSE read_model_aggregate_activity.latest_event_id
+				    END,
+				    latest_event_type = CASE
+				        WHEN EXCLUDED.latest_occurred_at >= read_model_aggregate_activity.latest_occurred_at
+				            THEN EXCLUDED.latest_event_type
+				        ELSE read_model_aggregate_activity.latest_event_type
+				    END,
+				    latest_occurred_at = GREATEST(
+				        read_model_aggregate_activity.latest_occurred_at,
+				        EXCLUDED.latest_occurred_at),
+				    last_actor = CASE
+				        WHEN EXCLUDED.latest_occurred_at >= read_model_aggregate_activity.latest_occurred_at
+				            THEN EXCLUDED.last_actor
+				        ELSE read_model_aggregate_activity.last_actor
+				    END,
+				    last_correlation_id = CASE
+				        WHEN EXCLUDED.latest_occurred_at >= read_model_aggregate_activity.latest_occurred_at
+				            THEN EXCLUDED.last_correlation_id
+				        ELSE read_model_aggregate_activity.last_correlation_id
+				    END,
+				    event_count = read_model_aggregate_activity.event_count + 1,
+				    updated_at = CURRENT_TIMESTAMP
+				""",
+				envelope.aggregateType(),
+				envelope.aggregateId(),
+				envelope.eventId(),
+				envelope.eventType(),
+				java.sql.Timestamp.from(envelope.occurredAt()),
+				envelope.actor(),
+				envelope.correlationId());
 	}
 
 	private ProjectedEnvelope parseEnvelope(String sourceTopic, String eventData) {
