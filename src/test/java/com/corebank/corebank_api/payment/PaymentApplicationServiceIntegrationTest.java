@@ -71,7 +71,7 @@ class PaymentApplicationServiceIntegrationTest {
 				"SELECT COUNT(*) FROM audit_events WHERE action = 'PAYMENT_HOLD_AUTHORIZED' AND resource_id = ?",
 				response.paymentOrderId().toString()));
 		assertEquals(1, count(
-				"SELECT COUNT(*) FROM outbox_messages WHERE event_type = 'PAYMENT_AUTHORIZED' AND aggregate_id = ?",
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'PAYMENT_AUTHORIZED' AND aggregate_id = ?",
 				response.paymentOrderId().toString()));
 		assertEquals(1, count(
 				"SELECT COUNT(*) FROM idempotency_keys WHERE idempotency_key = ? AND status = 'SUCCEEDED'",
@@ -111,7 +111,7 @@ class PaymentApplicationServiceIntegrationTest {
 		assertEquals(0, count(
 				"SELECT COUNT(*) FROM audit_events WHERE action = 'PAYMENT_HOLD_AUTHORIZED' AND resource_type = 'PAYMENT_ORDER'"));
 		assertEquals(0, count(
-				"SELECT COUNT(*) FROM outbox_messages WHERE event_type = 'PAYMENT_AUTHORIZED' AND aggregate_type = 'PAYMENT_ORDER' AND aggregate_id IN (SELECT payment_order_id::text FROM payment_orders WHERE payer_account_id = ?)",
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'PAYMENT_AUTHORIZED' AND aggregate_type = 'PAYMENT_ORDER' AND aggregate_id IN (SELECT payment_order_id::text FROM payment_orders WHERE payer_account_id = ?)",
 				seededAccount.customerAccountId()));
 		assertEquals(1, count(
 				"SELECT COUNT(*) FROM idempotency_keys WHERE idempotency_key = ? AND status = 'FAILED'",
@@ -150,7 +150,7 @@ class PaymentApplicationServiceIntegrationTest {
 				"SELECT COUNT(*) FROM audit_events WHERE action = 'PAYMENT_HOLD_AUTHORIZED' AND resource_id = ?",
 				first.paymentOrderId().toString()));
 		assertEquals(1, count(
-				"SELECT COUNT(*) FROM outbox_messages WHERE event_type = 'PAYMENT_AUTHORIZED' AND aggregate_id = ?",
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'PAYMENT_AUTHORIZED' AND aggregate_id = ?",
 				first.paymentOrderId().toString()));
 	}
 
@@ -271,7 +271,7 @@ class PaymentApplicationServiceIntegrationTest {
 				"SELECT COUNT(*) FROM audit_events WHERE action = 'PAYMENT_HOLD_CAPTURED' AND resource_id = ?",
 				capture.holdId().toString()));
 		assertEquals(1, count(
-				"SELECT COUNT(*) FROM outbox_messages WHERE event_type = 'PAYMENT_CAPTURED' AND aggregate_id = ?",
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'PAYMENT_CAPTURED' AND aggregate_id = ?",
 				capture.holdId().toString()));
 	}
 
@@ -332,7 +332,7 @@ class PaymentApplicationServiceIntegrationTest {
 				"SELECT COUNT(*) FROM audit_events WHERE action = 'PAYMENT_HOLD_VOIDED' AND resource_id = ?",
 				voidResponse.holdId().toString()));
 		assertEquals(1, count(
-				"SELECT COUNT(*) FROM outbox_messages WHERE event_type = 'PAYMENT_VOIDED' AND aggregate_id = ?",
+				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'PAYMENT_VOIDED' AND aggregate_id = ?",
 				voidResponse.holdId().toString()));
 	}
 
