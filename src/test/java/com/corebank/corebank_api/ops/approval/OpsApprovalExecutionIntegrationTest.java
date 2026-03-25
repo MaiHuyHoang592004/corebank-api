@@ -2,6 +2,7 @@ package com.corebank.corebank_api.ops.approval;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -58,6 +59,7 @@ class OpsApprovalExecutionIntegrationTest {
 		jdbcTemplate.update("DELETE FROM loan_events");
 		jdbcTemplate.update("DELETE FROM repayment_schedules");
 		jdbcTemplate.update("DELETE FROM loan_contracts");
+		setRuntimeMode("RUNNING");
 	}
 
 	@Test
@@ -168,6 +170,53 @@ class OpsApprovalExecutionIntegrationTest {
 	}
 
 	@Test
+	void executeOutboxBulkRequeue_returnsConflictWhenRuntimeModeIsNotRunning_andKeepsStateUnchanged() throws Exception {
+		Long outboxEventId = seedDeadLetterOutboxEvent();
+		UUID approvalId = createApproval(
+				user("maker").roles("MAKER"),
+				"""
+				{
+				  "operationType": "OUTBOX_BULK_REQUEUE",
+				  "operationPayload": {
+				    "outboxEventIds": [%d]
+				  }
+				}
+				""".formatted(outboxEventId));
+
+		mockMvc.perform(post("/api/ops/approvals/{approvalId}/approve", approvalId)
+						.with(user("approver").roles("APPROVER"))
+						.with(csrf())
+						.contentType("application/json")
+						.content("{\"decisionReason\":\"ready to execute\"}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("APPROVED"))
+				.andExpect(jsonPath("$.executionStatus").value("NOT_EXECUTED"));
+
+		setRuntimeMode("EOD_LOCK");
+
+		mockMvc.perform(post("/api/ops/executions/outbox-dead-letter-requeue-bulk")
+						.with(user("ops").roles("OPS"))
+						.with(csrf())
+						.contentType("application/json")
+						.content("{\"approvalId\":\"" + approvalId + "\"}"))
+				.andExpect(status().isConflict());
+
+		Map<String, Object> approvalRow = jdbcTemplate.queryForMap(
+				"SELECT status, execution_status, executed_by, executed_at FROM approvals WHERE approval_id = ?",
+				approvalId);
+		assertEquals("APPROVED", approvalRow.get("status"));
+		assertEquals("NOT_EXECUTED", approvalRow.get("execution_status"));
+		assertNull(approvalRow.get("executed_by"));
+		assertNull(approvalRow.get("executed_at"));
+
+		Map<String, Object> outboxRow = jdbcTemplate.queryForMap(
+				"SELECT status, retry_count FROM outbox_events WHERE id = ?",
+				outboxEventId);
+		assertEquals("FAILED", outboxRow.get("status"));
+		assertEquals(3, ((Number) outboxRow.get("retry_count")).intValue());
+	}
+
+	@Test
 	void approvalFlow_loanDefault_executesUsingApprovedPayloadOnly() throws Exception {
 		LoanSeed seeded = seedLoanContractEligibleForDefault();
 		LocalDate asOfDate = LocalDate.now();
@@ -216,6 +265,69 @@ class OpsApprovalExecutionIntegrationTest {
 				"SELECT status FROM loan_contracts WHERE contract_id = ?",
 				seeded.contractId());
 		assertEquals("DEFAULTED", contract.get("status"));
+	}
+
+	@Test
+	void executeLoanDefault_returnsConflictWhenRuntimeModeIsNotRunning_andKeepsStateUnchanged() throws Exception {
+		LoanSeed seeded = seedLoanContractEligibleForDefault();
+		LocalDate asOfDate = LocalDate.now();
+
+		loanApplicationService.markOverdueInstallments(
+				new LoanApplicationService.LoanOverdueTransitionRequest(
+						asOfDate,
+						"collector",
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						"trace-overdue-blocked-execution"));
+
+		UUID approvalId = createApproval(
+				user("maker").roles("MAKER"),
+				"""
+				{
+				  "operationType": "LOAN_DEFAULT",
+				  "operationPayload": {
+				    "contractId": "%s",
+				    "asOfDate": "%s"
+				  }
+				}
+				""".formatted(seeded.contractId(), asOfDate));
+
+		mockMvc.perform(post("/api/ops/approvals/{approvalId}/approve", approvalId)
+						.with(user("approver").roles("APPROVER"))
+						.with(csrf())
+						.contentType("application/json")
+						.content("{\"decisionReason\":\"loan default approved\"}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.status").value("APPROVED"))
+				.andExpect(jsonPath("$.executionStatus").value("NOT_EXECUTED"));
+
+		String statusBefore = jdbcTemplate.queryForObject(
+				"SELECT status FROM loan_contracts WHERE contract_id = ?",
+				String.class,
+				seeded.contractId());
+		setRuntimeMode("MAINTENANCE");
+
+		mockMvc.perform(post("/api/ops/executions/loan-default")
+						.with(user("ops").roles("OPS"))
+						.with(csrf())
+						.contentType("application/json")
+						.content("{\"approvalId\":\"" + approvalId + "\"}"))
+				.andExpect(status().isConflict());
+
+		Map<String, Object> approvalRow = jdbcTemplate.queryForMap(
+				"SELECT status, execution_status, executed_by, executed_at FROM approvals WHERE approval_id = ?",
+				approvalId);
+		assertEquals("APPROVED", approvalRow.get("status"));
+		assertEquals("NOT_EXECUTED", approvalRow.get("execution_status"));
+		assertNull(approvalRow.get("executed_by"));
+		assertNull(approvalRow.get("executed_at"));
+
+		String statusAfter = jdbcTemplate.queryForObject(
+				"SELECT status FROM loan_contracts WHERE contract_id = ?",
+				String.class,
+				seeded.contractId());
+		assertEquals(statusBefore, statusAfter);
 	}
 
 	private UUID createApproval(
@@ -343,9 +455,10 @@ class OpsApprovalExecutionIntegrationTest {
 				"LN-CUST-APPROVAL-" + customerSettlementLedger.toString().substring(0, 8),
 				"Customer Settlement Approval");
 
+		String idempotencyKey = "idem-approval-loan-default-" + UUID.randomUUID();
 		LoanApplicationService.LoanDisbursementResponse disbursement = loanApplicationService.disburseLoan(
 				new LoanApplicationService.LoanDisbursementRequest(
-						"idem-approval-loan-default-1",
+						idempotencyKey,
 						borrowerAccountId,
 						productId,
 						UUID.randomUUID(),
@@ -376,5 +489,17 @@ class OpsApprovalExecutionIntegrationTest {
 
 	private record LoanSeed(
 			UUID contractId) {
+	}
+
+	private void setRuntimeMode(String status) {
+		jdbcTemplate.update(
+				"""
+				UPDATE system_configs
+				SET config_value = jsonb_set(config_value, '{status}', to_jsonb(?::text)),
+				    updated_at = now(),
+				    updated_by = 'test-suite'
+				WHERE config_key = 'runtime_mode'
+				""",
+				status);
 	}
 }

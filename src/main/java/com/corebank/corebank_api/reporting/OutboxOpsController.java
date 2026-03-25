@@ -1,5 +1,6 @@
 package com.corebank.corebank_api.reporting;
 
+import com.corebank.corebank_api.ops.system.OpsRuntimeModePolicy;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -17,12 +18,15 @@ public class OutboxOpsController {
 
 	private final OutboxReportingService outboxReportingService;
 	private final OpsAuthorizationPolicy opsAuthorizationPolicy;
+	private final OpsRuntimeModePolicy opsRuntimeModePolicy;
 
 	public OutboxOpsController(
 			OutboxReportingService outboxReportingService,
-			OpsAuthorizationPolicy opsAuthorizationPolicy) {
+			OpsAuthorizationPolicy opsAuthorizationPolicy,
+			OpsRuntimeModePolicy opsRuntimeModePolicy) {
 		this.outboxReportingService = outboxReportingService;
 		this.opsAuthorizationPolicy = opsAuthorizationPolicy;
+		this.opsRuntimeModePolicy = opsRuntimeModePolicy;
 	}
 
 	@PostMapping("/{outboxEventId}/requeue")
@@ -30,6 +34,7 @@ public class OutboxOpsController {
 			@PathVariable Long outboxEventId,
 			Authentication authentication) {
 		opsAuthorizationPolicy.requireOpsAccess(authentication);
+		opsRuntimeModePolicy.requireRunningForMoneyImpactWrite();
 
 		String actor = authentication == null ? "system" : authentication.getName();
 		OutboxReportingService.OutboxDeadLetterRequeueResponse response =
@@ -49,6 +54,7 @@ public class OutboxOpsController {
 			@RequestBody(required = false) BulkDeadLetterRequeueRequest request,
 			Authentication authentication) {
 		opsAuthorizationPolicy.requireOpsAccess(authentication);
+		opsRuntimeModePolicy.requireRunningForMoneyImpactWrite();
 
 		if (request == null || request.outboxEventIds() == null || request.outboxEventIds().isEmpty()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "outboxEventIds must not be empty");

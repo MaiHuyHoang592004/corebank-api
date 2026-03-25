@@ -1,7 +1,7 @@
 package com.corebank.corebank_api.ops.reconciliation;
 
 import com.corebank.corebank_api.ops.iam.IamAuthorizationService;
-import com.corebank.corebank_api.ops.system.SystemModeService;
+import com.corebank.corebank_api.ops.system.OpsRuntimeModePolicy;
 import java.time.LocalDate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -18,15 +18,15 @@ public class OpsReconciliationController {
 
 	private final ReconciliationService reconciliationService;
 	private final IamAuthorizationService iamAuthorizationService;
-	private final SystemModeService systemModeService;
+	private final OpsRuntimeModePolicy opsRuntimeModePolicy;
 
 	public OpsReconciliationController(
 			ReconciliationService reconciliationService,
 			IamAuthorizationService iamAuthorizationService,
-			SystemModeService systemModeService) {
+			OpsRuntimeModePolicy opsRuntimeModePolicy) {
 		this.reconciliationService = reconciliationService;
 		this.iamAuthorizationService = iamAuthorizationService;
-		this.systemModeService = systemModeService;
+		this.opsRuntimeModePolicy = opsRuntimeModePolicy;
 	}
 
 	@PostMapping("/runs")
@@ -34,11 +34,7 @@ public class OpsReconciliationController {
 			@RequestBody(required = false) ReconciliationRunRequest request,
 			Authentication authentication) {
 		iamAuthorizationService.requireAnyRole(authentication, "ROLE_OPS", "ROLE_ADMIN");
-		if (systemModeService.getCurrentMode() == SystemModeService.SystemMode.RUNNING) {
-			throw new ResponseStatusException(
-					HttpStatus.CONFLICT,
-					"Reconciliation run is allowed only when system mode is not RUNNING");
-		}
+		opsRuntimeModePolicy.requireNonRunningForMaintenanceJob();
 
 		LocalDate businessDate = parseBusinessDate(request == null ? null : request.businessDate());
 		Integer limit = request == null ? null : request.limit();

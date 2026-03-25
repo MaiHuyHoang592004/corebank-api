@@ -2,7 +2,7 @@ package com.corebank.corebank_api.ops.maintenance;
 
 import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.ops.iam.IamAuthorizationService;
-import com.corebank.corebank_api.ops.system.SystemModeService;
+import com.corebank.corebank_api.ops.system.OpsRuntimeModePolicy;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -18,15 +18,15 @@ public class OpsMaintenanceController {
 
 	private final PartitionMaintenanceService partitionMaintenanceService;
 	private final IamAuthorizationService iamAuthorizationService;
-	private final SystemModeService systemModeService;
+	private final OpsRuntimeModePolicy opsRuntimeModePolicy;
 
 	public OpsMaintenanceController(
 			PartitionMaintenanceService partitionMaintenanceService,
 			IamAuthorizationService iamAuthorizationService,
-			SystemModeService systemModeService) {
+			OpsRuntimeModePolicy opsRuntimeModePolicy) {
 		this.partitionMaintenanceService = partitionMaintenanceService;
 		this.iamAuthorizationService = iamAuthorizationService;
-		this.systemModeService = systemModeService;
+		this.opsRuntimeModePolicy = opsRuntimeModePolicy;
 	}
 
 	@PostMapping("/partitions/ensure-future")
@@ -34,11 +34,7 @@ public class OpsMaintenanceController {
 			@RequestBody(required = false) EnsureFuturePartitionsRequest request,
 			Authentication authentication) {
 		iamAuthorizationService.requireAnyRole(authentication, "ROLE_OPS", "ROLE_ADMIN");
-		if (systemModeService.getCurrentMode() == SystemModeService.SystemMode.RUNNING) {
-			throw new ResponseStatusException(
-					HttpStatus.CONFLICT,
-					"Partition maintenance is allowed only when system mode is not RUNNING");
-		}
+		opsRuntimeModePolicy.requireNonRunningForMaintenanceJob();
 
 		try {
 			PartitionMaintenanceService.PartitionMaintenanceResult result = partitionMaintenanceService.ensureFuturePartitions(

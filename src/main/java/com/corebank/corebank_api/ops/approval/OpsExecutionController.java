@@ -5,6 +5,7 @@ import com.corebank.corebank_api.integration.OutboxService;
 import com.corebank.corebank_api.lending.LoanContractService;
 import com.corebank.corebank_api.ops.audit.AuditService;
 import com.corebank.corebank_api.ops.iam.IamAuthorizationService;
+import com.corebank.corebank_api.ops.system.OpsRuntimeModePolicy;
 import com.corebank.corebank_api.reporting.OutboxReportingService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,6 +35,7 @@ public class OpsExecutionController {
 	private final AuditService auditService;
 	private final OutboxService outboxService;
 	private final ObjectMapper objectMapper;
+	private final OpsRuntimeModePolicy opsRuntimeModePolicy;
 
 	public OpsExecutionController(
 			ApprovalService approvalService,
@@ -42,7 +44,8 @@ public class OpsExecutionController {
 			LoanContractService loanContractService,
 			AuditService auditService,
 			OutboxService outboxService,
-			ObjectMapper objectMapper) {
+			ObjectMapper objectMapper,
+			OpsRuntimeModePolicy opsRuntimeModePolicy) {
 		this.approvalService = approvalService;
 		this.iamAuthorizationService = iamAuthorizationService;
 		this.outboxReportingService = outboxReportingService;
@@ -50,6 +53,7 @@ public class OpsExecutionController {
 		this.auditService = auditService;
 		this.outboxService = outboxService;
 		this.objectMapper = objectMapper.copy().findAndRegisterModules();
+		this.opsRuntimeModePolicy = opsRuntimeModePolicy;
 	}
 
 	@PostMapping("/outbox-dead-letter-requeue-bulk")
@@ -57,6 +61,7 @@ public class OpsExecutionController {
 			@RequestBody(required = false) ApprovalExecutionRequest request,
 			Authentication authentication) {
 		iamAuthorizationService.requirePermission(authentication, "APPROVAL_EXECUTE");
+		opsRuntimeModePolicy.requireRunningForMoneyImpactWrite();
 		UUID approvalId = requiredApprovalId(request);
 		String actor = actor(authentication);
 
@@ -91,6 +96,7 @@ public class OpsExecutionController {
 			@RequestBody(required = false) ApprovalExecutionRequest request,
 			Authentication authentication) {
 		iamAuthorizationService.requirePermission(authentication, "APPROVAL_EXECUTE");
+		opsRuntimeModePolicy.requireRunningForMoneyImpactWrite();
 		UUID approvalId = requiredApprovalId(request);
 		String actor = actor(authentication);
 
