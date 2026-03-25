@@ -1339,3 +1339,48 @@
   - outbox dead-letter requeue
   - approval execution claim
   Future money-impact service entry points should adopt the same policy baseline.
+
+## Verification Session: 2026-03-26 (Phase 5 Slice 5.10 - Idempotency TTL Cleanup Ops Baseline)
+
+### Scope
+- Add manual ops maintenance cleanup for stale idempotency keys
+- Keep API/schema/deploy/env unchanged and preserve existing endpoint contracts
+- Limit cleanup to safe terminal records with grace window
+
+### Changes Applied
+- Added `IdempotencyMaintenanceService` under `ops/maintenance`:
+  - `cleanupExpired(...)` with bounded delete (`default limit=1000`, `max limit=10000`)
+  - supports `dryRun` (`true` by default when omitted)
+  - cleanup filter:
+    - `status IN ('SUCCEEDED','FAILED')`
+    - `expires_at < now() - interval '24 hours'`
+    - excludes `IN_PROGRESS` by design
+  - stable batch deletion order by `expires_at ASC`
+  - batch registry integration via `BatchRunService` (`batch_type='IDEMPOTENCY_CLEANUP'`)
+  - audit append `IDEMPOTENCY_KEYS_CLEANED` with metadata-only summary
+- Extended `OpsMaintenanceController`:
+  - added `POST /api/ops/maintenance/idempotency/cleanup`
+  - request body supports `{ "limit": <int>, "dryRun": <bool> }`
+  - role guard: `ROLE_OPS|ROLE_ADMIN`
+  - runtime guard: `OpsRuntimeModePolicy.requireNonRunningForMaintenanceJob()` (`RUNNING -> 409`)
+  - invalid request maps to `400`
+- Added `OpsIdempotencyMaintenanceIntegrationTest`:
+  - `USER -> 403`
+  - `OPS + RUNNING -> 409`
+  - default request uses `dryRun=true` and does not delete
+  - actual delete path removes only expired terminal records, honors limit, and marks `truncated`
+  - invalid limits (`0`, `10001`) return `400`
+  - verifies batch run and audit side effects
+
+### Focused Verification Results
+- Targeted + regression minimum:
+  - `OpsIdempotencyMaintenanceIntegrationTest`: **5/5 passed**
+  - `OpsPartitionMaintenanceIntegrationTest`: **4/4 passed**
+  - `SystemModeServiceTest`: **16/16 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Late retries beyond `expires_at + 24h` may now miss prior terminal idempotency entries; this is mitigated by terminal-only cleanup + grace window + default `dryRun=true`.
+- Cleanup remains manual in this slice; scheduler automation and runbook cadence are deferred intentionally.
+- Future expansions should keep `IN_PROGRESS` exclusion and bounded batch semantics to avoid unsafe deletes under load.
