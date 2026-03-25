@@ -2,16 +2,11 @@ package com.corebank.corebank_api.reporting;
 
 import com.corebank.corebank_api.integration.saga.SagaQueryService;
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -112,65 +107,5 @@ public class ReportingController {
 				aggregateType,
 				fromDeadLetteredAt,
 				toDeadLetteredAt));
-	}
-
-	@PostMapping("/outbox/dead-letters/{outboxEventId}/requeue")
-	public ResponseEntity<OutboxReportingService.OutboxDeadLetterRequeueResponse> requeueOutboxDeadLetter(
-			@PathVariable Long outboxEventId,
-			Authentication authentication) {
-		requireOpsAccess(authentication);
-
-		String actor = authentication == null ? "system" : authentication.getName();
-		OutboxReportingService.OutboxDeadLetterRequeueResponse response =
-				outboxReportingService.requeueDeadLetter(outboxEventId, actor);
-
-		if ("REQUEUED".equals(response.status())) {
-			return ResponseEntity.ok(response);
-		}
-		if ("NOT_FOUND".equals(response.status())) {
-			return ResponseEntity.status(HttpStatus.NOT_FOUND).body(response);
-		}
-		return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
-	}
-
-	@PostMapping("/outbox/dead-letters/requeue-bulk")
-	public ResponseEntity<OutboxReportingService.OutboxDeadLetterBulkRequeueResponse> requeueOutboxDeadLettersBulk(
-			@RequestBody(required = false) BulkDeadLetterRequeueRequest request,
-			Authentication authentication) {
-		requireOpsAccess(authentication);
-
-		if (request == null || request.outboxEventIds() == null || request.outboxEventIds().isEmpty()) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "outboxEventIds must not be empty");
-		}
-		if (request.outboxEventIds().stream().anyMatch(id -> id == null || id <= 0)) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "outboxEventIds must contain positive numbers");
-		}
-		if (request.outboxEventIds().size() > outboxReportingService.maxBulkRequeueSize()) {
-			throw new ResponseStatusException(
-					HttpStatus.BAD_REQUEST,
-					"outboxEventIds must not exceed " + outboxReportingService.maxBulkRequeueSize());
-		}
-
-		String actor = authentication == null ? "system" : authentication.getName();
-		OutboxReportingService.OutboxDeadLetterBulkRequeueResponse response =
-				outboxReportingService.requeueDeadLetters(request.outboxEventIds(), actor);
-		return ResponseEntity.ok(response);
-	}
-
-	private void requireOpsAccess(Authentication authentication) {
-		if (authentication == null) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Missing authentication");
-		}
-
-		boolean authorized = authentication.getAuthorities().stream()
-				.map(GrantedAuthority::getAuthority)
-				.anyMatch(authority -> "ROLE_OPS".equals(authority) || "ROLE_ADMIN".equals(authority));
-
-		if (!authorized) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Insufficient authority");
-		}
-	}
-
-	public record BulkDeadLetterRequeueRequest(List<Long> outboxEventIds) {
 	}
 }
