@@ -1,6 +1,7 @@
 package com.corebank.corebank_api.reporting;
 
 import com.corebank.corebank_api.integration.saga.SagaQueryService;
+import com.corebank.corebank_api.ops.reconciliation.ReconciliationService;
 import java.time.Instant;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
@@ -19,14 +20,17 @@ public class ReportingController {
 	private final ReadModelQueryService readModelQueryService;
 	private final SagaQueryService sagaQueryService;
 	private final OutboxReportingService outboxReportingService;
+	private final ReconciliationService reconciliationService;
 
 	public ReportingController(
 			ReadModelQueryService readModelQueryService,
 			SagaQueryService sagaQueryService,
-			OutboxReportingService outboxReportingService) {
+			OutboxReportingService outboxReportingService,
+			ReconciliationService reconciliationService) {
 		this.readModelQueryService = readModelQueryService;
 		this.sagaQueryService = sagaQueryService;
 		this.outboxReportingService = outboxReportingService;
+		this.reconciliationService = reconciliationService;
 	}
 
 	@GetMapping("/aggregate-activity")
@@ -107,5 +111,14 @@ public class ReportingController {
 				aggregateType,
 				fromDeadLetteredAt,
 				toDeadLetteredAt));
+	}
+
+	@GetMapping("/reconciliation/breaks")
+	public ResponseEntity<ReconciliationService.ReconciliationBreakPage> reconciliationBreaks(
+			@RequestParam(required = false) Long runId,
+			@RequestParam(required = false) String status,
+			@RequestParam(required = false) String severity,
+			@RequestParam(defaultValue = "50") int limit) {
+		return ResponseEntity.ok(reconciliationService.listBreaks(runId, status, severity, limit));
 	}
 }

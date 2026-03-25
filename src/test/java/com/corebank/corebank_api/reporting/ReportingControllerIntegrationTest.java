@@ -11,7 +11,9 @@ import com.corebank.corebank_api.TestcontainersConfiguration;
 import com.corebank.corebank_api.integration.KafkaConfig;
 import com.corebank.corebank_api.integration.OutboxMetadata;
 import com.corebank.corebank_api.integration.OutboxService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.Map;
+import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,8 +42,11 @@ class ReportingControllerIntegrationTest {
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
 
+	private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
+
 	@BeforeEach
 	void setUp() {
+		jdbcTemplate.update("DELETE FROM reconciliation_breaks");
 		jdbcTemplate.update("DELETE FROM read_model_aggregate_activity");
 		jdbcTemplate.update("DELETE FROM read_model_event_feed");
 		jdbcTemplate.update("DELETE FROM outbox_events");
@@ -263,6 +268,84 @@ class ReportingControllerIntegrationTest {
 				.andExpect(status().isBadRequest());
 	}
 
+	@Test
+	void reconciliationBreaks_returnsFilteredRowsByRunIdStatusAndSeverity() throws Exception {
+		insertReconciliationBreak(
+				501L,
+				"AMOUNT_MISMATCH",
+				"CRITICAL",
+				"OPEN",
+				"acc-501-1",
+				"2026-03-25T10:00:00Z",
+				null);
+		insertReconciliationBreak(
+				501L,
+				"MISSING_ENTRY",
+				"HIGH",
+				"OPEN",
+				"acc-501-2",
+				"2026-03-25T09:59:00Z",
+				null);
+		insertReconciliationBreak(
+				777L,
+				"MISSING_ENTRY",
+				"HIGH",
+				"RESOLVED",
+				"acc-777-1",
+				"2026-03-25T09:58:00Z",
+				"2026-03-25T10:30:00Z");
+
+		mockMvc.perform(get("/api/reporting/reconciliation/breaks")
+						.queryParam("runId", "501")
+						.queryParam("status", "OPEN")
+						.queryParam("severity", "CRITICAL")
+						.queryParam("limit", "50"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.limit").value(50))
+				.andExpect(jsonPath("$.items.length()").value(1))
+				.andExpect(jsonPath("$.items[0].runId").value(501))
+				.andExpect(jsonPath("$.items[0].breakType").value("AMOUNT_MISMATCH"))
+				.andExpect(jsonPath("$.items[0].severity").value("CRITICAL"))
+				.andExpect(jsonPath("$.items[0].status").value("OPEN"))
+				.andExpect(jsonPath("$.items[0].details.businessDate").value("2026-03-25"));
+	}
+
+	@Test
+	void reconciliationBreaks_supportsRunIdOnlyFilterAndSortsByOpenedAtDesc() throws Exception {
+		insertReconciliationBreak(
+				900L,
+				"AMOUNT_MISMATCH",
+				"CRITICAL",
+				"OPEN",
+				"acc-900-new",
+				"2026-03-25T10:05:00Z",
+				null);
+		insertReconciliationBreak(
+				900L,
+				"MISSING_ENTRY",
+				"HIGH",
+				"OPEN",
+				"acc-900-old",
+				"2026-03-25T10:00:00Z",
+				null);
+		insertReconciliationBreak(
+				901L,
+				"MISSING_ENTRY",
+				"HIGH",
+				"OPEN",
+				"acc-901",
+				"2026-03-25T10:10:00Z",
+				null);
+
+		mockMvc.perform(get("/api/reporting/reconciliation/breaks")
+						.queryParam("runId", "900")
+						.queryParam("limit", "10"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.items.length()").value(2))
+				.andExpect(jsonPath("$.items[0].referenceId").value("acc-900-new"))
+				.andExpect(jsonPath("$.items[1].referenceId").value("acc-900-old"));
+	}
+
 	private void setOccurredAt(
 			String aggregateType,
 			String aggregateId,
@@ -309,5 +392,100 @@ class ReportingControllerIntegrationTest {
 				aggregateId,
 				eventType);
 		readModelProjector.projectEvent(topic, eventData);
+	}
+
+	private void insertReconciliationBreak(
+			long runId,
+			String breakType,
+			String severity,
+			String status,
+			String referenceId,
+			String openedAtIso8601,
+			String resolvedAtIso8601) throws Exception {
+		String detailsJson = objectMapper.writeValueAsString(Map.of(
+				"runId", runId,
+				"businessDate", "2026-03-25",
+				"customerAccountId", referenceId,
+				"accountPosted", 1_000L,
+				"accountAvailable", 900L,
+				"snapshotPosted", 900L,
+				"snapshotAvailable", 900L,
+				"deltaPosted", 100L,
+				"deltaAvailable", 0L));
+
+		jdbcTemplate.update(
+				resolvedAtIso8601 == null
+						? """
+						INSERT INTO reconciliation_breaks (
+						    reconciliation_break_id,
+						    reconciliation_run_id,
+						    break_type,
+						    reference_type,
+						    reference_id,
+						    severity,
+						    status,
+						    details_json,
+						    opened_at,
+						    resolved_at
+						) VALUES (
+						    ?,
+						    ?,
+						    ?,
+						    'CUSTOMER_ACCOUNT',
+						    ?,
+						    ?,
+						    ?,
+						    CAST(? AS jsonb),
+						    CAST(? AS TIMESTAMP WITH TIME ZONE),
+						    NULL
+						)
+						"""
+						: """
+						INSERT INTO reconciliation_breaks (
+						    reconciliation_break_id,
+						    reconciliation_run_id,
+						    break_type,
+						    reference_type,
+						    reference_id,
+						    severity,
+						    status,
+						    details_json,
+						    opened_at,
+						    resolved_at
+						) VALUES (
+						    ?,
+						    ?,
+						    ?,
+						    'CUSTOMER_ACCOUNT',
+						    ?,
+						    ?,
+						    ?,
+						    CAST(? AS jsonb),
+						    CAST(? AS TIMESTAMP WITH TIME ZONE),
+						    CAST(? AS TIMESTAMP WITH TIME ZONE)
+						)
+						""",
+				resolvedAtIso8601 == null
+						? new Object[] {
+								UUID.randomUUID(),
+								UUID.nameUUIDFromBytes(("recon-run:" + runId).getBytes()),
+								breakType,
+								referenceId,
+								severity,
+								status,
+								detailsJson,
+								openedAtIso8601
+						}
+						: new Object[] {
+								UUID.randomUUID(),
+								UUID.nameUUIDFromBytes(("recon-run:" + runId).getBytes()),
+								breakType,
+								referenceId,
+								severity,
+								status,
+								detailsJson,
+								openedAtIso8601,
+								resolvedAtIso8601
+						});
 	}
 }
