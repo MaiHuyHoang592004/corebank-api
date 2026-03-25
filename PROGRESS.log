@@ -1298,3 +1298,44 @@
 - Existing runbooks that execute requeue/default while mode is non-`RUNNING` now receive `409`; operators must switch mode to `RUNNING` first.
 - Enforcement is currently at controller boundary; if future non-web entry points are added, apply service-layer guard as follow-up.
 - Error messages now surface runtime mode for clarity; ensure ops runbook examples reflect this behavior.
+
+## Verification Session: 2026-03-26 (Phase 5 Slice 5.9 - Runtime Mode Backstop at Service Layer)
+
+### Scope
+- Add service-layer runtime-mode backstop for money-impact ops paths to prevent direct-invocation bypass outside web controllers
+- Keep API/schema/deploy/env unchanged and preserve existing endpoint contracts
+
+### Changes Applied
+- Updated `OutboxReportingService`:
+  - injected `OpsRuntimeModePolicy`
+  - added `requireRunningForMoneyImpactWrite()` at the start of:
+    - `requeueDeadLetter(...)`
+    - `requeueDeadLetters(...)`
+- Updated `ApprovalService`:
+  - injected `OpsRuntimeModePolicy`
+  - added `requireRunningForMoneyImpactWrite()` at the start of:
+    - `claimApprovedExecution(...)`
+- Added direct service-level bypass integration coverage:
+  - new `OpsRuntimeModeServiceBackstopIntegrationTest`
+    - non-`RUNNING` direct call to `OutboxReportingService.requeueDeadLetter(...)` returns `409` and preserves outbox/dead-letter state
+    - non-`RUNNING` direct call to `OutboxReportingService.requeueDeadLetters(...)` returns `409` and preserves outbox/dead-letter state
+    - non-`RUNNING` direct call to `ApprovalService.claimApprovedExecution(...)` returns `409` and keeps approval `execution_status='NOT_EXECUTED'`
+- Controller/runtime guards from Phase 5.8 remain unchanged (intended double-guard: controller + service)
+
+### Focused Verification Results
+- Targeted:
+  - `OpsRuntimeModeServiceBackstopIntegrationTest`: **3/3 passed**
+  - `OutboxReportingControllerIntegrationTest`: **16/16 passed**
+  - `OpsApprovalExecutionIntegrationTest`: **6/6 passed**
+- Regression minimum:
+  - `ReconciliationOpsIntegrationTest`: **4/4 passed**
+  - `OpsPartitionMaintenanceIntegrationTest`: **4/4 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- With service-layer guard, mode `409` can now occur earlier than downstream business conflicts for direct service invocations; this is intentional for money-impact safety.
+- Service-level enforcement is currently scoped to:
+  - outbox dead-letter requeue
+  - approval execution claim
+  Future money-impact service entry points should adopt the same policy baseline.
