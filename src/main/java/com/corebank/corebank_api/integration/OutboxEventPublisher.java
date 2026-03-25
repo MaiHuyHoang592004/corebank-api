@@ -3,16 +3,24 @@ package com.corebank.corebank_api.integration;
 import lombok.extern.slf4j.Slf4j;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.net.ConnectException;
+import java.net.SocketTimeoutException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.apache.kafka.common.errors.RetriableException;
+import org.apache.kafka.common.errors.SerializationException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
 import java.util.Locale;
 
@@ -118,22 +126,47 @@ public class OutboxEventPublisher {
      */
     private void handlePublishFailure(OutboxEvent event, Throwable throwable) {
         try {
-            String errorMessage = "Publish failed: " + throwable.getMessage();
-            boolean marked = outboxEventRepository.markAsFailed(event.getId(), errorMessage);
-            
-            if (marked) {
-                int attempt = currentRetryCount(event.getId());
-                log.warn("Failed to publish event {} (retry {}): {}", 
-                        event.getId(), attempt, errorMessage);
+            PublishFailureType failureType = classifyFailure(throwable);
+            String errorMessage = "Publish failed: " + describeFailure(throwable);
 
-                if (attempt >= MAX_RETRIES) {
-                    boolean deadLettered = outboxEventRepository.addToDeadLetter(event.getId());
-                    if (deadLettered) {
-                        log.error("Outbox event {} moved to dead-letter after {} retries", event.getId(), attempt);
-                    }
+            if (failureType == PublishFailureType.NON_TRANSIENT) {
+                String terminalErrorMessage = "Publish failed (non-transient): " + describeFailure(throwable);
+                boolean terminalMarked = outboxEventRepository.markAsTerminalFailed(
+                        event.getId(),
+                        terminalErrorMessage,
+                        MAX_RETRIES);
+                if (!terminalMarked) {
+                    log.warn("Failed to mark event {} as terminal failed", event.getId());
+                    return;
                 }
-            } else {
+
+                log.error("Non-transient publish failure for event {}. Moving directly to dead-letter: {}",
+                        event.getId(),
+                        terminalErrorMessage);
+                boolean deadLettered = outboxEventRepository.addToDeadLetter(event.getId());
+                if (deadLettered) {
+                    log.error("Outbox event {} moved to dead-letter immediately for non-transient failure", event.getId());
+                }
+                return;
+            }
+
+            boolean marked = outboxEventRepository.markAsFailed(event.getId(), errorMessage);
+            if (!marked) {
                 log.warn("Failed to mark event {} as failed", event.getId());
+                return;
+            }
+
+            int attempt = currentRetryCount(event.getId());
+            log.warn("Failed to publish event {} (retry {}): {}",
+                    event.getId(),
+                    attempt,
+                    errorMessage);
+
+            if (attempt >= MAX_RETRIES) {
+                boolean deadLettered = outboxEventRepository.addToDeadLetter(event.getId());
+                if (deadLettered) {
+                    log.error("Outbox event {} moved to dead-letter after {} retries", event.getId(), attempt);
+                }
             }
         } catch (Exception e) {
             log.error("Error handling publish failure for event {}", event.getId(), e);
@@ -146,6 +179,54 @@ public class OutboxEventPublisher {
             return latest.get().getRetryCount();
         }
         return 0;
+    }
+
+    private PublishFailureType classifyFailure(Throwable throwable) {
+        Set<Throwable> visited = new HashSet<>();
+        Throwable current = throwable;
+
+        while (current != null && visited.add(current)) {
+            if (isNonTransient(current)) {
+                return PublishFailureType.NON_TRANSIENT;
+            }
+            if (isTransient(current)) {
+                return PublishFailureType.TRANSIENT;
+            }
+            current = current.getCause();
+        }
+
+        return PublishFailureType.NON_TRANSIENT;
+    }
+
+    private boolean isTransient(Throwable throwable) {
+        return throwable instanceof RetriableException
+                || throwable instanceof TimeoutException
+                || throwable instanceof SocketTimeoutException
+                || throwable instanceof ConnectException
+                || throwable instanceof IOException;
+    }
+
+    private boolean isNonTransient(Throwable throwable) {
+        return throwable instanceof SerializationException
+                || throwable instanceof IllegalArgumentException
+                || throwable instanceof ClassCastException;
+    }
+
+    private String describeFailure(Throwable throwable) {
+        if (throwable == null) {
+            return "unknown error";
+        }
+        String type = throwable.getClass().getSimpleName();
+        String message = throwable.getMessage();
+        if (message == null || message.isBlank()) {
+            return type;
+        }
+        return type + ": " + message;
+    }
+
+    private enum PublishFailureType {
+        TRANSIENT,
+        NON_TRANSIENT
     }
     
     /**

@@ -331,6 +331,44 @@ class OutboxPatternIntegrationTest {
 	}
 
 	@Test
+	void markAsTerminalFailed_setsRetryToMaxAndSkipsFurtherClaim() {
+		outboxService.appendMessage(
+				"TRANSFER",
+				"trf-terminal-fail-1",
+				"TRANSFER_COMPLETED",
+				Map.of("amountMinor", 70_000L));
+
+		List<OutboxEvent> claimed = outboxEventRepository.getPendingEvents(10, 3, 30, 300);
+		assertEquals(1, claimed.size());
+		Long eventId = claimed.get(0).getId();
+
+		boolean terminalFailed = outboxEventRepository.markAsTerminalFailed(
+				eventId,
+				"Publish failed (non-transient): SerializationException: invalid payload",
+				3);
+		assertTrue(terminalFailed);
+		assertTrue(outboxEventRepository.addToDeadLetter(eventId));
+
+		Map<String, Object> row = jdbcTemplate.queryForMap(
+				"""
+				SELECT status,
+				       retry_count,
+				       processing_started_at,
+				       last_error
+				FROM outbox_events
+				WHERE id = ?
+				""",
+				eventId);
+		assertEquals("FAILED", row.get("status"));
+		assertEquals(3, ((Number) row.get("retry_count")).intValue());
+		assertNull(row.get("processing_started_at"));
+		assertTrue(String.valueOf(row.get("last_error")).contains("non-transient"));
+
+		List<OutboxEvent> pending = outboxEventRepository.getPendingEvents(10, 3, 0, 300);
+		assertTrue(pending.stream().noneMatch(event -> eventId.equals(event.getId())));
+	}
+
+	@Test
 	void requeueDeadLetter_movesFailedEventBackToPendingAndClearsDeadLetter() {
 		outboxService.appendMessage(
 				"TRANSFER",
