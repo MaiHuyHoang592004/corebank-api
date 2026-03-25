@@ -1059,3 +1059,78 @@
 - Execution claim currently marks approval `EXECUTED` before operation body runs; this prevents duplicate execution but can require manual remediation if an execution fails mid-flight.
 - Product binding validator intentionally keeps legacy fallback when a product has no version rows; a stricter policy can be enabled later after full product version rollout.
 - DB-first IAM policy is active, but runtime behavior still depends on explicit `iam_staff_users` and role assignments; current fallback-to-authorities remains in place for compatibility.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 5 Slice 5.5 - Reconciliation Runtime Baseline)
+
+### Scope
+- Add manual ops reconciliation run endpoint with runtime-mode safety guard
+- Persist reconciliation breaks from authoritative account balances vs daily snapshots
+- Expose read-only reporting query for reconciliation breaks with run/status/severity filters
+- Keep backward compatibility and avoid schema/deploy/env changes
+
+### Changes Applied
+- Added `ReconciliationService` (`ops/reconciliation`):
+  - new reconciliation orchestration on existing tables only:
+    - `customer_accounts` (authoritative balances)
+    - `account_balance_snapshots`
+    - `reconciliation_breaks`
+    - `batch_runs`
+  - run contract:
+    - input validation: `businessDate` required
+    - limit behavior: default `2000`, clamp `1..10000`
+  - run flow:
+    - starts batch with `batch_type='RECONCILIATION'`
+    - detects `MISSING_ENTRY` for active accounts without snapshot on `businessDate`
+    - detects `AMOUNT_MISMATCH` for posted/available differences
+    - writes `reconciliation_breaks` with fixed severity:
+      - `MISSING_ENTRY -> HIGH`
+      - `AMOUNT_MISMATCH -> CRITICAL`
+    - writes `details_json` keys:
+      - `runId`, `businessDate`, `customerAccountId`
+      - `accountPosted`, `accountAvailable`
+      - `snapshotPosted`, `snapshotAvailable`
+      - `deltaPosted`, `deltaAvailable`
+    - completes/fails `batch_runs` with summary JSON
+    - appends audit event `RECONCILIATION_RUN_EXECUTED`
+  - added break query API for reporting with filters:
+    - `runId`, `status`, `severity`, bounded `limit` (max 200)
+- Added `OpsReconciliationController`:
+  - `POST /api/ops/reconciliation/runs`
+  - auth guard: `ROLE_OPS` or `ROLE_ADMIN`
+  - system mode guard: returns `409` when runtime mode is `RUNNING`
+  - request body: `{ "businessDate": "yyyy-MM-dd", "limit": 2000 }`
+  - response: `{ runId, businessDate, checkedCount, breakCount, missingCount, mismatchCount, truncated }`
+- Updated `ReportingController`:
+  - added `GET /api/reporting/reconciliation/breaks`
+  - filters:
+    - `runId`
+    - `status`
+    - `severity`
+    - `limit` (default `50`, max `200`)
+- Expanded integration tests:
+  - new `ReconciliationOpsIntegrationTest`:
+    - `USER -> 403`
+    - `RUNNING mode -> 409`
+    - mixed run creates both `MISSING_ENTRY` and `AMOUNT_MISMATCH`
+    - verifies run summary, break persistence, and audit append
+    - bad input (`missing/invalid businessDate`) -> `400`
+  - updated `ReportingControllerIntegrationTest`:
+    - reconciliation break query filter coverage (`runId/status/severity`)
+    - runId-only query + descending order behavior
+
+### Focused Verification Results
+- `ReconciliationOpsIntegrationTest`: **4/4 passed**
+- `ReportingControllerIntegrationTest`: **8/8 passed**
+- `SnapshotServiceTest`: **5/5 passed**
+- `BatchRunServiceTest`: **9/9 passed**
+- `SystemModeServiceTest`: **16/16 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `OutboxPatternIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Reconciliation run currently enforces non-`RUNNING` mode at controller layer only; if future entry points are added, keep this guard centralized.
+- Break listing filters by `runId` embedded in `details_json`; if reporting volume grows, add dedicated typed run-id column mapping strategy in a future schema slice.
+- Current slice is manual-trigger only; scheduling/ops automation for reconciliation is intentionally deferred.
