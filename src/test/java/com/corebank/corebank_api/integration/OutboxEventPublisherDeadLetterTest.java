@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -56,7 +57,7 @@ class OutboxEventPublisherDeadLetterTest {
 		when(outboxEventRepository.addToDeadLetter(10L)).thenReturn(true);
 
 		CompletableFuture<SendResult<String, Object>> failedPublish = new CompletableFuture<>();
-		failedPublish.completeExceptionally(new RuntimeException("broker unavailable"));
+		failedPublish.completeExceptionally(new TimeoutException("broker unavailable"));
 		when(kafkaTemplate.send(anyString(), anyString(), any())).thenReturn(failedPublish);
 
 		outboxEventPublisher.processPendingEvents();
@@ -87,11 +88,39 @@ class OutboxEventPublisherDeadLetterTest {
 						.build()));
 
 		CompletableFuture<SendResult<String, Object>> failedPublish = new CompletableFuture<>();
-		failedPublish.completeExceptionally(new RuntimeException("temporary timeout"));
+		failedPublish.completeExceptionally(new TimeoutException("temporary timeout"));
 		when(kafkaTemplate.send(anyString(), anyString(), any())).thenReturn(failedPublish);
 
 		outboxEventPublisher.processPendingEvents();
 
 		verify(outboxEventRepository, never()).addToDeadLetter(11L);
+	}
+
+	@Test
+	void processPendingEvents_movesNonTransientFailureToDeadLetterImmediately() {
+		OutboxEvent claimed = OutboxEvent.builder()
+				.id(12L)
+				.aggregateType("TRANSFER")
+				.aggregateId("transfer-001")
+				.eventType("TRANSFER_COMPLETED")
+				.eventData("{\"amountMinor\":\"invalid\"}")
+				.retryCount(0)
+				.status(OutboxEvent.STATUS_PROCESSING)
+				.build();
+		when(outboxEventRepository.getPendingEvents(anyInt(), anyInt(), anyInt(), anyInt()))
+				.thenReturn(List.of(claimed));
+		when(outboxEventRepository.markAsTerminalFailed(eq(12L), contains("Publish failed (non-transient)"), eq(3)))
+				.thenReturn(true);
+		when(outboxEventRepository.addToDeadLetter(12L)).thenReturn(true);
+
+		CompletableFuture<SendResult<String, Object>> failedPublish = new CompletableFuture<>();
+		failedPublish.completeExceptionally(new IllegalArgumentException("invalid payload"));
+		when(kafkaTemplate.send(anyString(), anyString(), any())).thenReturn(failedPublish);
+
+		outboxEventPublisher.processPendingEvents();
+
+		verify(outboxEventRepository).markAsTerminalFailed(eq(12L), contains("Publish failed (non-transient)"), eq(3));
+		verify(outboxEventRepository, never()).markAsFailed(eq(12L), anyString());
+		verify(outboxEventRepository).addToDeadLetter(12L);
 	}
 }

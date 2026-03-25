@@ -146,6 +146,29 @@ public class OutboxEventRepository {
     }
 
     /**
+     * Mark event as terminal failed (non-transient error path).
+     */
+    public boolean markAsTerminalFailed(Long eventId, String error, int terminalRetryCount) {
+        String sql = """
+            UPDATE outbox_events
+            SET processed_at = CURRENT_TIMESTAMP,
+                processing_started_at = NULL,
+                status = 'FAILED',
+                retry_count = GREATEST(retry_count, :terminalRetryCount),
+                last_error = :error
+            WHERE id = :eventId
+              AND status IN ('PENDING', 'PROCESSING', 'FAILED')
+            """;
+
+        MapSqlParameterSource params = new MapSqlParameterSource()
+            .addValue("eventId", eventId)
+            .addValue("error", error)
+            .addValue("terminalRetryCount", terminalRetryCount);
+
+        return namedParameterJdbcTemplate.update(sql, params) == 1;
+    }
+
+    /**
      * Persist a dead-letter snapshot for an exhausted outbox event.
      */
     public boolean addToDeadLetter(Long eventId) {
