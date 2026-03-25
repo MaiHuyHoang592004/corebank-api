@@ -1134,3 +1134,56 @@
 - Reconciliation run currently enforces non-`RUNNING` mode at controller layer only; if future entry points are added, keep this guard centralized.
 - Break listing filters by `runId` embedded in `details_json`; if reporting volume grows, add dedicated typed run-id column mapping strategy in a future schema slice.
 - Current slice is manual-trigger only; scheduling/ops automation for reconciliation is intentionally deferred.
+
+## Verification Session: 2026-03-25 (Phase 5 Slice 5.6 - Encryption App-Layer Baseline)
+
+### Scope
+- Add app-layer encryption for customer sensitive secrets using existing `encrypted_customer_secrets` table
+- Add additive ops endpoints for secret upsert and metadata listing
+- Keep backward compatibility and avoid schema/deploy/env changes
+
+### Changes Applied
+- Added new `ops/security` module:
+  - `CustomerSecretType`: allowlist parser for supported secret types
+  - `CustomerSecretCryptoService`:
+    - `AES/GCM/NoPadding`
+    - nonce length `12` bytes
+    - AAD format `customerId|secretType|keyVersion`
+    - fixed `keyVersion=1`
+    - key source `corebank.security.master-key-b64`
+    - fail-closed `503` when key is missing/invalid
+  - `CustomerSecretRepository`:
+    - customer existence check
+    - upsert into `encrypted_customer_secrets` by `(customer_id, secret_type)`
+    - metadata query (no plaintext/cipher return)
+  - `CustomerSecretService`:
+    - validation (`customerId` exists, secretType allowlist, plaintext non-blank, max 2048)
+    - encryption + persistence orchestration
+    - metadata listing per customer
+    - audit append `CUSTOMER_SECRET_UPSERTED` with metadata-only payload
+- Added `OpsCustomerSecretController`:
+  - `PUT /api/ops/customers/{customerId}/secrets/{secretType}` body `{ "plainText": "..." }`
+  - `GET /api/ops/customers/{customerId}/secrets`
+  - role guard via `IamAuthorizationService.requireAnyRole(authentication, "ROLE_OPS", "ROLE_ADMIN")`
+- Added integration tests:
+  - `OpsCustomerSecretIntegrationTest`:
+    - `USER -> 403`
+    - valid upsert -> `200`, ciphertext/nonce persisted, no plaintext in audit payload
+    - repeated upsert keeps single row
+    - invalid secret type / blank plaintext / >2048 -> `400`
+    - unknown customer -> `404`
+    - metadata list response excludes secret payload
+  - `OpsCustomerSecretMissingKeyIntegrationTest`:
+    - missing key -> upsert returns `503`
+
+### Focused Verification Results
+- `OpsCustomerSecretIntegrationTest`: **6/6 passed**
+- `OpsCustomerSecretMissingKeyIntegrationTest`: **1/1 passed**
+- `OpsApprovalExecutionIntegrationTest`: **4/4 passed**
+- `ReconciliationOpsIntegrationTest`: **4/4 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+
+### Risks / Follow-up
+- Regression suite run in a single Maven invocation exposed a pre-existing test-order coupling (`ReconciliationOpsIntegrationTest` setup assumes no prior `ledger_postings` references). Per-test isolated runs remain green.
+- Current slice encrypts at app layer for ops write path only; decrypt/read-value flow for operational review is intentionally out of scope.
+- Key rotation and multi-version key-management are deferred; current baseline intentionally uses fixed `keyVersion=1`.
