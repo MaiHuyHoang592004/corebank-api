@@ -873,3 +873,40 @@
 - Bulk requeue remains a manual operator action; downstream consumers must stay idempotent to tolerate replay.
 - Role checks currently use direct authority-name matching in controller (`ROLE_OPS`/`ROLE_ADMIN`); if security policy centralization is introduced later, move this guard into shared auth policy components.
 - Requeue command endpoints are still under reporting controller for minimal-scope compatibility; command/query controller split can be a later refactor.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.15 - Outbox Ops Boundary Cleanup)
+
+### Scope
+- Separate outbox dead-letter command endpoints from read-only reporting endpoints
+- Centralize ops authorization guard (`ROLE_OPS`/`ROLE_ADMIN`) into a shared policy component
+- Keep API URLs/contracts unchanged, keep backward compatibility, and avoid deployment/env/schema changes
+
+### Changes Applied
+- Updated `ReportingController`:
+  - retained read-only endpoints only (`aggregate-activity`, `sagas`, outbox summary/list)
+  - removed outbox dead-letter requeue command handlers from this query controller
+- Added `OpsAuthorizationPolicy`:
+  - shared `requireOpsAccess(authentication)` guard with existing forbidden semantics:
+    - `Missing authentication` -> `403`
+    - `Insufficient authority` -> `403`
+- Added `OutboxOpsController`:
+  - hosts command endpoints under same base path (`/api/reporting/outbox/dead-letters`)
+  - keeps existing endpoint contracts unchanged:
+    - `POST /{outboxEventId}/requeue`
+    - `POST /requeue-bulk`
+  - keeps existing request validation and response status mapping (`200/404/409`, bulk `400` guards)
+- No changes to `OutboxReportingService` requeue logic or repository dead-letter state transitions.
+
+### Focused Verification Results
+- `OutboxReportingControllerIntegrationTest`: **14/14 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `SagaReportingControllerIntegrationTest`: **2/2 passed**
+- `OutboxPatternIntegrationTest`: **12/12 passed**
+- `OutboxEventPublisherDeadLetterTest`: **2/2 passed**
+
+### Risks / Follow-up
+- Authorization still uses authority-name matching (`ROLE_OPS`/`ROLE_ADMIN`); if broader policy abstraction is introduced later, align this component with global security policy modules.
+- Outbox ops commands remain under `/api/reporting` path for backward compatibility; full path-level command/query namespace separation is deferred to avoid breaking clients.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
