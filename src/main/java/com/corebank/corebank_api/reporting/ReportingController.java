@@ -1,6 +1,8 @@
 package com.corebank.corebank_api.reporting;
 
+import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.integration.saga.SagaQueryService;
+import com.corebank.corebank_api.ops.hotaccount.HotAccountOpsService;
 import com.corebank.corebank_api.ops.reconciliation.ReconciliationService;
 import java.time.Instant;
 import java.util.UUID;
@@ -21,16 +23,19 @@ public class ReportingController {
 	private final SagaQueryService sagaQueryService;
 	private final OutboxReportingService outboxReportingService;
 	private final ReconciliationService reconciliationService;
+	private final HotAccountOpsService hotAccountOpsService;
 
 	public ReportingController(
 			ReadModelQueryService readModelQueryService,
 			SagaQueryService sagaQueryService,
 			OutboxReportingService outboxReportingService,
-			ReconciliationService reconciliationService) {
+			ReconciliationService reconciliationService,
+			HotAccountOpsService hotAccountOpsService) {
 		this.readModelQueryService = readModelQueryService;
 		this.sagaQueryService = sagaQueryService;
 		this.outboxReportingService = outboxReportingService;
 		this.reconciliationService = reconciliationService;
+		this.hotAccountOpsService = hotAccountOpsService;
 	}
 
 	@GetMapping("/aggregate-activity")
@@ -120,5 +125,15 @@ public class ReportingController {
 			@RequestParam(required = false) String severity,
 			@RequestParam(defaultValue = "50") int limit) {
 		return ResponseEntity.ok(reconciliationService.listBreaks(runId, status, severity, limit));
+	}
+
+	@GetMapping("/hot-accounts/{ledgerAccountId}/slots")
+	public ResponseEntity<HotAccountOpsService.HotAccountProfileView> hotAccountSlots(
+			@PathVariable UUID ledgerAccountId) {
+		try {
+			return ResponseEntity.ok(hotAccountOpsService.getHotAccount(ledgerAccountId));
+		} catch (CoreBankException ex) {
+			throw new ResponseStatusException(HttpStatus.NOT_FOUND, ex.getMessage(), ex);
+		}
 	}
 }
