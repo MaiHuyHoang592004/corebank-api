@@ -17,14 +17,17 @@ import org.springframework.web.server.ResponseStatusException;
 public class OpsMaintenanceController {
 
 	private final PartitionMaintenanceService partitionMaintenanceService;
+	private final IdempotencyMaintenanceService idempotencyMaintenanceService;
 	private final IamAuthorizationService iamAuthorizationService;
 	private final OpsRuntimeModePolicy opsRuntimeModePolicy;
 
 	public OpsMaintenanceController(
 			PartitionMaintenanceService partitionMaintenanceService,
+			IdempotencyMaintenanceService idempotencyMaintenanceService,
 			IamAuthorizationService iamAuthorizationService,
 			OpsRuntimeModePolicy opsRuntimeModePolicy) {
 		this.partitionMaintenanceService = partitionMaintenanceService;
+		this.idempotencyMaintenanceService = idempotencyMaintenanceService;
 		this.iamAuthorizationService = iamAuthorizationService;
 		this.opsRuntimeModePolicy = opsRuntimeModePolicy;
 	}
@@ -47,6 +50,25 @@ public class OpsMaintenanceController {
 		}
 	}
 
+	@PostMapping("/idempotency/cleanup")
+	public ResponseEntity<IdempotencyMaintenanceService.IdempotencyCleanupResult> cleanupExpiredIdempotencyKeys(
+			@RequestBody(required = false) IdempotencyCleanupRequest request,
+			Authentication authentication) {
+		iamAuthorizationService.requireAnyRole(authentication, "ROLE_OPS", "ROLE_ADMIN");
+		opsRuntimeModePolicy.requireNonRunningForMaintenanceJob();
+
+		try {
+			IdempotencyMaintenanceService.IdempotencyCleanupResult result =
+					idempotencyMaintenanceService.cleanupExpired(
+							request == null ? null : request.limit(),
+							request == null ? null : request.dryRun(),
+							actor(authentication));
+			return ResponseEntity.ok(result);
+		} catch (CoreBankException ex) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, ex.getMessage(), ex);
+		}
+	}
+
 	private String actor(Authentication authentication) {
 		return authentication == null ? "system" : authentication.getName();
 	}
@@ -54,5 +76,10 @@ public class OpsMaintenanceController {
 	public record EnsureFuturePartitionsRequest(
 			String fromMonth,
 			Integer monthsAhead) {
+	}
+
+	public record IdempotencyCleanupRequest(
+			Integer limit,
+			Boolean dryRun) {
 	}
 }
