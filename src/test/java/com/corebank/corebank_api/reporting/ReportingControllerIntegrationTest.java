@@ -50,6 +50,9 @@ class ReportingControllerIntegrationTest {
 		jdbcTemplate.update("DELETE FROM read_model_aggregate_activity");
 		jdbcTemplate.update("DELETE FROM read_model_event_feed");
 		jdbcTemplate.update("DELETE FROM outbox_events");
+		jdbcTemplate.update("DELETE FROM ledger_account_balance_slots");
+		jdbcTemplate.update("DELETE FROM hot_account_profiles");
+		jdbcTemplate.update("DELETE FROM ledger_accounts WHERE account_code LIKE 'LEDGER-REPORT-HOT-%'");
 	}
 
 	@Test
@@ -346,6 +349,36 @@ class ReportingControllerIntegrationTest {
 				.andExpect(jsonPath("$.items[1].referenceId").value("acc-900-old"));
 	}
 
+	@Test
+	void hotAccountSlots_returnsProfileSlotsAndAggregates() throws Exception {
+		UUID ledgerAccountId = createLedgerAccountForReportingHot();
+		insertHotAccountProfile(ledgerAccountId, 3, "HASH", true);
+		insertHotAccountSlot(ledgerAccountId, 0, 1_000L, 900L);
+		insertHotAccountSlot(ledgerAccountId, 1, 2_000L, 1_800L);
+		insertHotAccountSlot(ledgerAccountId, 2, 500L, 500L);
+
+		mockMvc.perform(get("/api/reporting/hot-accounts/{ledgerAccountId}/slots", ledgerAccountId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.ledgerAccountId").value(ledgerAccountId.toString()))
+				.andExpect(jsonPath("$.slotCount").value(3))
+				.andExpect(jsonPath("$.selectionStrategy").value("HASH"))
+				.andExpect(jsonPath("$.isActive").value(true))
+				.andExpect(jsonPath("$.totalPostedBalanceMinor").value(3_500))
+				.andExpect(jsonPath("$.totalAvailableBalanceMinor").value(3_200))
+				.andExpect(jsonPath("$.slots.length()").value(3))
+				.andExpect(jsonPath("$.slots[0].slotNo").value(0))
+				.andExpect(jsonPath("$.slots[1].slotNo").value(1))
+				.andExpect(jsonPath("$.slots[2].slotNo").value(2));
+	}
+
+	@Test
+	void hotAccountSlots_returnsNotFoundWhenProfileDoesNotExist() throws Exception {
+		UUID ledgerAccountId = createLedgerAccountForReportingHot();
+
+		mockMvc.perform(get("/api/reporting/hot-accounts/{ledgerAccountId}/slots", ledgerAccountId))
+				.andExpect(status().isNotFound());
+	}
+
 	private void setOccurredAt(
 			String aggregateType,
 			String aggregateId,
@@ -487,5 +520,62 @@ class ReportingControllerIntegrationTest {
 								openedAtIso8601,
 								resolvedAtIso8601
 						});
+	}
+
+	private UUID createLedgerAccountForReportingHot() {
+		UUID ledgerAccountId = UUID.randomUUID();
+		String accountCode = "LEDGER-REPORT-HOT-" + ledgerAccountId.toString().substring(0, 8);
+		jdbcTemplate.update(
+				"""
+				INSERT INTO ledger_accounts (
+				    ledger_account_id,
+				    account_code,
+				    account_name,
+				    account_type,
+				    currency,
+				    is_active
+				) VALUES (?, ?, ?, 'ASSET', 'VND', true)
+				""",
+				ledgerAccountId,
+				accountCode,
+				"Reporting Hot " + accountCode);
+		return ledgerAccountId;
+	}
+
+	private void insertHotAccountProfile(UUID ledgerAccountId, int slotCount, String strategy, boolean isActive) {
+		jdbcTemplate.update(
+				"""
+				INSERT INTO hot_account_profiles (
+				    ledger_account_id,
+				    slot_count,
+				    selection_strategy,
+				    is_active
+				) VALUES (?, ?, ?, ?)
+				""",
+				ledgerAccountId,
+				slotCount,
+				strategy,
+				isActive);
+	}
+
+	private void insertHotAccountSlot(
+			UUID ledgerAccountId,
+			int slotNo,
+			long postedBalanceMinor,
+			long availableBalanceMinor) {
+		jdbcTemplate.update(
+				"""
+				INSERT INTO ledger_account_balance_slots (
+				    ledger_account_id,
+				    slot_no,
+				    posted_balance_minor,
+				    available_balance_minor,
+				    updated_at
+				) VALUES (?, ?, ?, ?, now())
+				""",
+				ledgerAccountId,
+				slotNo,
+				postedBalanceMinor,
+				availableBalanceMinor);
 	}
 }
