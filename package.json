@@ -1,0 +1,12 @@
+{
+  "name": "corebank-api",
+  "version": "1.0.0",
+  "description": "Bộ tài liệu này được viết để cung cấp **đầy đủ context dự án** cho **Cline**, contributor mới, hoặc chính bạn khi quay lại dự án sau một thời gian.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

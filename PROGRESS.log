@@ -1,0 +1,1341 @@
+# CoreBank API - Progress Log
+
+## Phase 1: Financial Core Slice
+
+### Task 1: Internal Transfer Workflow
+**Status**: COMPLETED (5/5 tests passed)
+**Started**: 2026-03-22 04:12
+**Completed**: 2026-03-23 00:49
+**Checkpoint**: N/A
+**Notes**: 
+- Đã implement TransferService với đầy đủ chức năng
+- Đã sửa vấn đề updatePostedBalance (transfer chỉ ảnh hưởng available balance)
+- Đã sửa test transferCannotOverspend để filter theo correlation_id
+- Tất cả 5 tests đều PASSED (5/5)
+- BUILD SUCCESS
+
+### Task 2: System Mode Control
+**Status**: COMPLETED (7/7 tests passed)
+**Started**: 2026-03-23 01:46
+**Completed**: 2026-03-23 01:55
+**Checkpoint**: N/A
+**Notes**: 
+- Đã implement SystemModeService với đầy đủ chức năng
+- Đã tích hợp SystemModeService vào TransferService
+- Đã thêm system mode blocking tests (EOD_LOCK, MAINTENANCE)
+- Tất cả 7 tests đều PASSED (7/7)
+- BUILD SUCCESS
+
+### Task 3: Limit Checking
+**Status**: COMPLETED (8/8 tests passed)
+**Started**: 2026-03-23 04:53
+**Completed**: 2026-03-23 05:01
+**Checkpoint**: N/A
+**Notes**: 
+- Đã implement LimitCheckService với đầy đủ chức năng
+- Đã tạo database migration V7__limit_checking.sql
+- Đã tích hợp vào TransferService
+- Đã viết tests với 8 test cases
+- Đã fix compilation error (type mismatch)
+- Đã fix counter creation issue (RETURNING counter_id)
+- Tất cả 8 tests đều PASSED (8/8)
+- BUILD SUCCESS
+
+## Phase 2: Operations Baseline
+
+### Task 4: Exception Queue
+**Status**: COMPLETED (8/8 tests passed)
+**Started**: 2026-03-23 05:52
+**Completed**: 2026-03-23 05:54
+**Checkpoint**: N/A
+**Notes**: 
+- Đã tạo database migration V9__exception_queue.sql
+- Đã implement ExceptionQueueService với đầy đủ chức năng
+- Đã viết tests với 8 test cases
+- BUILD SUCCESS
+
+### Task 5: Batch Run Registry
+**Status**: COMPLETED (8/8 tests passed)
+**Started**: 2026-03-23 06:05
+**Completed**: 2026-03-23 06:08
+**Checkpoint**: N/A
+**Notes**: 
+- Đã tạo database migration V10__batch_run_registry.sql
+- Đã implement BatchRunService với đầy đủ chức năng
+- Đã viết tests với 8 test cases
+- Tất cả 8 tests đều PASSED (8/8)
+- BUILD SUCCESS
+
+### Task 6: Daily Snapshots
+**Status**: COMPLETED (5/5 tests passed)
+**Started**: 2026-03-23 06:17
+**Completed**: 2026-03-23 06:22
+**Checkpoint**: N/A
+**Notes**: 
+- Đã tạo database migration V11__daily_snapshots.sql
+- Đã implement SnapshotService với đầy đủ chức năng
+- Đã viết tests với 5 test cases
+- Đã fix migration error (DROP TABLE IF EXISTS)
+- Tất cả 5 tests đều PASSED (5/5)
+- BUILD SUCCESS
+
+## Phase 3: Banking Domain Expansion
+
+### Task 7: Deposit Flows
+**Status**: COMPLETED (policy hardening + integration verified)
+**Started**: 2026-03-24 00:xx
+**Checkpoint**: N/A
+**Notes**:
+- Deposit application/contract flows implemented for open, accrue, maturity paths
+- Focused integration verification available in this log (8/8 pass)
+- Explicit maturity policy now rejects unsupported auto-renew closeout in this slice
+- Added maturity replay-safety and failure-mode coverage for contract closeout paths
+
+### Task 8: Lending Foundation
+**Status**: COMPLETED (disbursement + repayment/default orchestration verified)
+**Started**: 2026-03-24 01:24
+**Checkpoint**: `checkpoint/lending-foundation-f9ad6b8`
+**Notes**:
+- Added additive migration `V15__lending_disbursement_foundation.sql`
+- Implemented `LoanContractService` for disbursement transaction:
+  - create loan contract
+  - generate repayment schedule snapshot
+  - post balanced disbursement journal
+  - append `loan_events(DISBURSED)`
+- Implemented `LoanApplicationService` orchestration:
+  - idempotency
+  - system mode guard
+  - audit append
+  - outbox append
+- Added `LoanApplicationServiceIntegrationTest` with focused proofs:
+  - disbursement happy-path persistence/journal/audit/outbox/balance checks
+  - replay idempotency (no double writes)
+  - EOD lock blocks write-path
+- Implemented repayment allocation workflow (v1) for scheduled repayment command:
+  - borrower settlement account enforcement
+  - contract/account currency validation
+  - idempotency + system mode enforcement on application service
+  - allocation policy: fees -> interest -> principal
+  - lock contract + payer account + open schedules before mutation
+  - update `repayment_schedules.*_paid_minor` and `repayment_schedules.status`
+  - update `loan_contracts.outstanding_principal_minor` and contract status closure condition
+  - post balanced repayment journal
+  - append `loan_events(REPAYMENT)`, `audit_events(LOAN_REPAID)`, `outbox_events(LOAN_REPAID)`
+- Verification:
+  - `LoanApplicationServiceIntegrationTest`: PASSED (repayment + disbursement scenarios)
+  - `TransferServiceIntegrationTest`: 9/9 PASSED (regression sanity)
+- Closeout:
+  - added explicit manual `DEFAULTED` transition policy + safeguards
+  - verified replay-safe default transition without duplicate side effects
+  - contract-level closure/default policy now closed for Phase 3 scope
+
+## Last Updated
+**Time**: 2026-03-24 19:10
+**Current Task**: Phase 3 closeout verification
+**Next Action**: Review residual risks and choose Phase 4 async/CQRS or deeper auth baseline
+
+---
+
+## Verification Session: 2026-03-24
+
+### Scope
+- Re-verify deposit integration path and idempotency serialization behavior
+- Restore outbox integration test against current contracts
+- Re-run transfer/deposit/outbox focused regression
+
+### Checkpoint
+**Type**: Local working-tree checkpoint before risky edits (manual)
+**Note**: Finance-sensitive edits constrained to serialization, JDBC timestamp binding, and integration tests.
+
+### Changes Applied
+- Injected shared `ObjectMapper` into `DepositApplicationService` (removed ad-hoc mapper usage)
+- Added Java time Jackson module wiring via `JacksonConfig` and dependency `jackson-datatype-jsr310`
+- Fixed `DepositContractService` maturity status update to persist `updated_at` as SQL `Timestamp`
+- Updated `DepositApplicationServiceIntegrationTest` assertions to avoid fragile JSONB-to-String mapping paths
+- Restored `OutboxPatternIntegrationTest` from disabled placeholder to executable integration coverage
+
+### Focused Verification Results
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **6/6 passed**
+- `OutboxPatternIntegrationTest`: **2/2 passed**
+
+### Risks / Follow-up
+- Kafka connection warnings remain in test logs when broker is absent (`localhost:9092`), but focused tests above pass.
+- Outbox verification currently covers persistence + status transition; end-to-end publish delivery assertions can be added later.
+
+---
+
+## Verification Session: 2026-03-24 (Lending Repayment Hardening Closeout)
+
+### Scope
+- Close repayment hardening slice with executable integration evidence
+- Re-run lending integration suite on Docker/Testcontainers runtime
+
+### Checkpoint
+**Type**: Local working-tree checkpoint branch before finance-sensitive edits  
+**Ref**: `checkpoint/lending-repayment-hardening-evidence-20260324`
+
+### Changes Applied
+- Hardened lending integration proofs in `LoanApplicationServiceIntegrationTest`:
+  - explicit allocation regression with non-zero fee/interest/principal (`fees -> interest -> principal`)
+  - repayment replay idempotency with no double-write assertions (event/audit/outbox/postings counts stable)
+  - same-key different-payload conflict assertion (`IdempotencyConflictException`)
+- Stabilized one flaky negative-path assertion in `disburseLoan_blockedWhenEodLock`:
+  - replaced global `loan_contracts` count check with borrower-scoped check to avoid cross-test data interference
+
+### Focused Verification Results
+- Command: `mvn -Dtest=LoanApplicationServiceIntegrationTest test`
+- Result: **PASSED** (`Tests run: 6, Failures: 0, Errors: 0, Skipped: 0`)
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear in logs during tests; does not block lending integration pass.
+- Next planned slice remains overdue/default transition orchestration for lending contracts.
+
+---
+
+## Verification Session: 2026-03-24 (Lending Overdue Transition Orchestration)
+
+### Scope
+- Add automatic overdue transition orchestration (`PENDING`/`PARTIALLY_PAID` -> `OVERDUE`) with idempotent rerun behavior
+- Append lending overdue side effects in `loan_events`, `audit_events`, and `outbox_events`
+- Keep `DEFAULTED` manual (no auto-default policy in this slice)
+
+### Checkpoint
+**Type**: Local working-tree checkpoint branch before finance-sensitive edits  
+**Ref**: `checkpoint/lending-overdue-orchestration-slice-20260324`
+
+### Changes Applied
+- `LoanContractService`:
+  - added `markOverdueInstallments(asOfDate)` with overdue predicate:
+    - schedule status in `PENDING`/`PARTIALLY_PAID`
+    - `due_date < asOfDate`
+    - remaining due amount > 0
+  - updates matching schedules to `OVERDUE`
+  - appends `loan_events(OVERDUE)` per affected contract
+- `LoanApplicationService`:
+  - added orchestration method `markOverdueInstallments(...)`
+  - appends `audit_events(LOAN_OVERDUE_MARKED)` and `outbox_events(LOAN_OVERDUE)` per affected contract
+  - returns transition summary (affected contracts/installments)
+- `LoanApplicationServiceIntegrationTest`:
+  - added 4 overdue-focused scenarios:
+    - overdue mark + side effects
+    - paid installment skip
+    - rerun idempotency (no double write)
+    - repayment still works on overdue schedule and journal remains balanced
+- Added migration `V16__lending_overdue_event_type.sql`:
+  - expands `loan_events_event_type_check` to include `OVERDUE`
+
+### Focused Verification Results
+- Command: `mvn -Dtest=LoanApplicationServiceIntegrationTest test`
+- Result: **PASSED** (`Tests run: 10, Failures: 0, Errors: 0, Skipped: 0`)
+
+### Risks / Follow-up
+- Schema change was required to support `loan_events(OVERDUE)` due existing DB check constraint.
+- Kafka admin reconnect warnings to `localhost:9092` still appear during tests, but slice verification passes.
+
+---
+
+## Verification Session: 2026-03-24 (Phase 3 Closeout)
+
+### Scope
+- Close the remaining deposit maturity-policy gap with minimal backward-compatible guardrails
+- Add explicit manual loan default transition and replay-safe side-effect handling
+- Re-run focused financial regression to confirm no spillover into payment/transfer baselines
+
+### Changes Applied
+- `DepositContractService`:
+  - centralized ACTIVE-state validation for accrual/maturity commands
+  - blocked unsupported auto-renew maturity payout in this slice
+- `DepositApplicationServiceIntegrationTest`:
+  - added auto-renew maturity rejection coverage
+  - added maturity replay safety assertions (event/audit/outbox counts stable)
+- `LoanContractService`:
+  - added manual `markContractDefaulted(contractId, asOfDate)` orchestration
+  - default transition requires overdue installments and preserves existing repayment/disbursement behavior
+- `LoanApplicationService`:
+  - added audit/outbox orchestration for `LOAN_DEFAULTED`
+- `LoanApplicationServiceIntegrationTest`:
+  - added default happy-path, replay-safe rerun, and invalid-transition rejection coverage
+
+### Focused Verification Results
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `PaymentIdempotencyIntegrationTest`: **7/7 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear during tests when no broker is available; focused regression remains green.
+- Repo-local auth/permission abstractions are still absent beyond default Spring Security bootstrapping, so no auth hardening was added to avoid widening scope beyond Phase 3.
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.1 - Outbox Reliability Hardening)
+
+### Scope
+- Harden outbox status transitions and publisher behavior without touching deployment/env config
+- Keep Phase 4 implementation minimal: claim/process/fail reliability first, no wide CQRS projector rollout
+
+### Changes Applied
+- `OutboxEventRepository`:
+  - made `markAsProcessed` accept claimed `PROCESSING` events (and `PENDING`) atomically
+  - made `markAsFailed` update retry/error state for `PENDING`/`PROCESSING`/`FAILED`
+  - fixed timestamp mapping compatibility (`timestamptz` -> `OffsetDateTime` -> `ZonedDateTime`)
+- `OutboxEventPublisher`:
+  - changed publish flow to deterministic synchronous completion with timeout
+  - strengthened topic resolution using `aggregateType`/`eventType` normalization
+  - kept fallback topic deterministic (`ledger-events`) instead of dropping to unknown topic
+- `OutboxPatternIntegrationTest`:
+  - added processing-claim assertion (`PENDING -> PROCESSING`)
+  - added processed transition assertion from claimed events
+  - added failed-retry counter assertion for repeated failure handling
+
+### Focused Verification Results
+- `OutboxPatternIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` remain expected in local tests without broker.
+- Phase 4 still has pending slices:
+  - event envelope standardization across producers
+  - non-placeholder read-model projector and rebuild strategy
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.2 - Outbox Event Envelope Standardization)
+
+### Scope
+- Standardize `outbox_events.event_data` with a stable envelope while keeping backward compatibility
+- Migrate core financial producers (payment, transfer, deposit, lending) to pass correlation/request/actor metadata
+- Avoid deployment/env changes and avoid schema rewrites
+
+### Changes Applied
+- Added integration envelope/value objects:
+  - `OutboxEnvelope` (eventId, aggregateType, aggregateId, eventType, occurredAt, schemaVersion, correlationId, requestId, actor, payload)
+  - `OutboxMetadata` (trace metadata + legacy causation support)
+- Updated `OutboxService` to build and persist `OutboxEnvelope` in `event_data` for all new outbox writes
+  - kept legacy overloads for compatibility
+  - preserved `correlation_id`/`causation_id` persistence behavior
+- Migrated producer call sites to metadata-aware outbox append:
+  - `PaymentApplicationService`
+  - `TransferService`
+  - `DepositApplicationService`
+  - `LoanApplicationService`
+- Hardened integration coverage:
+  - `OutboxPatternIntegrationTest` now validates envelope fields and metadata propagation
+  - added envelope assertions in payment/transfer/deposit/lending happy-path integration tests
+
+### Focused Verification Results
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear in test logs when local broker is absent.
+- Envelope is now standardized for new writes, but historical outbox rows remain mixed-shape by design (backward-compatible choice).
+- Phase 4 next slice remains pending:
+  - implement a real non-placeholder read-model projector with explicit non-authoritative read model semantics and replay/rebuild proof.
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.3 - Minimal Read-Model Projector)
+
+### Scope
+- Replace the reporting projector placeholder with a minimal non-authoritative read model
+- Add replay/rebuild proof from persisted `outbox_events`
+- Close the loan-topic routing gap so lending events are not silently published to the ledger fallback topic
+
+### Changes Applied
+- `V17__read_model_event_feed.sql`:
+  - added `read_model_event_feed` for replayable, non-authoritative event history
+  - indexed by aggregate and occurrence time for dashboard/history use
+- `KafkaConfig`:
+  - added `loan-events` topic definition
+- `OutboxEventPublisher`:
+  - routes `LOAN_*` events to `loan-events`
+- `ReadModelProjector`:
+  - replaced placeholder with envelope-aware projection logic
+  - subscribes to `account/transfer/payment/deposit/loan/ledger` topics
+  - skips legacy/non-envelope payloads safely
+  - writes idempotently into `read_model_event_feed`
+- `ReadModelReplayService`:
+  - replays persisted `outbox_events` into the read model for rebuild proof without requiring a broker
+- Added focused tests:
+  - `OutboxEventPublisherTopicRoutingTest`
+  - `ReadModelProjectorIntegrationTest`
+
+### Focused Verification Results
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **4/4 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local test logs without a broker.
+- The current read model is an event-feed projection, not yet a typed dashboard/query table; it is intentionally non-authoritative.
+- Historical raw outbox rows are skipped during projection by design; only envelope-based events are rebuilt into the read model.
+- Next useful slice:
+  - derive one typed dashboard/query model from `read_model_event_feed`
+  - add projector lag/health metrics
+  - add a broker-backed end-to-end projector delivery test when Kafka is available in local integration runtime
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.4 - Typed Dashboard Summary)
+
+### Scope
+- Add the first typed dashboard/query model derived from the non-authoritative event feed
+- Keep summary updates idempotent by coupling them to successful event-feed insertions
+- Add rebuild proof that restores both feed and summary from persisted outbox events
+
+### Changes Applied
+- `V18__read_model_aggregate_activity.sql`:
+  - added `read_model_aggregate_activity` keyed by `(aggregate_type, aggregate_id)`
+  - tracks latest event, latest actor/correlation, and aggregate event count
+- `ReadModelProjector`:
+  - now updates `read_model_aggregate_activity` only when a new event-feed row is inserted
+  - keeps summary latest-event fields aligned to the newest projected event
+- `ReadModelReplayService`:
+  - added `rebuildFromOutbox()` to clear non-authoritative read models and replay outbox history deterministically
+- `ReadModelProjectorIntegrationTest`:
+  - now verifies typed summary population
+  - verifies summary idempotency on duplicate event projection
+  - verifies latest-event replacement for same aggregate
+  - verifies rebuild restores both event feed and typed summary
+
+### Focused Verification Results
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear during local tests without a broker.
+- The dashboard summary intentionally tracks event-derived activity only; it must not be used as a balance or contract source of truth.
+- Next useful slice:
+  - add projector lag/health metrics and operational visibility
+  - add a broker-backed end-to-end delivery test for publisher -> projector flow
+  - only after that, consider notification consumers or saga persistence
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.5 - Read-Model Health Metrics + Broker E2E)
+
+### Scope
+- Add operational visibility for non-authoritative read-model projection lag/backlog
+- Add broker-backed integration proof for `outbox publisher -> Kafka -> read-model projector`
+- Keep backward compatibility and avoid deployment/env configuration changes
+
+### Changes Applied
+- Added read-model health and metrics components:
+  - `ReadModelHealthService` (feed count, summary count, pending outbox, lag seconds)
+  - `ReadModelHealthIndicator` (Actuator `HealthIndicator` details for projection health)
+  - `ReadModelMetricsBinder` (Micrometer gauges for feed/summary/backlog/lag)
+- Added integration tests:
+  - `ReadModelHealthServiceIntegrationTest`
+  - `OutboxKafkaProjectorE2EIntegrationTest` (Testcontainers Kafka runtime)
+- Added Kafka test runtime dependency:
+  - `org.testcontainers:testcontainers-kafka` (test scope)
+- Applied minimal compatibility fixes found during broker E2E:
+  - `OutboxEventPublisher.parseEventData(...)` now parses JSON payload before Kafka publish (fallback to raw string for non-JSON payloads)
+  - `ReadModelProjector` listener removed unsupported `Acknowledgment` argument when container is not in manual-ack mode
+  - E2E test stabilized with `spring.kafka.consumer.auto-offset-reset=earliest`
+
+### Focused Verification Results
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Kafka admin reconnect warnings to `localhost:9092` still appear in logs for tests that do not bind a broker; focused verification remains green.
+- Kafka producer value serializer is still `JsonSerializer` (deprecated warning in `KafkaConfig`); migration to non-deprecated serializer can be handled in a separate low-risk slice.
+
+---
+
+## Verification Session: 2026-03-24 (Phase 4 Slice 4.6 - Read-Only Reporting API)
+
+### Scope
+- Add minimal read-only REST API on top of non-authoritative read models
+- Keep scope narrow: dashboard aggregate activity list + aggregate event history
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Added `ReadModelQueryService`:
+  - paged query for `read_model_aggregate_activity` with optional `aggregateType`/`aggregateId` filter
+  - bounded query for `read_model_event_feed` by `(aggregate_type, aggregate_id)` with deterministic sort
+- Added `ReportingController` endpoints:
+  - `GET /api/reporting/aggregate-activity`
+  - `GET /api/reporting/aggregate-activity/{aggregateType}/{aggregateId}/events`
+- Added `ReportingControllerIntegrationTest` (`MockMvc` + `@WithMockUser`) to verify:
+  - pagination and filter behavior
+  - aggregate-scoped event listing behavior and limit enforcement
+
+### Focused Verification Results
+- `ReportingControllerIntegrationTest`: **2/2 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- API returns read-model data only; it must remain explicitly non-authoritative for balances/ledger truth.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local tests without a broker; focused suite remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.7 - Reporting Event Filters)
+
+### Scope
+- Extend read-only aggregate event history API with optional filters while preserving existing behavior by default
+- Keep scope minimal: `eventType`, `fromOccurredAt`, `toOccurredAt`, and existing `limit`
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Updated `ReportingController` aggregate events endpoint:
+  - added optional query params: `eventType`, `fromOccurredAt`, `toOccurredAt`
+  - added input guard returning `400` when `fromOccurredAt > toOccurredAt`
+- Updated `ReadModelQueryService.findAggregateEvents(...)`:
+  - added dynamic SQL filters with bound parameters only
+  - `eventType` exact match filter (when provided)
+  - time-window filters:
+    - lower bound: `occurred_at >= fromOccurredAt`
+    - upper bound: `occurred_at < toOccurredAt`
+  - converted time args to UTC `OffsetDateTime` for PostgreSQL parameter compatibility
+- Expanded `ReportingControllerIntegrationTest`:
+  - event-type filter proof
+  - occurred-at range filter proof
+  - combined event-type + occurred-at filter proof
+  - invalid datetime query param returns `400`
+
+### Focused Verification Results
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Time-window semantics currently use inclusive lower bound and exclusive upper bound; downstream consumers should keep this contract when adding UI filters.
+- API remains read-model based and non-authoritative; no balance/ledger source-of-truth semantics were changed.
+- Kafka admin reconnect warnings to `localhost:9092` may still appear in local runs without broker for non-broker tests.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.8 - Notification Consumer Baseline)
+
+### Scope
+- Add a minimal non-authoritative notification consumer baseline on top of event envelopes
+- Keep authoritative money path untouched (ledger/balance logic unchanged)
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Added migration `V19__read_model_notification_inbox.sql`:
+  - new table `read_model_notification_inbox` with `event_id` primary key (idempotent projection key)
+  - indexes for inbox query shape (`occurred_at DESC`, `status + occurred_at`)
+  - explicit non-authoritative comments for payload semantics
+- Added `NotificationProjector`:
+  - Kafka consumer group `notification-projector` on account/transfer/payment/deposit/loan topics
+  - envelope schema validation (`schemaVersion = v1`)
+  - idempotent insert via `ON CONFLICT (event_id) DO NOTHING`
+  - skips legacy/non-envelope payloads safely
+- Added `NotificationProjectorIntegrationTest`:
+  - envelope projection persistence proof
+  - idempotency proof for duplicate event replay
+  - legacy/non-envelope payload skip proof
+- Extended `OutboxKafkaProjectorE2EIntegrationTest`:
+  - validates event is projected into `read_model_notification_inbox` after outbox publish to Kafka
+
+### Focused Verification Results
+- `NotificationProjectorIntegrationTest`: **3/3 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Notification inbox currently stores payload copy from event envelope; if future notification channels need PII minimization, payload projection should be reduced/filtered per channel policy.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+- Notification delivery status workflow (`UNREAD` -> `SENT/FAILED`) is intentionally out of scope for this baseline slice.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.9 - Saga Persistence Foundation)
+
+### Scope
+- Add minimal saga persistence foundation for orchestration resume/retry safety
+- Keep scope strictly non-authoritative and independent from ledger/balance write path
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Added migration `V20__saga_state_foundation.sql`:
+  - extended existing `saga_instances` with optimistic `version` column (if missing)
+  - extended existing `saga_steps` with optional `step_key` for step idempotency keying
+  - added unique index for `(saga_instance_id, step_name, direction, step_key)` when `step_key` is present
+  - added operational index on saga step status/start time
+  - kept existing V3 saga tables and status semantics intact (no destructive schema changes)
+- Added `SagaStateService` (`integration/saga`):
+  - `startSaga(...)` idempotent by `(saga_type, business_key)`
+  - `updateSagaState(...)` with optimistic version check (`WHERE version = expectedVersion`)
+  - `appendStepLog(...)` idempotent via unique constraints (`ON CONFLICT DO NOTHING`)
+  - query helpers for saga instance and ordered step logs
+- Added `SagaStateServiceIntegrationTest`:
+  - saga start idempotency proof
+  - step-log idempotency proof using shared `step_key`
+  - optimistic concurrency proof for resume/update path (stale version rejected)
+
+### Focused Verification Results
+- `SagaStateServiceIntegrationTest`: **3/3 passed**
+- `NotificationProjectorIntegrationTest`: **3/3 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Saga status vocabulary currently reuses legacy V3 values (`PENDING/RUNNING/COMPLETED/...`) to preserve compatibility; if a new status contract is needed, migration/update should be planned explicitly.
+- `step_key` is optional for backward compatibility; orchestration callers must provide stable keys for retry idempotency guarantees.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.10 - Saga Reporting API)
+
+### Scope
+- Add minimal read-only saga reporting endpoints for operational visibility
+- Keep authoritative money path untouched (ledger/balance semantics unchanged)
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Added `SagaQueryService`:
+  - paged query for `saga_instances` with optional `sagaType`/`status`/`businessKey` filters
+  - bounded query for `saga_steps` by `saga_instance_id` with deterministic ordering
+  - pagination and limit bounding for safe operational reads
+- Extended `ReportingController` endpoints:
+  - `GET /api/reporting/sagas`
+  - `GET /api/reporting/sagas/{sagaInstanceId}/steps`
+- Added `SagaReportingControllerIntegrationTest`:
+  - pagination + filter behavior for saga list endpoint
+  - saga-scoped step history behavior and limit enforcement
+
+### Focused Verification Results
+- `SagaReportingControllerIntegrationTest`: **2/2 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `SagaStateServiceIntegrationTest`: **3/3 passed**
+- `NotificationProjectorIntegrationTest`: **3/3 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxPatternIntegrationTest`: **6/6 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Saga reporting endpoints return orchestration state only; they must remain non-authoritative for balances/ledger truth.
+- `GET /api/reporting/sagas/{sagaInstanceId}/steps` currently returns empty `items` for unknown saga ids; consumers should not infer saga existence from step list alone.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.11 - Outbox Claim Recovery and Retry Hardening)
+
+### Scope
+- Harden outbox worker behavior for crash-recovery and bounded retries
+- Keep authoritative money path untouched (ledger/balance semantics unchanged)
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Added migration `V21__outbox_claim_recovery_and_retry.sql`:
+  - added `outbox_events.processing_started_at` claim timestamp column
+  - added indexes for stale-processing reclaim and failed-retry scanning
+  - replaced `get_pending_outbox_events(...)` with bounded, claim-safe logic:
+    - reclaim stale `PROCESSING` rows back to `PENDING`
+    - include retryable `FAILED` rows with backoff and max retry controls
+    - claim rows atomically using `FOR UPDATE SKIP LOCKED`
+- Updated `OutboxEventRepository`:
+  - preserved existing `getPendingEvents(int limit)` API for compatibility
+  - added overloaded `getPendingEvents(...)` with retry/backoff/reclaim parameters
+  - cleared `processing_started_at` when marking `PROCESSED` or `FAILED`
+- Updated `OutboxEventPublisher`:
+  - now calls parameterized claim API with explicit constants (`MAX_RETRIES`, backoff, reclaim timeout)
+  - improved retry attempt logging to show actual attempt number
+- Expanded `OutboxPatternIntegrationTest`:
+  - stale claim reclaim proof
+  - failed-event retry-after-backoff proof
+  - max-retry blocking proof
+- Stabilized `OutboxKafkaProjectorE2EIntegrationTest`:
+  - waits until projection is visible in both read models (`event_feed` and `notification_inbox`) before asserting
+
+### Focused Verification Results
+- `OutboxPatternIntegrationTest`: **9/9 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `NotificationProjectorIntegrationTest`: **3/3 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `SagaReportingControllerIntegrationTest`: **2/2 passed**
+- `SagaStateServiceIntegrationTest`: **3/3 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Stale-claim reclaim depends on wall-clock timeout; if publish latency exceeds reclaim timeout, duplicate processing attempts may occur (consumers remain idempotent by design).
+- Retry/backoff thresholds are currently static in code; if operational tuning is required later, move these values to controlled config with explicit rollout plan.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.12 - Outbox Dead-Letter and Ops Visibility)
+
+### Scope
+- Add dead-letter capture for outbox events that exhaust retry budget
+- Add read-only reporting endpoints for outbox operational visibility
+- Keep authoritative money path untouched and avoid deployment/env config changes
+
+### Changes Applied
+- Added migration `V22__outbox_dead_letter_ops.sql`:
+  - new table `outbox_dead_letters` with unique `outbox_event_id`
+  - indexes for operator query shape (`dead_lettered_at DESC`, `event_type + dead_lettered_at`)
+  - explicit table/column comments for operational intent
+- Updated `OutboxEventRepository`:
+  - added `addToDeadLetter(eventId)` snapshot insert with `ON CONFLICT DO NOTHING` (idempotent)
+- Updated `OutboxEventPublisher`:
+  - on publish failure, re-reads current retry count
+  - auto-records event into dead-letter table when retry count reaches `MAX_RETRIES`
+- Added `OutboxReportingService`:
+  - `summary()` for outbox operational counters and retry-queue age
+  - `deadLetters(limit)` for latest dead-letter entries with bounded limit
+- Extended `ReportingController`:
+  - `GET /api/reporting/outbox/summary`
+  - `GET /api/reporting/outbox/dead-letters`
+- Added tests:
+  - `OutboxEventPublisherDeadLetterTest` (publisher dead-letter decision path)
+  - `OutboxReportingControllerIntegrationTest` (summary + dead-letter endpoints)
+  - expanded `OutboxPatternIntegrationTest` with dead-letter idempotency proof
+
+### Focused Verification Results
+- `OutboxEventPublisherDeadLetterTest`: **2/2 passed**
+- `OutboxReportingControllerIntegrationTest`: **2/2 passed**
+- `OutboxPatternIntegrationTest`: **10/10 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+- `OutboxEventPublisherTopicRoutingTest`: **1/1 passed**
+- `NotificationProjectorIntegrationTest`: **3/3 passed**
+- `ReadModelHealthServiceIntegrationTest`: **3/3 passed**
+- `ReadModelProjectorIntegrationTest`: **5/5 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `SagaReportingControllerIntegrationTest`: **2/2 passed**
+- `SagaStateServiceIntegrationTest`: **3/3 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `DepositApplicationServiceIntegrationTest`: **8/8 passed**
+- `LoanApplicationServiceIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Dead-letter capture currently uses static retry threshold (`MAX_RETRIES = 3`) in publisher; if per-topic thresholds are needed, add explicit configuration contract in a separate slice.
+- Dead-letter table stores full `event_data` snapshot for operator debugging; if payload retention policy tightens, apply redaction/retention controls in a follow-up migration.
+- Outbox rows remain in `FAILED` after dead-lettering; operational runbooks should treat dead-letter table as the terminal queue indicator.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.13 - Dead-Letter Requeue Control)
+
+### Scope
+- Add minimal manual requeue control for dead-lettered outbox events
+- Keep authoritative money path untouched (ledger/balance semantics unchanged)
+- Keep backward compatibility and avoid deployment/env config changes
+
+### Changes Applied
+- Updated `OutboxEventRepository`:
+  - added `requeueDeadLetter(eventId)` with bounded statuses (`REQUEUED`, `NOT_FOUND`, `CONFLICT`)
+  - requeue logic is atomic and claim-safe:
+    - verifies dead-letter row exists
+    - only allows requeue when `outbox_events.status = FAILED`
+    - transitions event to `PENDING`
+    - clears `processed_at`, `processing_started_at`, `last_error`
+    - resets `retry_count` to `0` for a fresh retry window
+    - deletes matching dead-letter row only when transition succeeds
+- Updated `OutboxReportingService`:
+  - added transactional `requeueDeadLetter(...)` orchestration
+  - appends `audit_events` row for successful operator requeue action (`OUTBOX_DEAD_LETTER_REQUEUED`)
+- Extended `ReportingController`:
+  - added `POST /api/reporting/outbox/dead-letters/{outboxEventId}/requeue`
+  - returns:
+    - `200` on `REQUEUED`
+    - `404` on `NOT_FOUND`
+    - `409` on `CONFLICT`
+- Expanded integration coverage:
+  - `OutboxPatternIntegrationTest`:
+    - requeue success path with dead-letter cleanup and retry reset assertions
+    - not-found status proof
+  - `OutboxReportingControllerIntegrationTest`:
+    - requeue success + audit append proof
+    - not-found and conflict HTTP contract proofs
+
+### Focused Verification Results
+- `OutboxEventPublisherDeadLetterTest`: **2/2 passed**
+- `OutboxPatternIntegrationTest`: **12/12 passed**
+- `OutboxReportingControllerIntegrationTest`: **5/5 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Manual requeue can still reproduce duplicate downstream effects if any consumer is not truly idempotent; this remains a consumer-contract dependency.
+- Requeue endpoint currently lives under reporting controller for minimal surface change; if stricter command/query separation is required, move to an ops controller in a follow-up slice.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.14 - Outbox Ops UX Hardening)
+
+### Scope
+- Harden dead-letter requeue operations with explicit ops-only authorization
+- Add bounded bulk requeue by explicit event IDs for controlled operator workflows
+- Extend dead-letter reporting with optional filters while preserving backward compatibility and no deployment/env config changes
+
+### Changes Applied
+- Updated `ReportingController`:
+  - hardened `POST /api/reporting/outbox/dead-letters/{outboxEventId}/requeue` with role guard (`ROLE_OPS` or `ROLE_ADMIN`)
+  - added `POST /api/reporting/outbox/dead-letters/requeue-bulk`
+    - request: `{ "outboxEventIds": [long, ...] }`
+    - validation: non-null, non-empty, all positive, max 100 IDs
+    - returns aggregated result counts and per-ID status details
+  - extended `GET /api/reporting/outbox/dead-letters` with optional filters:
+    - `eventType`
+    - `aggregateType`
+    - `fromDeadLetteredAt`
+    - `toDeadLetteredAt`
+  - added query-time validation for invalid filter ranges (`fromDeadLetteredAt > toDeadLetteredAt` -> `400`)
+- Updated `OutboxReportingService`:
+  - added filtered dead-letter query path with bounded limit and typed timestamp/text filter handling
+  - added bulk requeue orchestration with ID deduplication and aggregate counters:
+    - `requestedCount`, `requeuedCount`, `notFoundCount`, `conflictCount`
+  - reuses existing single requeue flow so successful requeue actions still append `audit_events(OUTBOX_DEAD_LETTER_REQUEUED)`
+- Expanded `OutboxReportingControllerIntegrationTest`:
+  - single requeue auth matrix:
+    - `USER` => `403`
+    - `OPS`/`ADMIN` => `200`
+  - bulk requeue mixed-result contract (`REQUEUED` + `NOT_FOUND` + `CONFLICT`) with aggregate counters
+  - bulk validation proofs (`empty`, `null body`, `>100 IDs`) => `400`
+  - dead-letter filter proofs and invalid range `400` behavior
+
+### Focused Verification Results
+- `OutboxEventPublisherDeadLetterTest`: **2/2 passed**
+- `OutboxPatternIntegrationTest`: **12/12 passed**
+- `OutboxReportingControllerIntegrationTest`: **14/14 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Bulk requeue remains a manual operator action; downstream consumers must stay idempotent to tolerate replay.
+- Role checks currently use direct authority-name matching in controller (`ROLE_OPS`/`ROLE_ADMIN`); if security policy centralization is introduced later, move this guard into shared auth policy components.
+- Requeue command endpoints are still under reporting controller for minimal-scope compatibility; command/query controller split can be a later refactor.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 4 Slice 4.15 - Outbox Ops Boundary Cleanup)
+
+### Scope
+- Separate outbox dead-letter command endpoints from read-only reporting endpoints
+- Centralize ops authorization guard (`ROLE_OPS`/`ROLE_ADMIN`) into a shared policy component
+- Keep API URLs/contracts unchanged, keep backward compatibility, and avoid deployment/env/schema changes
+
+### Changes Applied
+- Updated `ReportingController`:
+  - retained read-only endpoints only (`aggregate-activity`, `sagas`, outbox summary/list)
+  - removed outbox dead-letter requeue command handlers from this query controller
+- Added `OpsAuthorizationPolicy`:
+  - shared `requireOpsAccess(authentication)` guard with existing forbidden semantics:
+    - `Missing authentication` -> `403`
+    - `Insufficient authority` -> `403`
+- Added `OutboxOpsController`:
+  - hosts command endpoints under same base path (`/api/reporting/outbox/dead-letters`)
+  - keeps existing endpoint contracts unchanged:
+    - `POST /{outboxEventId}/requeue`
+    - `POST /requeue-bulk`
+  - keeps existing request validation and response status mapping (`200/404/409`, bulk `400` guards)
+- No changes to `OutboxReportingService` requeue logic or repository dead-letter state transitions.
+
+### Focused Verification Results
+- `OutboxReportingControllerIntegrationTest`: **14/14 passed**
+- `ReportingControllerIntegrationTest`: **6/6 passed**
+- `SagaReportingControllerIntegrationTest`: **2/2 passed**
+- `OutboxPatternIntegrationTest`: **12/12 passed**
+- `OutboxEventPublisherDeadLetterTest`: **2/2 passed**
+
+### Risks / Follow-up
+- Authorization still uses authority-name matching (`ROLE_OPS`/`ROLE_ADMIN`); if broader policy abstraction is introduced later, align this component with global security policy modules.
+- Outbox ops commands remain under `/api/reporting` path for backward compatibility; full path-level command/query namespace separation is deferred to avoid breaking clients.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 5 Slice 5.1 - Outbox Safe Retry Policy)
+
+### Scope
+- Retry only transient publish failures in outbox worker
+- Move non-transient failures directly to terminal `FAILED` and dead-letter
+- Keep API/schema/deploy/env unchanged and preserve backward compatibility
+
+### Changes Applied
+- Updated `OutboxEventRepository`:
+  - added `markAsTerminalFailed(eventId, error, terminalRetryCount)`
+  - sets `status='FAILED'`, `processed_at=CURRENT_TIMESTAMP`, `processing_started_at=NULL`, `last_error=:error`
+  - sets `retry_count=GREATEST(retry_count, terminalRetryCount)` to enforce terminal retry ceiling
+  - keeps bounded status guard (`PENDING`, `PROCESSING`, `FAILED`)
+- Updated `OutboxEventPublisher`:
+  - added cause-chain publish-failure classifier
+  - transient types:
+    - `RetriableException`
+    - `TimeoutException`
+    - `SocketTimeoutException`
+    - `ConnectException`
+    - `IOException`
+  - non-transient types:
+    - `SerializationException`
+    - `IllegalArgumentException`
+    - `ClassCastException`
+  - default classification: `NON_TRANSIENT` (fail-fast)
+  - transient path keeps existing `markAsFailed(...)` retry flow and dead-letters only at `MAX_RETRIES`
+  - non-transient path calls `markAsTerminalFailed(..., MAX_RETRIES)` and dead-letters immediately with dedicated logs
+- Updated tests:
+  - `OutboxEventPublisherDeadLetterTest`:
+    - adjusted transient fixtures to `TimeoutException`
+    - added immediate non-transient dead-letter proof
+  - `OutboxPatternIntegrationTest`:
+    - added `markAsTerminalFailed_setsRetryToMaxAndSkipsFurtherClaim`
+    - verifies terminal `FAILED`, `retry_count=3`, dead-letter insert, and no further pending claim
+
+### Focused Verification Results
+- `OutboxEventPublisherDeadLetterTest`: **3/3 passed**
+- `OutboxPatternIntegrationTest`: **13/13 passed**
+- `OutboxReportingControllerIntegrationTest`: **14/14 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+
+### Risks / Follow-up
+- Defaulting unknown exceptions to non-transient is safe-fail but may dead-letter some recoverable edge cases; extend transient classifier if new retriable exception types are observed.
+- Immediate non-transient dead-letter changes operator timing (earlier dead-letter visibility); runbook should prioritize payload/config fixes before manual requeue.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 5 Slice 5.2-5.4 - Approval + IAM + Product Governance)
+
+### Scope
+- Add operator IAM + approval governance foundation with additive schema only
+- Add approval workflow and approval-gated execution endpoints for:
+  - outbox dead-letter bulk requeue
+  - loan default transition
+- Complete product governance foundation and enforce product version binding on deposit/loan write paths
+- Keep backward compatibility, avoid deployment/env config changes, and preserve existing public APIs
+
+### Changes Applied
+- Added migration `V23__iam_approval_governance_foundation.sql`:
+  - new IAM tables:
+    - `iam_staff_users`
+    - `iam_roles`
+    - `iam_permissions`
+    - `iam_user_roles`
+    - `iam_role_permissions`
+  - approvals table extension (additive):
+    - `operation_type`
+    - `operation_payload_json`
+    - `execution_status`
+    - `executed_by`
+    - `executed_at`
+    - `expires_at`
+    - `decision_reason`
+  - execution-state constraints + indexes
+  - role/permission baseline seed:
+    - roles: `ROLE_ADMIN`, `ROLE_OPS`, `ROLE_MAKER`, `ROLE_APPROVER`
+    - permissions: `APPROVAL_CREATE`, `APPROVAL_DECIDE`, `APPROVAL_EXECUTE`, `PRODUCT_GOVERNANCE_READ`, `PRODUCT_GOVERNANCE_WRITE`
+- Added migration `V24__product_governance_completion.sql`:
+  - hardened `bank_product_versions`:
+    - FK `product_id -> bank_products(product_id)`
+    - effective range check (`effective_to > effective_from` when present)
+    - single-active-version unique index per product
+  - added governance tables:
+    - `posting_rule_sets`
+    - `posting_rule_lines`
+  - legacy backfill for products missing version rows
+- Added IAM + approval application layer:
+  - `IamAuthorizationService`:
+    - DB-first role/permission resolution
+    - fallback to Spring `Authentication` authorities for legacy compatibility
+  - `ApprovalService`:
+    - create/list/get approval
+    - approve/reject transitions (`PENDING -> APPROVED|REJECTED`)
+    - maker-checker enforcement (`requested_by != decided_by`)
+    - one-time execution claim (`NOT_EXECUTED -> EXECUTED`)
+  - `OpsApprovalController` (additive APIs):
+    - `POST /api/ops/approvals`
+    - `GET /api/ops/approvals`
+    - `GET /api/ops/approvals/{approvalId}`
+    - `POST /api/ops/approvals/{approvalId}/approve`
+    - `POST /api/ops/approvals/{approvalId}/reject`
+  - `OpsExecutionController` (approval-gated execution APIs):
+    - `POST /api/ops/executions/outbox-dead-letter-requeue-bulk`
+    - `POST /api/ops/executions/loan-default`
+    - execution endpoints consume only `approvalId`, read operation payload from approved record
+- Added product governance application layer:
+  - `ProductGovernanceService`:
+    - create draft version
+    - activate version
+    - retire version
+    - list versions
+    - validate product/version binding for write paths
+  - `ProductGovernanceController` (additive APIs):
+    - `POST /api/products/{productId}/versions`
+    - `POST /api/products/{productId}/versions/{productVersionId}/activate`
+    - `POST /api/products/{productId}/versions/{productVersionId}/retire`
+    - `GET /api/products/{productId}/versions`
+- Runtime enforcement updates:
+  - `DepositContractService.openDeposit(...)` now validates `productId + productVersionId` via governance service
+  - `LoanContractService.disburseLoan(...)` now validates `productId + productVersionId` via governance service
+  - compatibility-safe guard kept:
+    - if a product has no version rows yet, write-path validation allows legacy behavior
+- Test coverage added/updated:
+  - new:
+    - `OpsApprovalExecutionIntegrationTest`
+    - `ProductGovernanceControllerIntegrationTest`
+  - expanded:
+    - `DepositApplicationServiceIntegrationTest` (mismatch rejection when governed versions exist)
+    - `LoanApplicationServiceIntegrationTest` (mismatch rejection when governed versions exist)
+
+### Focused Verification Results
+- `OpsApprovalExecutionIntegrationTest`: **4/4 passed**
+- `ProductGovernanceControllerIntegrationTest`: **2/2 passed**
+- `OutboxReportingControllerIntegrationTest`: **14/14 passed**
+- `OutboxPatternIntegrationTest`: **13/13 passed**
+- `LoanApplicationServiceIntegrationTest`: **14/14 passed**
+- `DepositApplicationServiceIntegrationTest`: **9/9 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+
+### Risks / Follow-up
+- Execution claim currently marks approval `EXECUTED` before operation body runs; this prevents duplicate execution but can require manual remediation if an execution fails mid-flight.
+- Product binding validator intentionally keeps legacy fallback when a product has no version rows; a stricter policy can be enabled later after full product version rollout.
+- DB-first IAM policy is active, but runtime behavior still depends on explicit `iam_staff_users` and role assignments; current fallback-to-authorities remains in place for compatibility.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 5 Slice 5.5 - Reconciliation Runtime Baseline)
+
+### Scope
+- Add manual ops reconciliation run endpoint with runtime-mode safety guard
+- Persist reconciliation breaks from authoritative account balances vs daily snapshots
+- Expose read-only reporting query for reconciliation breaks with run/status/severity filters
+- Keep backward compatibility and avoid schema/deploy/env changes
+
+### Changes Applied
+- Added `ReconciliationService` (`ops/reconciliation`):
+  - new reconciliation orchestration on existing tables only:
+    - `customer_accounts` (authoritative balances)
+    - `account_balance_snapshots`
+    - `reconciliation_breaks`
+    - `batch_runs`
+  - run contract:
+    - input validation: `businessDate` required
+    - limit behavior: default `2000`, clamp `1..10000`
+  - run flow:
+    - starts batch with `batch_type='RECONCILIATION'`
+    - detects `MISSING_ENTRY` for active accounts without snapshot on `businessDate`
+    - detects `AMOUNT_MISMATCH` for posted/available differences
+    - writes `reconciliation_breaks` with fixed severity:
+      - `MISSING_ENTRY -> HIGH`
+      - `AMOUNT_MISMATCH -> CRITICAL`
+    - writes `details_json` keys:
+      - `runId`, `businessDate`, `customerAccountId`
+      - `accountPosted`, `accountAvailable`
+      - `snapshotPosted`, `snapshotAvailable`
+      - `deltaPosted`, `deltaAvailable`
+    - completes/fails `batch_runs` with summary JSON
+    - appends audit event `RECONCILIATION_RUN_EXECUTED`
+  - added break query API for reporting with filters:
+    - `runId`, `status`, `severity`, bounded `limit` (max 200)
+- Added `OpsReconciliationController`:
+  - `POST /api/ops/reconciliation/runs`
+  - auth guard: `ROLE_OPS` or `ROLE_ADMIN`
+  - system mode guard: returns `409` when runtime mode is `RUNNING`
+  - request body: `{ "businessDate": "yyyy-MM-dd", "limit": 2000 }`
+  - response: `{ runId, businessDate, checkedCount, breakCount, missingCount, mismatchCount, truncated }`
+- Updated `ReportingController`:
+  - added `GET /api/reporting/reconciliation/breaks`
+  - filters:
+    - `runId`
+    - `status`
+    - `severity`
+    - `limit` (default `50`, max `200`)
+- Expanded integration tests:
+  - new `ReconciliationOpsIntegrationTest`:
+    - `USER -> 403`
+    - `RUNNING mode -> 409`
+    - mixed run creates both `MISSING_ENTRY` and `AMOUNT_MISMATCH`
+    - verifies run summary, break persistence, and audit append
+    - bad input (`missing/invalid businessDate`) -> `400`
+  - updated `ReportingControllerIntegrationTest`:
+    - reconciliation break query filter coverage (`runId/status/severity`)
+    - runId-only query + descending order behavior
+
+### Focused Verification Results
+- `ReconciliationOpsIntegrationTest`: **4/4 passed**
+- `ReportingControllerIntegrationTest`: **8/8 passed**
+- `SnapshotServiceTest`: **5/5 passed**
+- `BatchRunServiceTest`: **9/9 passed**
+- `SystemModeServiceTest`: **16/16 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `OutboxPatternIntegrationTest`: **13/13 passed**
+
+### Risks / Follow-up
+- Reconciliation run currently enforces non-`RUNNING` mode at controller layer only; if future entry points are added, keep this guard centralized.
+- Break listing filters by `runId` embedded in `details_json`; if reporting volume grows, add dedicated typed run-id column mapping strategy in a future schema slice.
+- Current slice is manual-trigger only; scheduling/ops automation for reconciliation is intentionally deferred.
+
+## Verification Session: 2026-03-25 (Phase 5 Slice 5.6 - Encryption App-Layer Baseline)
+
+### Scope
+- Add app-layer encryption for customer sensitive secrets using existing `encrypted_customer_secrets` table
+- Add additive ops endpoints for secret upsert and metadata listing
+- Keep backward compatibility and avoid schema/deploy/env changes
+
+### Changes Applied
+- Added new `ops/security` module:
+  - `CustomerSecretType`: allowlist parser for supported secret types
+  - `CustomerSecretCryptoService`:
+    - `AES/GCM/NoPadding`
+    - nonce length `12` bytes
+    - AAD format `customerId|secretType|keyVersion`
+    - fixed `keyVersion=1`
+    - key source `corebank.security.master-key-b64`
+    - fail-closed `503` when key is missing/invalid
+  - `CustomerSecretRepository`:
+    - customer existence check
+    - upsert into `encrypted_customer_secrets` by `(customer_id, secret_type)`
+    - metadata query (no plaintext/cipher return)
+  - `CustomerSecretService`:
+    - validation (`customerId` exists, secretType allowlist, plaintext non-blank, max 2048)
+    - encryption + persistence orchestration
+    - metadata listing per customer
+    - audit append `CUSTOMER_SECRET_UPSERTED` with metadata-only payload
+- Added `OpsCustomerSecretController`:
+  - `PUT /api/ops/customers/{customerId}/secrets/{secretType}` body `{ "plainText": "..." }`
+  - `GET /api/ops/customers/{customerId}/secrets`
+  - role guard via `IamAuthorizationService.requireAnyRole(authentication, "ROLE_OPS", "ROLE_ADMIN")`
+- Added integration tests:
+  - `OpsCustomerSecretIntegrationTest`:
+    - `USER -> 403`
+    - valid upsert -> `200`, ciphertext/nonce persisted, no plaintext in audit payload
+    - repeated upsert keeps single row
+    - invalid secret type / blank plaintext / >2048 -> `400`
+    - unknown customer -> `404`
+    - metadata list response excludes secret payload
+  - `OpsCustomerSecretMissingKeyIntegrationTest`:
+    - missing key -> upsert returns `503`
+
+### Focused Verification Results
+- `OpsCustomerSecretIntegrationTest`: **6/6 passed**
+- `OpsCustomerSecretMissingKeyIntegrationTest`: **1/1 passed**
+- `OpsApprovalExecutionIntegrationTest`: **4/4 passed**
+- `ReconciliationOpsIntegrationTest`: **4/4 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+
+### Risks / Follow-up
+- Regression suite run in a single Maven invocation exposed a pre-existing test-order coupling (`ReconciliationOpsIntegrationTest` setup assumes no prior `ledger_postings` references). Per-test isolated runs remain green.
+- Current slice encrypts at app layer for ops write path only; decrypt/read-value flow for operational review is intentionally out of scope.
+- Key rotation and multi-version key-management are deferred; current baseline intentionally uses fixed `keyVersion=1`.
+
+## Verification Session: 2026-03-26 (Phase 5 Slice 5.7 - Partition Automation + Hot-Account Ops Baseline)
+
+### Scope
+- Add additive ops/runtime baseline for partition readiness automation and hot-account profile management
+- Keep backward compatibility and avoid schema/deploy/env changes
+- Keep money write-path unchanged (`ledger_journals`, `ledger_postings`, `customer_accounts`)
+
+### Changes Applied
+- Added partition maintenance runtime module (`ops/maintenance`):
+  - `PartitionMaintenanceService`:
+    - managed parent tables: `ledger_journals_p`, `ledger_postings_p`, `audit_events_p`
+    - request contract:
+      - `fromMonth` optional (`yyyy-MM`, default current month)
+      - `monthsAhead` optional (default `3`, bounded `1..12`)
+    - idempotent `CREATE TABLE IF NOT EXISTS ... PARTITION OF ...` execution
+    - run summary includes `createdCount`, `existingCount`, `errorCount`, per-item status
+    - batch registry integration:
+      - starts `batch_type='PARTITION_MAINTENANCE'`
+      - stores run summary in batch result JSON
+    - audit append: `PARTITION_MAINTENANCE_EXECUTED`
+  - `OpsMaintenanceController`:
+    - new endpoint `POST /api/ops/maintenance/partitions/ensure-future`
+    - auth guard: `ROLE_OPS|ROLE_ADMIN`
+    - runtime guard: rejects when system mode is `RUNNING` with `409`
+    - validation errors return `400`
+- Added hot-account ops module (`ops/hotaccount`):
+  - `HotAccountOpsService`:
+    - upsert profile on existing tables `hot_account_profiles`, `ledger_account_balance_slots`
+    - validates:
+      - `ledgerAccountId` required and must exist in `ledger_accounts`
+      - `slotCount > 1`
+      - `selectionStrategy` in `HASH|ROUND_ROBIN|RANDOM` (default `HASH`)
+    - ensures slot rows `0..slotCount-1` exist via idempotent insert
+    - prevents slot shrink (`slotCount` cannot be lower than existing slot rows), returns conflict path
+    - read model returns profile + slot rows + aggregate totals
+    - audit append: `HOT_ACCOUNT_PROFILE_UPSERTED`
+  - `OpsHotAccountController`:
+    - new endpoint `PUT /api/ops/hot-accounts/{ledgerAccountId}/profile`
+    - new endpoint `GET /api/ops/hot-accounts/{ledgerAccountId}`
+    - auth guard: `ROLE_OPS|ROLE_ADMIN`
+    - status mapping:
+      - `404` not found
+      - `409` slot-shrink conflict
+      - `400` validation errors
+- Extended reporting read-only API:
+  - `ReportingController` new endpoint:
+    - `GET /api/reporting/hot-accounts/{ledgerAccountId}/slots`
+    - returns profile metadata, per-slot balances, and aggregate totals
+    - returns `404` when profile is missing
+
+### Focused Verification Results
+- `OpsPartitionMaintenanceIntegrationTest`: **4/4 passed**
+- `OpsHotAccountIntegrationTest`: **5/5 passed**
+- `ReportingControllerIntegrationTest`: **10/10 passed**
+- Regression (isolated runs):
+  - `ReconciliationOpsIntegrationTest`: **4/4 passed**
+  - `OpsApprovalExecutionIntegrationTest`: **4/4 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Runtime DDL can still add pressure on busy databases; this slice constrains execution by non-`RUNNING` mode + bounded horizon only.
+- Partition readiness is additive only; write-path cutover to partition parents is explicitly out of scope.
+- Existing test-order coupling in `ReconciliationOpsIntegrationTest` remains when mixed with suites that leave `ledger_postings` references; isolated test runs are green.
+
+## Verification Session: 2026-03-26 (Phase 5 Slice 5.8 - Runtime Mode Enforcement for Money-Impact Ops Paths)
+
+### Scope
+- Enforce runtime mode guard for money-impact ops endpoints only
+- Centralize runtime guard policy for both RUNNING-only money writes and non-RUNNING maintenance jobs
+- Keep backward compatibility and avoid schema/deploy/env changes
+
+### Changes Applied
+- Added `OpsRuntimeModePolicy` (`ops/system`):
+  - `requireRunningForMoneyImpactWrite()` returns `409` when mode is not `RUNNING`
+  - `requireNonRunningForMaintenanceJob()` returns `409` when mode is `RUNNING`
+  - both messages include current runtime mode
+- Applied RUNNING-only guard to money-impact endpoints:
+  - `POST /api/reporting/outbox/dead-letters/{outboxEventId}/requeue`
+  - `POST /api/reporting/outbox/dead-letters/requeue-bulk`
+  - `POST /api/ops/executions/outbox-dead-letter-requeue-bulk`
+  - `POST /api/ops/executions/loan-default`
+- Standardized non-RUNNING guard usage:
+  - `OpsMaintenanceController` now uses `OpsRuntimeModePolicy.requireNonRunningForMaintenanceJob()`
+  - `OpsReconciliationController` now uses `OpsRuntimeModePolicy.requireNonRunningForMaintenanceJob()`
+- Expanded integration tests:
+  - `OutboxReportingControllerIntegrationTest`:
+    - added `mode != RUNNING -> 409` for single requeue and bulk requeue
+    - assert outbox/dead-letter state unchanged when blocked
+  - `OpsApprovalExecutionIntegrationTest`:
+    - added `mode != RUNNING -> 409` for outbox bulk execution and loan-default execution
+    - assert approval execution state remains `NOT_EXECUTED`
+    - assert outbox/loan domain state remains unchanged when blocked
+    - made loan seed idempotency key unique per run to avoid cross-test key conflicts
+
+### Focused Verification Results
+- Targeted:
+  - `OutboxReportingControllerIntegrationTest`: **16/16 passed**
+  - `OpsApprovalExecutionIntegrationTest`: **6/6 passed**
+- Regression minimum:
+  - `ReconciliationOpsIntegrationTest`: **4/4 passed**
+  - `OpsPartitionMaintenanceIntegrationTest`: **4/4 passed**
+  - `OpsHotAccountIntegrationTest`: **5/5 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Existing runbooks that execute requeue/default while mode is non-`RUNNING` now receive `409`; operators must switch mode to `RUNNING` first.
+- Enforcement is currently at controller boundary; if future non-web entry points are added, apply service-layer guard as follow-up.
+- Error messages now surface runtime mode for clarity; ensure ops runbook examples reflect this behavior.
+
+## Verification Session: 2026-03-26 (Phase 5 Slice 5.9 - Runtime Mode Backstop at Service Layer)
+
+### Scope
+- Add service-layer runtime-mode backstop for money-impact ops paths to prevent direct-invocation bypass outside web controllers
+- Keep API/schema/deploy/env unchanged and preserve existing endpoint contracts
+
+### Changes Applied
+- Updated `OutboxReportingService`:
+  - injected `OpsRuntimeModePolicy`
+  - added `requireRunningForMoneyImpactWrite()` at the start of:
+    - `requeueDeadLetter(...)`
+    - `requeueDeadLetters(...)`
+- Updated `ApprovalService`:
+  - injected `OpsRuntimeModePolicy`
+  - added `requireRunningForMoneyImpactWrite()` at the start of:
+    - `claimApprovedExecution(...)`
+- Added direct service-level bypass integration coverage:
+  - new `OpsRuntimeModeServiceBackstopIntegrationTest`
+    - non-`RUNNING` direct call to `OutboxReportingService.requeueDeadLetter(...)` returns `409` and preserves outbox/dead-letter state
+    - non-`RUNNING` direct call to `OutboxReportingService.requeueDeadLetters(...)` returns `409` and preserves outbox/dead-letter state
+    - non-`RUNNING` direct call to `ApprovalService.claimApprovedExecution(...)` returns `409` and keeps approval `execution_status='NOT_EXECUTED'`
+- Controller/runtime guards from Phase 5.8 remain unchanged (intended double-guard: controller + service)
+
+### Focused Verification Results
+- Targeted:
+  - `OpsRuntimeModeServiceBackstopIntegrationTest`: **3/3 passed**
+  - `OutboxReportingControllerIntegrationTest`: **16/16 passed**
+  - `OpsApprovalExecutionIntegrationTest`: **6/6 passed**
+- Regression minimum:
+  - `ReconciliationOpsIntegrationTest`: **4/4 passed**
+  - `OpsPartitionMaintenanceIntegrationTest`: **4/4 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- With service-layer guard, mode `409` can now occur earlier than downstream business conflicts for direct service invocations; this is intentional for money-impact safety.
+- Service-level enforcement is currently scoped to:
+  - outbox dead-letter requeue
+  - approval execution claim
+  Future money-impact service entry points should adopt the same policy baseline.
