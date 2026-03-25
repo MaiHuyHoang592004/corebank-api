@@ -2,6 +2,7 @@ package com.corebank.corebank_api.reporting;
 
 import com.corebank.corebank_api.integration.OutboxEventRepository;
 import com.corebank.corebank_api.ops.audit.AuditService;
+import com.corebank.corebank_api.ops.system.OpsRuntimeModePolicy;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
@@ -25,16 +26,19 @@ public class OutboxReportingService {
 	private final NamedParameterJdbcTemplate namedParameterJdbcTemplate;
 	private final OutboxEventRepository outboxEventRepository;
 	private final AuditService auditService;
+	private final OpsRuntimeModePolicy opsRuntimeModePolicy;
 
 	public OutboxReportingService(
 			JdbcTemplate jdbcTemplate,
 			NamedParameterJdbcTemplate namedParameterJdbcTemplate,
 			OutboxEventRepository outboxEventRepository,
-			AuditService auditService) {
+			AuditService auditService,
+			OpsRuntimeModePolicy opsRuntimeModePolicy) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.namedParameterJdbcTemplate = namedParameterJdbcTemplate;
 		this.outboxEventRepository = outboxEventRepository;
 		this.auditService = auditService;
+		this.opsRuntimeModePolicy = opsRuntimeModePolicy;
 	}
 
 	public OutboxSummary summary() {
@@ -141,6 +145,7 @@ public class OutboxReportingService {
 
 	@Transactional
 	public OutboxDeadLetterRequeueResponse requeueDeadLetter(long outboxEventId, String actor) {
+		opsRuntimeModePolicy.requireRunningForMoneyImpactWrite();
 		OutboxEventRepository.DeadLetterRequeueStatus status =
 				outboxEventRepository.requeueDeadLetter(outboxEventId);
 
@@ -177,6 +182,7 @@ public class OutboxReportingService {
 
 	@Transactional
 	public OutboxDeadLetterBulkRequeueResponse requeueDeadLetters(List<Long> outboxEventIds, String actor) {
+		opsRuntimeModePolicy.requireRunningForMoneyImpactWrite();
 		Set<Long> deduped = new LinkedHashSet<>(outboxEventIds);
 		List<OutboxDeadLetterRequeueResponse> items = new ArrayList<>(deduped.size());
 
