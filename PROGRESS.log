@@ -1252,3 +1252,49 @@
 - Runtime DDL can still add pressure on busy databases; this slice constrains execution by non-`RUNNING` mode + bounded horizon only.
 - Partition readiness is additive only; write-path cutover to partition parents is explicitly out of scope.
 - Existing test-order coupling in `ReconciliationOpsIntegrationTest` remains when mixed with suites that leave `ledger_postings` references; isolated test runs are green.
+
+## Verification Session: 2026-03-26 (Phase 5 Slice 5.8 - Runtime Mode Enforcement for Money-Impact Ops Paths)
+
+### Scope
+- Enforce runtime mode guard for money-impact ops endpoints only
+- Centralize runtime guard policy for both RUNNING-only money writes and non-RUNNING maintenance jobs
+- Keep backward compatibility and avoid schema/deploy/env changes
+
+### Changes Applied
+- Added `OpsRuntimeModePolicy` (`ops/system`):
+  - `requireRunningForMoneyImpactWrite()` returns `409` when mode is not `RUNNING`
+  - `requireNonRunningForMaintenanceJob()` returns `409` when mode is `RUNNING`
+  - both messages include current runtime mode
+- Applied RUNNING-only guard to money-impact endpoints:
+  - `POST /api/reporting/outbox/dead-letters/{outboxEventId}/requeue`
+  - `POST /api/reporting/outbox/dead-letters/requeue-bulk`
+  - `POST /api/ops/executions/outbox-dead-letter-requeue-bulk`
+  - `POST /api/ops/executions/loan-default`
+- Standardized non-RUNNING guard usage:
+  - `OpsMaintenanceController` now uses `OpsRuntimeModePolicy.requireNonRunningForMaintenanceJob()`
+  - `OpsReconciliationController` now uses `OpsRuntimeModePolicy.requireNonRunningForMaintenanceJob()`
+- Expanded integration tests:
+  - `OutboxReportingControllerIntegrationTest`:
+    - added `mode != RUNNING -> 409` for single requeue and bulk requeue
+    - assert outbox/dead-letter state unchanged when blocked
+  - `OpsApprovalExecutionIntegrationTest`:
+    - added `mode != RUNNING -> 409` for outbox bulk execution and loan-default execution
+    - assert approval execution state remains `NOT_EXECUTED`
+    - assert outbox/loan domain state remains unchanged when blocked
+    - made loan seed idempotency key unique per run to avoid cross-test key conflicts
+
+### Focused Verification Results
+- Targeted:
+  - `OutboxReportingControllerIntegrationTest`: **16/16 passed**
+  - `OpsApprovalExecutionIntegrationTest`: **6/6 passed**
+- Regression minimum:
+  - `ReconciliationOpsIntegrationTest`: **4/4 passed**
+  - `OpsPartitionMaintenanceIntegrationTest`: **4/4 passed**
+  - `OpsHotAccountIntegrationTest`: **5/5 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Existing runbooks that execute requeue/default while mode is non-`RUNNING` now receive `409`; operators must switch mode to `RUNNING` first.
+- Enforcement is currently at controller boundary; if future non-web entry points are added, apply service-layer guard as follow-up.
+- Error messages now surface runtime mode for clarity; ensure ops runbook examples reflect this behavior.
