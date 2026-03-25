@@ -910,3 +910,52 @@
 - Authorization still uses authority-name matching (`ROLE_OPS`/`ROLE_ADMIN`); if broader policy abstraction is introduced later, align this component with global security policy modules.
 - Outbox ops commands remain under `/api/reporting` path for backward compatibility; full path-level command/query namespace separation is deferred to avoid breaking clients.
 - Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 5 Slice 5.1 - Outbox Safe Retry Policy)
+
+### Scope
+- Retry only transient publish failures in outbox worker
+- Move non-transient failures directly to terminal `FAILED` and dead-letter
+- Keep API/schema/deploy/env unchanged and preserve backward compatibility
+
+### Changes Applied
+- Updated `OutboxEventRepository`:
+  - added `markAsTerminalFailed(eventId, error, terminalRetryCount)`
+  - sets `status='FAILED'`, `processed_at=CURRENT_TIMESTAMP`, `processing_started_at=NULL`, `last_error=:error`
+  - sets `retry_count=GREATEST(retry_count, terminalRetryCount)` to enforce terminal retry ceiling
+  - keeps bounded status guard (`PENDING`, `PROCESSING`, `FAILED`)
+- Updated `OutboxEventPublisher`:
+  - added cause-chain publish-failure classifier
+  - transient types:
+    - `RetriableException`
+    - `TimeoutException`
+    - `SocketTimeoutException`
+    - `ConnectException`
+    - `IOException`
+  - non-transient types:
+    - `SerializationException`
+    - `IllegalArgumentException`
+    - `ClassCastException`
+  - default classification: `NON_TRANSIENT` (fail-fast)
+  - transient path keeps existing `markAsFailed(...)` retry flow and dead-letters only at `MAX_RETRIES`
+  - non-transient path calls `markAsTerminalFailed(..., MAX_RETRIES)` and dead-letters immediately with dedicated logs
+- Updated tests:
+  - `OutboxEventPublisherDeadLetterTest`:
+    - adjusted transient fixtures to `TimeoutException`
+    - added immediate non-transient dead-letter proof
+  - `OutboxPatternIntegrationTest`:
+    - added `markAsTerminalFailed_setsRetryToMaxAndSkipsFurtherClaim`
+    - verifies terminal `FAILED`, `retry_count=3`, dead-letter insert, and no further pending claim
+
+### Focused Verification Results
+- `OutboxEventPublisherDeadLetterTest`: **3/3 passed**
+- `OutboxPatternIntegrationTest`: **13/13 passed**
+- `OutboxReportingControllerIntegrationTest`: **14/14 passed**
+- `OutboxKafkaProjectorE2EIntegrationTest`: **1/1 passed**
+
+### Risks / Follow-up
+- Defaulting unknown exceptions to non-transient is safe-fail but may dead-letter some recoverable edge cases; extend transient classifier if new retriable exception types are observed.
+- Immediate non-transient dead-letter changes operator timing (earlier dead-letter visibility); runbook should prioritize payload/config fixes before manual requeue.
+- Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
