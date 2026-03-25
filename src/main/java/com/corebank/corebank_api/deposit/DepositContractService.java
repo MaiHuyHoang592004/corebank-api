@@ -5,6 +5,7 @@ import com.corebank.corebank_api.account.CustomerAccount;
 import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.ledger.LedgerCommandService;
 import com.corebank.corebank_api.ledger.LedgerCommandService.PostingInstruction;
+import com.corebank.corebank_api.product.ProductGovernanceService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -31,6 +32,7 @@ public class DepositContractService {
 	private final DepositContractRepository depositContractRepository;
 	private final DepositAccrualRepository depositAccrualRepository;
 	private final DepositEventRepository depositEventRepository;
+	private final ProductGovernanceService productGovernanceService;
 
 	public DepositContractService(
 			JdbcTemplate jdbcTemplate,
@@ -38,13 +40,15 @@ public class DepositContractService {
 			LedgerCommandService ledgerCommandService,
 			DepositContractRepository depositContractRepository,
 			DepositAccrualRepository depositAccrualRepository,
-			DepositEventRepository depositEventRepository) {
+			DepositEventRepository depositEventRepository,
+			ProductGovernanceService productGovernanceService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.accountBalanceRepository = accountBalanceRepository;
 		this.ledgerCommandService = ledgerCommandService;
 		this.depositContractRepository = depositContractRepository;
 		this.depositAccrualRepository = depositAccrualRepository;
 		this.depositEventRepository = depositEventRepository;
+		this.productGovernanceService = productGovernanceService;
 	}
 
 	@Transactional
@@ -61,6 +65,10 @@ public class DepositContractService {
 		if (request.interestRate() < 0 || request.interestRate() > 100.0) {
 			throw new CoreBankException("Interest rate must be between 0 and 100");
 		}
+
+		productGovernanceService.validateProductVersionBinding(
+				request.productId(),
+				request.productVersionId());
 
 		// Lock customer account
 		CustomerAccount lockedAccount = accountBalanceRepository.lockById(request.customerAccountId())

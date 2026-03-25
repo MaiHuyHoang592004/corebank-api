@@ -5,6 +5,7 @@ import com.corebank.corebank_api.account.CustomerAccount;
 import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.ledger.LedgerCommandService;
 import com.corebank.corebank_api.ledger.LedgerCommandService.PostingInstruction;
+import com.corebank.corebank_api.product.ProductGovernanceService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -31,6 +32,7 @@ public class LoanContractService {
 	private final JdbcTemplate jdbcTemplate;
 	private final AccountBalanceRepository accountBalanceRepository;
 	private final LedgerCommandService ledgerCommandService;
+	private final ProductGovernanceService productGovernanceService;
 
 	private static final org.springframework.jdbc.core.RowMapper<LoanContractSnapshot> LOAN_CONTRACT_ROW_MAPPER =
 			new org.springframework.jdbc.core.RowMapper<>() {
@@ -65,15 +67,20 @@ public class LoanContractService {
 	public LoanContractService(
 			JdbcTemplate jdbcTemplate,
 			AccountBalanceRepository accountBalanceRepository,
-			LedgerCommandService ledgerCommandService) {
+			LedgerCommandService ledgerCommandService,
+			ProductGovernanceService productGovernanceService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.accountBalanceRepository = accountBalanceRepository;
 		this.ledgerCommandService = ledgerCommandService;
+		this.productGovernanceService = productGovernanceService;
 	}
 
 	@Transactional
 	public DisbursementResponse disburseLoan(DisbursementRequest request) {
 		validate(request);
+		productGovernanceService.validateProductVersionBinding(
+				request.productId(),
+				request.productVersionId());
 
 		CustomerAccount borrower = accountBalanceRepository.lockById(request.borrowerAccountId())
 				.orElseThrow(() -> new CoreBankException("Borrower account not found: " + request.borrowerAccountId()));

@@ -296,6 +296,50 @@ public class DepositApplicationServiceIntegrationTest {
 	}
 
 	@Test
+	void testOpenDeposit_RejectsMismatchedProductVersionWhenGovernedVersionExists() {
+		UUID activeVersionId = UUID.randomUUID();
+		jdbcTemplate.update(
+				"""
+				INSERT INTO bank_product_versions (
+				    product_version_id,
+				    product_id,
+				    version_no,
+				    effective_from,
+				    effective_to,
+				    status,
+				    configuration_json,
+				    created_at
+				) VALUES (?, ?, 1, now() - interval '1 day', NULL, 'ACTIVE', '{}'::jsonb, now())
+				""",
+				activeVersionId,
+				productId);
+
+		DepositApplicationService.OpenDepositRequest request = new DepositApplicationService.OpenDepositRequest(
+				"test-idempotency-key-version-mismatch",
+				customerAccountId,
+				productId,
+				UUID.randomUUID(),
+				1_000_000L,
+				"VND",
+				6.5,
+				12,
+				1.0,
+				false,
+				debitLedgerAccountId,
+				creditLedgerAccountId,
+				"test-actor",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"test-trace");
+
+		assertThrows(CoreBankException.class, () -> depositApplicationService.openDeposit(request));
+		assertEquals(0, count(
+				"SELECT COUNT(*) FROM deposit_contracts WHERE customer_account_id = ?",
+				customerAccountId));
+	}
+
+	@Test
 	void testAccrueInterest_Success() {
 		// Arrange - First create a deposit contract
 		DepositApplicationService.OpenDepositRequest openRequest = new DepositApplicationService.OpenDepositRequest(

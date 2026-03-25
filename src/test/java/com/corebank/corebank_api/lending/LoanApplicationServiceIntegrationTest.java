@@ -166,6 +166,47 @@ class LoanApplicationServiceIntegrationTest {
 	}
 
 	@Test
+	void disburseLoan_rejectsMismatchedProductVersionWhenGovernedVersionExists() {
+		SeededData seeded = seedLoanDisbursementData("VND", 1_000_000L, 1_000_000L);
+		UUID activeVersionId = UUID.randomUUID();
+		jdbcTemplate.update(
+				"""
+				INSERT INTO bank_product_versions (
+				    product_version_id,
+				    product_id,
+				    version_no,
+				    effective_from,
+				    effective_to,
+				    status,
+				    configuration_json,
+				    created_at
+				) VALUES (?, ?, 1, now() - interval '1 day', NULL, 'ACTIVE', '{}'::jsonb, now())
+				""",
+				activeVersionId,
+				seeded.productId());
+
+		LoanApplicationService.LoanDisbursementRequest request = new LoanApplicationService.LoanDisbursementRequest(
+				"idem-loan-disburse-version-mismatch",
+				seeded.borrowerAccountId(),
+				seeded.productId(),
+				UUID.randomUUID(),
+				300_000L,
+				"VND",
+				9.0,
+				3,
+				seeded.loanReceivableLedgerAccountId(),
+				seeded.customerSettlementLedgerAccountId(),
+				"loan-officer",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"trace-loan-disburse-version-mismatch");
+
+		assertThrows(CoreBankException.class, () -> loanApplicationService.disburseLoan(request));
+		assertEquals(0, count("SELECT COUNT(*) FROM loan_contracts WHERE borrower_account_id = ?", seeded.borrowerAccountId()));
+	}
+
+	@Test
 	void repayLoan_allocatesFeesBeforeInterestAndPrincipalWithinInstallment_withNonZeroFeeInterestPrincipal() {
 		SeededData seeded = seedLoanDisbursementData("VND", 1_000_000L, 1_000_000L);
 
