@@ -959,3 +959,103 @@
 - Defaulting unknown exceptions to non-transient is safe-fail but may dead-letter some recoverable edge cases; extend transient classifier if new retriable exception types are observed.
 - Immediate non-transient dead-letter changes operator timing (earlier dead-letter visibility); runbook should prioritize payload/config fixes before manual requeue.
 - Kafka admin reconnect warnings to `localhost:9092` still appear in local non-broker tests; focused verification remains green.
+
+---
+
+## Verification Session: 2026-03-25 (Phase 5 Slice 5.2-5.4 - Approval + IAM + Product Governance)
+
+### Scope
+- Add operator IAM + approval governance foundation with additive schema only
+- Add approval workflow and approval-gated execution endpoints for:
+  - outbox dead-letter bulk requeue
+  - loan default transition
+- Complete product governance foundation and enforce product version binding on deposit/loan write paths
+- Keep backward compatibility, avoid deployment/env config changes, and preserve existing public APIs
+
+### Changes Applied
+- Added migration `V23__iam_approval_governance_foundation.sql`:
+  - new IAM tables:
+    - `iam_staff_users`
+    - `iam_roles`
+    - `iam_permissions`
+    - `iam_user_roles`
+    - `iam_role_permissions`
+  - approvals table extension (additive):
+    - `operation_type`
+    - `operation_payload_json`
+    - `execution_status`
+    - `executed_by`
+    - `executed_at`
+    - `expires_at`
+    - `decision_reason`
+  - execution-state constraints + indexes
+  - role/permission baseline seed:
+    - roles: `ROLE_ADMIN`, `ROLE_OPS`, `ROLE_MAKER`, `ROLE_APPROVER`
+    - permissions: `APPROVAL_CREATE`, `APPROVAL_DECIDE`, `APPROVAL_EXECUTE`, `PRODUCT_GOVERNANCE_READ`, `PRODUCT_GOVERNANCE_WRITE`
+- Added migration `V24__product_governance_completion.sql`:
+  - hardened `bank_product_versions`:
+    - FK `product_id -> bank_products(product_id)`
+    - effective range check (`effective_to > effective_from` when present)
+    - single-active-version unique index per product
+  - added governance tables:
+    - `posting_rule_sets`
+    - `posting_rule_lines`
+  - legacy backfill for products missing version rows
+- Added IAM + approval application layer:
+  - `IamAuthorizationService`:
+    - DB-first role/permission resolution
+    - fallback to Spring `Authentication` authorities for legacy compatibility
+  - `ApprovalService`:
+    - create/list/get approval
+    - approve/reject transitions (`PENDING -> APPROVED|REJECTED`)
+    - maker-checker enforcement (`requested_by != decided_by`)
+    - one-time execution claim (`NOT_EXECUTED -> EXECUTED`)
+  - `OpsApprovalController` (additive APIs):
+    - `POST /api/ops/approvals`
+    - `GET /api/ops/approvals`
+    - `GET /api/ops/approvals/{approvalId}`
+    - `POST /api/ops/approvals/{approvalId}/approve`
+    - `POST /api/ops/approvals/{approvalId}/reject`
+  - `OpsExecutionController` (approval-gated execution APIs):
+    - `POST /api/ops/executions/outbox-dead-letter-requeue-bulk`
+    - `POST /api/ops/executions/loan-default`
+    - execution endpoints consume only `approvalId`, read operation payload from approved record
+- Added product governance application layer:
+  - `ProductGovernanceService`:
+    - create draft version
+    - activate version
+    - retire version
+    - list versions
+    - validate product/version binding for write paths
+  - `ProductGovernanceController` (additive APIs):
+    - `POST /api/products/{productId}/versions`
+    - `POST /api/products/{productId}/versions/{productVersionId}/activate`
+    - `POST /api/products/{productId}/versions/{productVersionId}/retire`
+    - `GET /api/products/{productId}/versions`
+- Runtime enforcement updates:
+  - `DepositContractService.openDeposit(...)` now validates `productId + productVersionId` via governance service
+  - `LoanContractService.disburseLoan(...)` now validates `productId + productVersionId` via governance service
+  - compatibility-safe guard kept:
+    - if a product has no version rows yet, write-path validation allows legacy behavior
+- Test coverage added/updated:
+  - new:
+    - `OpsApprovalExecutionIntegrationTest`
+    - `ProductGovernanceControllerIntegrationTest`
+  - expanded:
+    - `DepositApplicationServiceIntegrationTest` (mismatch rejection when governed versions exist)
+    - `LoanApplicationServiceIntegrationTest` (mismatch rejection when governed versions exist)
+
+### Focused Verification Results
+- `OpsApprovalExecutionIntegrationTest`: **4/4 passed**
+- `ProductGovernanceControllerIntegrationTest`: **2/2 passed**
+- `OutboxReportingControllerIntegrationTest`: **14/14 passed**
+- `OutboxPatternIntegrationTest`: **13/13 passed**
+- `LoanApplicationServiceIntegrationTest`: **14/14 passed**
+- `DepositApplicationServiceIntegrationTest`: **9/9 passed**
+- `TransferServiceIntegrationTest`: **9/9 passed**
+- `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+
+### Risks / Follow-up
+- Execution claim currently marks approval `EXECUTED` before operation body runs; this prevents duplicate execution but can require manual remediation if an execution fails mid-flight.
+- Product binding validator intentionally keeps legacy fallback when a product has no version rows; a stricter policy can be enabled later after full product version rollout.
+- DB-first IAM policy is active, but runtime behavior still depends on explicit `iam_staff_users` and role assignments; current fallback-to-authorities remains in place for compatibility.
