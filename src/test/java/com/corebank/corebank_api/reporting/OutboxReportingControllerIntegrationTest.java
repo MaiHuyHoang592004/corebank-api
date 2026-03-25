@@ -48,6 +48,7 @@ class OutboxReportingControllerIntegrationTest {
 	void setUp() {
 		jdbcTemplate.update("DELETE FROM outbox_dead_letters");
 		jdbcTemplate.update("DELETE FROM outbox_events");
+		setRuntimeMode("RUNNING");
 	}
 
 	@Test
@@ -221,6 +222,32 @@ class OutboxReportingControllerIntegrationTest {
 	}
 
 	@Test
+	@WithMockUser(username = "ops-user", roles = "OPS")
+	void requeueDeadLetter_returnsConflictWhenRuntimeModeIsNotRunning() throws Exception {
+		append("OPS_TEST", "FAILED_DEAD_RUNTIME_BLOCKED_EVT", "failed-dead-runtime-blocked-1");
+		markAsFailed("FAILED_DEAD_RUNTIME_BLOCKED_EVT", 3, "exhausted");
+		insertDeadLetterFor("FAILED_DEAD_RUNTIME_BLOCKED_EVT", "2026-03-25T04:15:00Z");
+		Long eventId = eventIdByType("FAILED_DEAD_RUNTIME_BLOCKED_EVT");
+		setRuntimeMode("MAINTENANCE");
+
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/{outboxEventId}/requeue", eventId)
+						.with(csrf()))
+				.andExpect(status().isConflict());
+
+		Map<String, Object> outboxRow = jdbcTemplate.queryForMap(
+				"SELECT status, retry_count FROM outbox_events WHERE id = ?",
+				eventId);
+		assertEquals("FAILED", outboxRow.get("status"));
+		assertEquals(3, ((Number) outboxRow.get("retry_count")).intValue());
+
+		Integer deadLetterCount = jdbcTemplate.queryForObject(
+				"SELECT COUNT(*) FROM outbox_dead_letters WHERE outbox_event_id = ?",
+				Integer.class,
+				eventId);
+		assertEquals(1, deadLetterCount);
+	}
+
+	@Test
 	@WithMockUser(username = "admin-user", roles = "ADMIN")
 	void requeueDeadLetter_allowsAdminRole() throws Exception {
 		append("OPS_TEST", "FAILED_DEAD_ADMIN_EVT", "failed-dead-admin-1");
@@ -332,6 +359,35 @@ class OutboxReportingControllerIntegrationTest {
 	}
 
 	@Test
+	@WithMockUser(username = "admin-user", roles = "ADMIN")
+	void bulkRequeueDeadLetters_returnsConflictWhenRuntimeModeIsNotRunning() throws Exception {
+		append("OPS_TEST", "FAILED_DEAD_BULK_RUNTIME_BLOCKED_EVT", "failed-dead-bulk-runtime-blocked");
+		markAsFailed("FAILED_DEAD_BULK_RUNTIME_BLOCKED_EVT", 3, "exhausted-blocked");
+		insertDeadLetterFor("FAILED_DEAD_BULK_RUNTIME_BLOCKED_EVT", "2026-03-25T04:32:00Z");
+		Long eventId = eventIdByType("FAILED_DEAD_BULK_RUNTIME_BLOCKED_EVT");
+		setRuntimeMode("READ_ONLY");
+
+		String body = objectMapper.writeValueAsString(Map.of("outboxEventIds", List.of(eventId)));
+		mockMvc.perform(post("/api/reporting/outbox/dead-letters/requeue-bulk")
+						.with(csrf())
+						.contentType("application/json")
+						.content(body))
+				.andExpect(status().isConflict());
+
+		Map<String, Object> outboxRow = jdbcTemplate.queryForMap(
+				"SELECT status, retry_count FROM outbox_events WHERE id = ?",
+				eventId);
+		assertEquals("FAILED", outboxRow.get("status"));
+		assertEquals(3, ((Number) outboxRow.get("retry_count")).intValue());
+
+		Integer deadLetterCount = jdbcTemplate.queryForObject(
+				"SELECT COUNT(*) FROM outbox_dead_letters WHERE outbox_event_id = ?",
+				Integer.class,
+				eventId);
+		assertEquals(1, deadLetterCount);
+	}
+
+	@Test
 	@WithMockUser(username = "ops-user", roles = "OPS")
 	void bulkRequeueDeadLetters_returnsBadRequestForEmptyList() throws Exception {
 		String body = objectMapper.writeValueAsString(Map.of("outboxEventIds", List.of()));
@@ -424,5 +480,17 @@ class OutboxReportingControllerIntegrationTest {
 				""",
 				deadLetteredAtIso8601,
 				eventType);
+	}
+
+	private void setRuntimeMode(String status) {
+		jdbcTemplate.update(
+				"""
+				UPDATE system_configs
+				SET config_value = jsonb_set(config_value, '{status}', to_jsonb(?::text)),
+				    updated_at = now(),
+				    updated_by = 'test-suite'
+				WHERE config_key = 'runtime_mode'
+				""",
+				status);
 	}
 }
