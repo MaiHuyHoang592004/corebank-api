@@ -1187,3 +1187,68 @@
 - Regression suite run in a single Maven invocation exposed a pre-existing test-order coupling (`ReconciliationOpsIntegrationTest` setup assumes no prior `ledger_postings` references). Per-test isolated runs remain green.
 - Current slice encrypts at app layer for ops write path only; decrypt/read-value flow for operational review is intentionally out of scope.
 - Key rotation and multi-version key-management are deferred; current baseline intentionally uses fixed `keyVersion=1`.
+
+## Verification Session: 2026-03-26 (Phase 5 Slice 5.7 - Partition Automation + Hot-Account Ops Baseline)
+
+### Scope
+- Add additive ops/runtime baseline for partition readiness automation and hot-account profile management
+- Keep backward compatibility and avoid schema/deploy/env changes
+- Keep money write-path unchanged (`ledger_journals`, `ledger_postings`, `customer_accounts`)
+
+### Changes Applied
+- Added partition maintenance runtime module (`ops/maintenance`):
+  - `PartitionMaintenanceService`:
+    - managed parent tables: `ledger_journals_p`, `ledger_postings_p`, `audit_events_p`
+    - request contract:
+      - `fromMonth` optional (`yyyy-MM`, default current month)
+      - `monthsAhead` optional (default `3`, bounded `1..12`)
+    - idempotent `CREATE TABLE IF NOT EXISTS ... PARTITION OF ...` execution
+    - run summary includes `createdCount`, `existingCount`, `errorCount`, per-item status
+    - batch registry integration:
+      - starts `batch_type='PARTITION_MAINTENANCE'`
+      - stores run summary in batch result JSON
+    - audit append: `PARTITION_MAINTENANCE_EXECUTED`
+  - `OpsMaintenanceController`:
+    - new endpoint `POST /api/ops/maintenance/partitions/ensure-future`
+    - auth guard: `ROLE_OPS|ROLE_ADMIN`
+    - runtime guard: rejects when system mode is `RUNNING` with `409`
+    - validation errors return `400`
+- Added hot-account ops module (`ops/hotaccount`):
+  - `HotAccountOpsService`:
+    - upsert profile on existing tables `hot_account_profiles`, `ledger_account_balance_slots`
+    - validates:
+      - `ledgerAccountId` required and must exist in `ledger_accounts`
+      - `slotCount > 1`
+      - `selectionStrategy` in `HASH|ROUND_ROBIN|RANDOM` (default `HASH`)
+    - ensures slot rows `0..slotCount-1` exist via idempotent insert
+    - prevents slot shrink (`slotCount` cannot be lower than existing slot rows), returns conflict path
+    - read model returns profile + slot rows + aggregate totals
+    - audit append: `HOT_ACCOUNT_PROFILE_UPSERTED`
+  - `OpsHotAccountController`:
+    - new endpoint `PUT /api/ops/hot-accounts/{ledgerAccountId}/profile`
+    - new endpoint `GET /api/ops/hot-accounts/{ledgerAccountId}`
+    - auth guard: `ROLE_OPS|ROLE_ADMIN`
+    - status mapping:
+      - `404` not found
+      - `409` slot-shrink conflict
+      - `400` validation errors
+- Extended reporting read-only API:
+  - `ReportingController` new endpoint:
+    - `GET /api/reporting/hot-accounts/{ledgerAccountId}/slots`
+    - returns profile metadata, per-slot balances, and aggregate totals
+    - returns `404` when profile is missing
+
+### Focused Verification Results
+- `OpsPartitionMaintenanceIntegrationTest`: **4/4 passed**
+- `OpsHotAccountIntegrationTest`: **5/5 passed**
+- `ReportingControllerIntegrationTest`: **10/10 passed**
+- Regression (isolated runs):
+  - `ReconciliationOpsIntegrationTest`: **4/4 passed**
+  - `OpsApprovalExecutionIntegrationTest`: **4/4 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+
+### Risks / Follow-up
+- Runtime DDL can still add pressure on busy databases; this slice constrains execution by non-`RUNNING` mode + bounded horizon only.
+- Partition readiness is additive only; write-path cutover to partition parents is explicitly out of scope.
+- Existing test-order coupling in `ReconciliationOpsIntegrationTest` remains when mixed with suites that leave `ledger_postings` references; isolated test runs are green.
