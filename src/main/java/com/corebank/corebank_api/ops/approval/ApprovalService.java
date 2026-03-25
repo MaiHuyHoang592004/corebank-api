@@ -2,6 +2,7 @@ package com.corebank.corebank_api.ops.approval;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.corebank.corebank_api.ops.system.OpsRuntimeModePolicy;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -30,6 +31,7 @@ public class ApprovalService {
 
 	private final JdbcTemplate jdbcTemplate;
 	private final ObjectMapper objectMapper;
+	private final OpsRuntimeModePolicy opsRuntimeModePolicy;
 
 	private final RowMapper<ApprovalView> approvalRowMapper = new RowMapper<>() {
 		@Override
@@ -62,9 +64,13 @@ public class ApprovalService {
 		}
 	};
 
-	public ApprovalService(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+	public ApprovalService(
+			JdbcTemplate jdbcTemplate,
+			ObjectMapper objectMapper,
+			OpsRuntimeModePolicy opsRuntimeModePolicy) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.objectMapper = objectMapper.copy().findAndRegisterModules();
+		this.opsRuntimeModePolicy = opsRuntimeModePolicy;
 	}
 
 	@Transactional
@@ -192,6 +198,7 @@ public class ApprovalService {
 
 	@Transactional
 	public ApprovalView claimApprovedExecution(UUID approvalId, String actor, String expectedOperationType) {
+		opsRuntimeModePolicy.requireRunningForMoneyImpactWrite();
 		ApprovalView locked = lockApproval(approvalId);
 		String normalizedExpectedOperation = normalizeOperationType(expectedOperationType);
 
