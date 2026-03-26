@@ -1384,3 +1384,52 @@
 - Late retries beyond `expires_at + 24h` may now miss prior terminal idempotency entries; this is mitigated by terminal-only cleanup + grace window + default `dryRun=true`.
 - Cleanup remains manual in this slice; scheduler automation and runbook cadence are deferred intentionally.
 - Future expansions should keep `IN_PROGRESS` exclusion and bounded batch semantics to avoid unsafe deletes under load.
+
+## Verification Session: 2026-03-26 (Phase 5 Slice 5.11 - Ops Batch Run Observability Baseline)
+
+### Scope
+- Add read-only ops observability API for `batch_runs`
+- Keep API/schema/deploy/env unchanged and preserve existing endpoint contracts
+- Provide bounded filtering for existing batch job histories (partition/reconciliation/idempotency cleanup)
+
+### Changes Applied
+- Added `BatchRunReportingService` under `ops/batch`:
+  - read-only list query with optional filters:
+    - `batchType` exact match
+    - `status` (validated to `RUNNING|COMPLETED|FAILED`)
+    - `limit` default `50`, bounded `1..200`
+  - stable ordering: `created_at DESC`
+  - detail lookup by `runId`
+  - response records:
+    - list: `{ limit, items[] }`
+    - item/detail fields:
+      - `runId, batchName, batchType, status, startedAt, completedAt, retryCount, errorMessage, parametersJson, resultJson, createdAt, updatedAt`
+- Added `OpsBatchRunController`:
+  - `GET /api/ops/batch-runs`
+  - `GET /api/ops/batch-runs/{runId}`
+  - auth guard for both endpoints: `ROLE_OPS|ROLE_ADMIN` via `IamAuthorizationService.requireAnyRole(...)`
+  - error mapping:
+    - `400` for invalid `status`/`limit`/invalid `runId`
+    - `404` when `runId` not found
+    - `403` for insufficient role
+  - no runtime-mode guard (read-only behavior)
+- Added `OpsBatchRunReportingIntegrationTest`:
+  - `USER -> 403`
+  - `OPS/ADMIN -> 200`
+  - default list limit and descending sort behavior
+  - filter behavior for `batchType` + `status`
+  - validation errors (`status`, `limit`) -> `400`
+  - detail existing `runId` -> `200`, missing `runId` -> `404`
+
+### Focused Verification Results
+- Targeted + regression minimum:
+  - `OpsBatchRunReportingIntegrationTest`: **6/6 passed**
+  - `OpsPartitionMaintenanceIntegrationTest`: **4/4 passed**
+  - `OpsIdempotencyMaintenanceIntegrationTest`: **5/5 passed**
+  - `ReconciliationOpsIntegrationTest`: **4/4 passed**
+  - `ReportingControllerIntegrationTest`: **10/10 passed**
+
+### Risks / Follow-up
+- Batch-run metadata is now queryable over ops API; access remains restricted to `ROLE_OPS|ROLE_ADMIN`.
+- Current slice returns `parametersJson` and `resultJson` as raw JSON text; typed projection/normalization is intentionally deferred.
+- Batch type naming remains exact-match filtering; cross-module naming normalization is a follow-up concern if needed.
