@@ -16,14 +16,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class TransferService {
 
+	private static final Logger log = LoggerFactory.getLogger(TransferService.class);
 	private static final Duration IDEMPOTENCY_TTL = Duration.ofDays(1);
 
 	private final AccountBalanceRepository accountBalanceRepository;
@@ -33,6 +38,8 @@ public class TransferService {
 	private final OutboxService outboxService;
 	private final SystemModeService systemModeService;
 	private final LimitCheckService limitCheckService;
+	private final TransferRetryPolicy transferRetryPolicy;
+	private final TransactionTemplate transactionTemplate;
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
 	public TransferService(
@@ -42,7 +49,9 @@ public class TransferService {
 			AuditService auditService,
 			OutboxService outboxService,
 			SystemModeService systemModeService,
-			LimitCheckService limitCheckService) {
+			LimitCheckService limitCheckService,
+			TransferRetryPolicy transferRetryPolicy,
+			PlatformTransactionManager transactionManager) {
 		this.accountBalanceRepository = accountBalanceRepository;
 		this.ledgerCommandService = ledgerCommandService;
 		this.idempotencyService = idempotencyService;
@@ -50,10 +59,41 @@ public class TransferService {
 		this.outboxService = outboxService;
 		this.systemModeService = systemModeService;
 		this.limitCheckService = limitCheckService;
+		this.transferRetryPolicy = transferRetryPolicy;
+		this.transactionTemplate = new TransactionTemplate(transactionManager);
+		this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 	}
 
-	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public TransferResponse transfer(TransferRequest request) {
+		int maxAttempts = transferRetryPolicy.maxAttempts();
+		for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+			try {
+				return Objects.requireNonNull(
+						transactionTemplate.execute(status -> executeSingleAttempt(request)),
+						"transfer attempt returned null response");
+			} catch (RuntimeException ex) {
+				if (!transferRetryPolicy.isTransient(ex) || attempt >= maxAttempts) {
+					throw ex;
+				}
+
+				String sqlState = transferRetryPolicy.extractSqlState(ex);
+				long backoffMillis = transferRetryPolicy.backoffMillisBeforeNextAttempt(attempt);
+				log.warn(
+						"Transient transfer failure on attempt {}/{} for idempotencyKey={} type={} sqlState={} retryInMs={}",
+						attempt,
+						maxAttempts,
+						request.idempotencyKey(),
+						ex.getClass().getSimpleName(),
+						sqlState,
+						backoffMillis);
+				sleepBackoff(backoffMillis);
+			}
+		}
+
+		throw new CoreBankException("Transfer retry attempts exhausted");
+	}
+
+	private TransferResponse executeSingleAttempt(TransferRequest request) {
 		String requestJson = toJson(request);
 		IdempotencyService.StartResult startResult = idempotencyService.checkBeforeExecution(
 				request.idempotencyKey(),
@@ -230,6 +270,15 @@ public class TransferService {
 		} catch (RuntimeException ex) {
 			idempotencyService.markFailed(request.idempotencyKey(), startResult.requestHash());
 			throw ex;
+		}
+	}
+
+	private void sleepBackoff(long backoffMillis) {
+		try {
+			Thread.sleep(backoffMillis);
+		} catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			throw new CoreBankException("Transfer retry was interrupted", ex);
 		}
 	}
 
