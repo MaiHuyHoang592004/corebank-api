@@ -1675,3 +1675,44 @@
 - Retry policy is intentionally hard-coded in this slice; runtime tunability is deferred to avoid config-surface changes.
 - Lending path latency can increase by bounded backoff under transient lock contention.
 - This slice hardens lending disbursement/repayment only; overdue/default transitions are intentionally left unchanged.
+
+## Verification Session: 2026-03-27 (Phase 5 Slice 5.17 - Lending Deterministic Lock Ordering Baseline)
+
+### Scope
+- Harden deterministic lock ordering for lending overdue/default transitions as follow-up to 5.16
+- Keep API/schema/deploy/env unchanged and preserve backward compatibility
+- Limit changes to lending service SQL lock paths, lending integration tests, and progress evidence
+
+### Changes Applied
+- Updated `LoanContractService.markOverdueInstallments(...)`:
+  - replaced direct `UPDATE ... FROM` path with deterministic two-step CTE:
+    - `candidates` select + `FOR UPDATE OF rs` ordered by `contract_id`, `installment_no`, `schedule_id`
+    - `updated` stage applies status transition to exactly locked candidate rows
+  - preserved existing business predicates (`ACTIVE` contracts, due date cutoff, eligible statuses, positive remaining due)
+  - stabilized output ordering with `ORDER BY contract_id ASC`
+- Updated `LoanContractService.markContractDefaulted(...)`:
+  - kept contract-level lock-first behavior (`lockLoanContract`)
+  - replaced raw overdue count gate with deterministic lock helper:
+    - lock eligible overdue schedule rows ordered by `installment_no`, `schedule_id` using `FOR UPDATE`
+    - derive `overdueInstallmentCount` from locked snapshot
+  - preserved default transition/event semantics and rejection behavior when no eligible overdue rows remain
+- Added lending integration coverage in `LoanApplicationServiceIntegrationTest`:
+  - deterministic ordering assertion for `affectedContractIds`
+  - concurrency smoke (`markOverdueInstallments` + `repayLoan`) with timeout/deadlock guard and side-effect invariant checks
+  - settled-overdue default rejection coverage (no `DEFAULTED` side effects when overdue line is fully paid)
+- Stabilized brittle assertions in existing overdue rerun test to focus on target-contract invariants instead of global row counts.
+
+### Focused Verification Results
+- Targeted:
+  - `LoanApplicationServiceIntegrationTest`: **17/17 passed**
+- Regression minimum:
+  - `LoanTransientRetryIntegrationTest`: **3/3 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `DepositApplicationServiceIntegrationTest`: **9/9 passed**
+  - `SystemModeServiceTest`: **16/16 passed**
+
+### Risks / Follow-up
+- Deterministic locking can increase wait time under high contention; expected tradeoff for reduced deadlock risk.
+- Overdue transition remains global (all eligible contracts) in current API behavior; tests now avoid relying on globally isolated fixture state.
+- If future batch-scale tuning is needed, consider adding bounded windowing (`limit`/chunking) for overdue transitions in a separate slice.
