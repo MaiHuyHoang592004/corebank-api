@@ -1486,3 +1486,47 @@
 - Candidate parsing intentionally depends on naming convention `<parent>_yyyy_MM`; non-standard partition names are ignored.
 - Endpoint provides dry-run candidate visibility only; actual archive execution (detach/drop/compress) remains out of scope.
 - Runbook provides baseline templates and checks; environment-specific hardening steps should be added by operations teams per deployment context.
+
+## Verification Session: 2026-03-26 (Phase 5 Slice 5.13 - Transfer Deadlock/Lock Transient Retry Baseline)
+
+### Scope
+- Add bounded transient retry handling to internal transfer execution path
+- Keep transfer API/schema/deploy/env unchanged and preserve backward compatibility
+- Limit retry to lock/deadlock/serialization-class transient database failures only
+
+### Changes Applied
+- Added `TransferRetryPolicy` in transfer module:
+  - fixed policy values:
+    - `maxAttempts = 3`
+    - backoff `50ms` then `150ms`
+  - transient classifier whitelist:
+    - `CannotAcquireLockException`
+    - `PessimisticLockingFailureException`
+    - `DeadlockLoserDataAccessException`
+    - `SQLException` with SQLState `40P01`, `55P03`, `40001`
+  - default behavior for all other failures: non-transient (no retry)
+- Hardened `TransferService` orchestration without changing request/response contract:
+  - wrapped single transfer attempt in retry loop
+  - each attempt executes in `REQUIRES_NEW` transaction
+  - replay/idempotency path remains unchanged (`checkBeforeExecution`, `markFailed`, `markSucceeded`)
+  - retry only when failure is classified transient and attempts remain
+  - added warning logs with attempt count, exception type, and SQLState
+- Added focused tests:
+  - `TransferRetryPolicyTest` for transient classifier + SQLState mapping + backoff contract
+  - `TransferServiceTransientRetryIntegrationTest` for:
+    - transient first-attempt lock failure then successful retry with single journal/audit/outbox side effects
+    - non-transient failure path without retry and idempotency status `FAILED`
+
+### Focused Verification Results
+- Targeted + regression minimum:
+  - `TransferRetryPolicyTest`: **4/4 passed**
+  - `TransferServiceTransientRetryIntegrationTest`: **2/2 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `PaymentIdempotencyIntegrationTest`: **7/7 passed**
+  - `SystemModeServiceTest`: **16/16 passed**
+
+### Risks / Follow-up
+- Retry policy is intentionally hard-coded in this slice; runtime tunability is deferred to avoid config-surface changes.
+- Transfer latency can increase by bounded backoff under transient lock contention.
+- This slice hardens only `TransferService`; transient retry policies for payment/deposit/lending remain follow-up work.
