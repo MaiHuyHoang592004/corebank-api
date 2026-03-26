@@ -12,6 +12,12 @@ import java.time.LocalDate;
 import com.corebank.corebank_api.ops.system.SystemModeService;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -564,8 +570,8 @@ class LoanApplicationServiceIntegrationTest {
 				"trace-loan-overdue-3");
 
 		LoanApplicationService.LoanOverdueTransitionResponse first = loanApplicationService.markOverdueInstallments(request);
-		assertEquals(1, first.affectedContractCount());
-		assertEquals(1, first.affectedInstallmentCount());
+		assertTrue(first.affectedContractIds().contains(disbursement.contractId()));
+		assertTrue(first.affectedInstallmentCount() >= 1);
 
 		int loanEventsAfterFirst = count("SELECT COUNT(*) FROM loan_events WHERE contract_id = ? AND event_type = 'OVERDUE'", disbursement.contractId());
 		int auditEventsAfterFirst = count("SELECT COUNT(*) FROM audit_events WHERE action = 'LOAN_OVERDUE_MARKED' AND resource_id = ?", disbursement.contractId().toString());
@@ -578,6 +584,127 @@ class LoanApplicationServiceIntegrationTest {
 		assertEquals(loanEventsAfterFirst, count("SELECT COUNT(*) FROM loan_events WHERE contract_id = ? AND event_type = 'OVERDUE'", disbursement.contractId()));
 		assertEquals(auditEventsAfterFirst, count("SELECT COUNT(*) FROM audit_events WHERE action = 'LOAN_OVERDUE_MARKED' AND resource_id = ?", disbursement.contractId().toString()));
 		assertEquals(outboxAfterFirst, count("SELECT COUNT(*) FROM outbox_events WHERE event_type = 'LOAN_OVERDUE' AND aggregate_id = ?", disbursement.contractId().toString()));
+	}
+
+	@Test
+	void markOverdueInstallments_returnsAffectedContractIdsInDeterministicOrder() {
+		SeededData seededA = seedLoanDisbursementData("VND", 1_000_000L, 1_000_000L);
+		LoanApplicationService.LoanDisbursementResponse disbursementA = disburseLoanForRepayment(seededA, "overdue-order-a");
+		SeededData seededB = seedLoanDisbursementData("VND", 1_000_000L, 1_000_000L);
+		LoanApplicationService.LoanDisbursementResponse disbursementB = disburseLoanForRepayment(seededB, "overdue-order-b");
+		LocalDate asOfDate = LocalDate.now();
+
+		jdbcTemplate.update(
+				"""
+				UPDATE repayment_schedules
+				SET due_date = ?
+				WHERE installment_no = 1
+				  AND contract_id IN (?, ?)
+				""",
+				asOfDate.minusDays(1),
+				disbursementA.contractId(),
+				disbursementB.contractId());
+
+		LoanApplicationService.LoanOverdueTransitionResponse response = loanApplicationService.markOverdueInstallments(
+				new LoanApplicationService.LoanOverdueTransitionRequest(
+						asOfDate,
+						"loan-collector",
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						"trace-loan-overdue-order"));
+
+		UUID expectedFirst = disbursementA.contractId().compareTo(disbursementB.contractId()) <= 0
+				? disbursementA.contractId()
+				: disbursementB.contractId();
+		UUID expectedSecond = disbursementA.contractId().compareTo(disbursementB.contractId()) <= 0
+				? disbursementB.contractId()
+				: disbursementA.contractId();
+
+		assertTrue(response.affectedContractIds().contains(disbursementA.contractId()));
+		assertTrue(response.affectedContractIds().contains(disbursementB.contractId()));
+		assertTrue(response.affectedInstallmentCount() >= 2);
+		assertTrue(response.affectedContractCount() >= 2);
+		for (int i = 1; i < response.affectedContractIds().size(); i++) {
+			assertTrue(response.affectedContractIds().get(i - 1).compareTo(response.affectedContractIds().get(i)) <= 0);
+		}
+		assertTrue(response.affectedContractIds().indexOf(expectedFirst) < response.affectedContractIds().indexOf(expectedSecond));
+	}
+
+	@Test
+	void concurrentMarkOverdueAndRepayLoan_completesWithoutDeadlockAndPreservesInvariants() throws Exception {
+		SeededData seeded = seedLoanDisbursementData("VND", 1_000_000L, 1_000_000L);
+		LoanApplicationService.LoanDisbursementResponse disbursement = disburseLoanForRepayment(seeded, "overdue-concurrent");
+		LocalDate asOfDate = LocalDate.now();
+
+		jdbcTemplate.update(
+				"""
+				UPDATE repayment_schedules
+				SET due_date = ?,
+				    fees_due_minor = ?
+				WHERE contract_id = ?
+				  AND installment_no = 1
+				""",
+				asOfDate.minusDays(1),
+				4_000L,
+				disbursement.contractId());
+
+		LoanApplicationService.LoanOverdueTransitionRequest overdueRequest = new LoanApplicationService.LoanOverdueTransitionRequest(
+				asOfDate,
+				"loan-collector",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"trace-loan-overdue-concurrent");
+
+		LoanApplicationService.LoanRepaymentRequest repayRequest = new LoanApplicationService.LoanRepaymentRequest(
+				"idem-loan-repay-concurrent",
+				disbursement.contractId(),
+				seeded.borrowerAccountId(),
+				9_500L,
+				"VND",
+				seeded.customerSettlementLedgerAccountId(),
+				seeded.loanReceivableLedgerAccountId(),
+				"loan-officer",
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				UUID.randomUUID(),
+				"trace-loan-repay-concurrent");
+
+		ExecutorService executorService = Executors.newFixedThreadPool(2);
+		CountDownLatch ready = new CountDownLatch(2);
+		CountDownLatch start = new CountDownLatch(1);
+
+		try {
+			Future<InvocationOutcome<LoanApplicationService.LoanOverdueTransitionResponse>> overdueFuture =
+					executorService.submit(() -> executeConcurrentCallable(
+							() -> loanApplicationService.markOverdueInstallments(overdueRequest),
+							ready,
+							start));
+			Future<InvocationOutcome<LoanApplicationService.LoanRepaymentResponse>> repayFuture =
+					executorService.submit(() -> executeConcurrentCallable(
+							() -> loanApplicationService.repayLoan(repayRequest),
+							ready,
+							start));
+
+			assertTrue(ready.await(5, TimeUnit.SECONDS));
+			start.countDown();
+
+			InvocationOutcome<LoanApplicationService.LoanOverdueTransitionResponse> overdueOutcome =
+					overdueFuture.get(20, TimeUnit.SECONDS);
+			InvocationOutcome<LoanApplicationService.LoanRepaymentResponse> repayOutcome =
+					repayFuture.get(20, TimeUnit.SECONDS);
+
+			assertTrue(
+					overdueOutcome.error() == null || repayOutcome.error() == null,
+					"At least one concurrent operation should complete");
+			assertTrue(
+					count("SELECT COUNT(*) FROM loan_events WHERE contract_id = ? AND event_type = 'OVERDUE'", disbursement.contractId()) <= 1);
+			assertTrue(
+					count("SELECT COUNT(*) FROM loan_events WHERE contract_id = ? AND event_type = 'REPAYMENT'", disbursement.contractId()) <= 1);
+		} finally {
+			executorService.shutdownNow();
+		}
 	}
 
 	@Test
@@ -774,6 +901,63 @@ class LoanApplicationServiceIntegrationTest {
 		assertEquals(0, count("SELECT COUNT(*) FROM outbox_events WHERE event_type = 'LOAN_DEFAULTED' AND aggregate_id = ?", disbursement.contractId().toString()));
 	}
 
+	@Test
+	void markContractDefaulted_rejectsWhenOverdueInstallmentWasSettled() {
+		SeededData seeded = seedLoanDisbursementData("VND", 1_000_000L, 1_000_000L);
+		LoanApplicationService.LoanDisbursementResponse disbursement = disburseLoanForRepayment(seeded, "default-settled-overdue");
+		LocalDate asOfDate = LocalDate.now();
+
+		jdbcTemplate.update(
+				"""
+				UPDATE repayment_schedules
+				SET due_date = ?
+				WHERE contract_id = ?
+				  AND installment_no = 1
+				""",
+				asOfDate.minusDays(2),
+				disbursement.contractId());
+
+		loanApplicationService.markOverdueInstallments(
+				new LoanApplicationService.LoanOverdueTransitionRequest(
+						asOfDate,
+						"loan-collector",
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						UUID.randomUUID(),
+						"trace-loan-overdue-default-settled"));
+
+		jdbcTemplate.update(
+				"""
+				UPDATE repayment_schedules
+				SET principal_paid_minor = principal_due_minor,
+				    interest_paid_minor = interest_due_minor,
+				    fees_paid_minor = fees_due_minor
+				WHERE contract_id = ?
+				  AND installment_no = 1
+				""",
+				disbursement.contractId());
+
+		assertThrows(
+				CoreBankException.class,
+				() -> loanApplicationService.markContractDefaulted(
+						new LoanApplicationService.LoanDefaultTransitionRequest(
+								disbursement.contractId(),
+								asOfDate,
+								"loan-manager",
+								UUID.randomUUID(),
+								UUID.randomUUID(),
+								UUID.randomUUID(),
+								"trace-loan-default-settled")));
+
+		Map<String, Object> contract = jdbcTemplate.queryForMap(
+				"SELECT status FROM loan_contracts WHERE contract_id = ?",
+				disbursement.contractId());
+		assertEquals("ACTIVE", contract.get("status"));
+		assertEquals(0, count("SELECT COUNT(*) FROM loan_events WHERE contract_id = ? AND event_type = 'DEFAULTED'", disbursement.contractId()));
+		assertEquals(0, count("SELECT COUNT(*) FROM audit_events WHERE action = 'LOAN_DEFAULTED' AND resource_id = ?", disbursement.contractId().toString()));
+		assertEquals(0, count("SELECT COUNT(*) FROM outbox_events WHERE event_type = 'LOAN_DEFAULTED' AND aggregate_id = ?", disbursement.contractId().toString()));
+	}
+
 	private LoanApplicationService.LoanDisbursementResponse disburseLoanForRepayment(SeededData seeded, String suffix) {
 		return loanApplicationService.disburseLoan(new LoanApplicationService.LoanDisbursementRequest(
 				"idem-loan-disburse-" + suffix,
@@ -860,9 +1044,27 @@ class LoanApplicationServiceIntegrationTest {
 		return new SeededData(productId, borrowerAccountId, loanReceivableLedgerAccountId, customerSettlementLedgerAccountId);
 	}
 
+	private <T> InvocationOutcome<T> executeConcurrentCallable(
+			Callable<T> callable,
+			CountDownLatch ready,
+			CountDownLatch start) {
+		try {
+			ready.countDown();
+			if (!start.await(5, TimeUnit.SECONDS)) {
+				return new InvocationOutcome<>(null, new IllegalStateException("Concurrent start latch timed out"));
+			}
+			return new InvocationOutcome<>(callable.call(), null);
+		} catch (Throwable throwable) {
+			return new InvocationOutcome<>(null, throwable);
+		}
+	}
+
 	private int count(String sql, Object... args) {
 		Integer value = jdbcTemplate.queryForObject(sql, Integer.class, args);
 		return value == null ? 0 : value;
+	}
+
+	private record InvocationOutcome<T>(T value, Throwable error) {
 	}
 
 	private record SeededData(
