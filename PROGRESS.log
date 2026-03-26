@@ -1530,3 +1530,48 @@
 - Retry policy is intentionally hard-coded in this slice; runtime tunability is deferred to avoid config-surface changes.
 - Transfer latency can increase by bounded backoff under transient lock contention.
 - This slice hardens only `TransferService`; transient retry policies for payment/deposit/lending remain follow-up work.
+
+## Verification Session: 2026-03-27 (Phase 5 Slice 5.14 - Payment Deadlock/Lock Transient Retry Baseline)
+
+### Scope
+- Add bounded transient retry handling to payment hold/capture/void application orchestration
+- Keep payment API/schema/deploy/env unchanged and preserve backward compatibility
+- Limit retry to lock/deadlock/serialization-class transient database failures only
+
+### Changes Applied
+- Added `PaymentRetryPolicy` in payment module:
+  - fixed policy values:
+    - `maxAttempts = 3`
+    - backoff `50ms` then `150ms`
+  - transient classifier whitelist:
+    - `CannotAcquireLockException`
+    - `PessimisticLockingFailureException`
+    - `DeadlockLoserDataAccessException`
+    - `SQLException` with SQLState `40P01`, `55P03`, `40001`
+  - default behavior for all other failures: non-transient (no retry)
+- Hardened `PaymentApplicationService` orchestration without changing request/response contract:
+  - wrapped `authorizeHold`, `captureHold`, `voidHold` with bounded retry loop
+  - each attempt executes in `REQUIRES_NEW` transaction
+  - replay/idempotency path remains unchanged (`checkBeforeExecution`, `markFailed`, `markSucceeded`)
+  - retry only when failure is classified transient and attempts remain
+  - added warning logs with operation, attempt count, exception type, SQLState, and backoff
+- Added focused tests:
+  - `PaymentRetryPolicyTest` for transient classifier + SQLState mapping + backoff contract
+  - `PaymentTransientRetryIntegrationTest` for:
+    - transient first-attempt lock failure in `authorizeHold` then successful retry with single side effects
+    - transient deadlock first-attempt in `captureHold` then successful retry with single journal/audit/outbox side effects
+    - non-transient `authorizeHold` failure path without retry and idempotency status `FAILED`
+
+### Focused Verification Results
+- Targeted + regression minimum:
+  - `PaymentRetryPolicyTest`: **4/4 passed**
+  - `PaymentTransientRetryIntegrationTest`: **3/3 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `PaymentIdempotencyIntegrationTest`: **7/7 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+  - `SystemModeServiceTest`: **16/16 passed**
+
+### Risks / Follow-up
+- Retry policy is intentionally hard-coded in this slice; runtime tunability is deferred to avoid config-surface changes.
+- Payment path latency can increase by bounded backoff under transient lock contention.
+- This slice hardens payment application orchestration; transient retry for deposit/lending remains follow-up work.
