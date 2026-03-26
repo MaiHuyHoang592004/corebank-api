@@ -2,6 +2,7 @@ package com.corebank.corebank_api.integration;
 
 import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.common.IdempotencyConflictException;
+import com.corebank.corebank_api.integration.redis.RedisIdempotencyCacheService;
 import java.sql.Timestamp;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -13,6 +14,8 @@ import java.util.Optional;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,14 +23,22 @@ import org.springframework.transaction.annotation.Transactional;
 public class IdempotencyService {
 
 	private final JdbcTemplate jdbcTemplate;
+	private final RedisIdempotencyCacheService redisIdempotencyCacheService;
 
-	public IdempotencyService(JdbcTemplate jdbcTemplate) {
+	public IdempotencyService(
+			JdbcTemplate jdbcTemplate,
+			RedisIdempotencyCacheService redisIdempotencyCacheService) {
 		this.jdbcTemplate = jdbcTemplate;
+		this.redisIdempotencyCacheService = redisIdempotencyCacheService;
 	}
 
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public StartResult checkBeforeExecution(String idempotencyKey, String requestPayloadJson, Instant expiresAt) {
 		String requestHash = sha256Hex(requestPayloadJson);
+		Optional<String> cachedReplay = redisIdempotencyCacheService.findSuccessReplay(idempotencyKey, requestHash);
+		if (cachedReplay.isPresent()) {
+			return StartResult.replay(cachedReplay.get());
+		}
 		Optional<IdempotencyRecord> existing = findByKey(idempotencyKey);
 
 		if (existing.isPresent()) {
@@ -74,6 +85,7 @@ public class IdempotencyService {
 				requestHash);
 
 		if (updatedRows == 1) {
+			cacheSuccessReplayAfterCommit(idempotencyKey, requestHash, expiresAt, responseBodyJson);
 			return;
 		}
 
@@ -87,6 +99,12 @@ public class IdempotencyService {
 		if (!"SUCCEEDED".equals(existing.status())) {
 			throw new CoreBankException("Idempotent request exists in unsupported state: " + existing.status());
 		}
+
+		cacheSuccessReplayAfterCommit(
+				idempotencyKey,
+				requestHash,
+				existing.expiresAt(),
+				existing.responseBody() != null ? existing.responseBody() : responseBodyJson);
 	}
 
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -131,7 +149,8 @@ public class IdempotencyService {
 						rs.getString("idempotency_key"),
 						rs.getString("request_hash"),
 						rs.getString("status"),
-						rs.getString("response_body")),
+						rs.getString("response_body"),
+						toInstant(rs.getTimestamp("expires_at"))),
 				idempotencyKey);
 
 		return results.stream().findFirst();
@@ -143,6 +162,11 @@ public class IdempotencyService {
 		}
 
 		if ("SUCCEEDED".equals(existing.status())) {
+			redisIdempotencyCacheService.cacheSuccessReplay(
+					existing.idempotencyKey(),
+					requestHash,
+					existing.responseBody(),
+					existing.expiresAt());
 			return StartResult.replay(existing.responseBody());
 		}
 
@@ -187,11 +211,40 @@ public class IdempotencyService {
 		}
 	}
 
+	private void cacheSuccessReplayAfterCommit(
+			String idempotencyKey,
+			String requestHash,
+			Instant expiresAt,
+			String responseBodyJson) {
+		if (responseBodyJson == null || expiresAt == null) {
+			return;
+		}
+		if (TransactionSynchronizationManager.isSynchronizationActive()) {
+			TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+				@Override
+				public void afterCommit() {
+					redisIdempotencyCacheService.cacheSuccessReplay(
+							idempotencyKey,
+							requestHash,
+							responseBodyJson,
+							expiresAt);
+				}
+			});
+			return;
+		}
+		redisIdempotencyCacheService.cacheSuccessReplay(idempotencyKey, requestHash, responseBodyJson, expiresAt);
+	}
+
+	private Instant toInstant(Timestamp timestamp) {
+		return timestamp == null ? null : timestamp.toInstant();
+	}
+
 	private record IdempotencyRecord(
 			String idempotencyKey,
 			String requestHash,
 			String status,
-			String responseBody) {
+			String responseBody,
+			Instant expiresAt) {
 	}
 
 	public record StartResult(boolean replay, String requestHash, Instant expiresAt, String responseBodyJson) {
