@@ -1433,3 +1433,56 @@
 - Batch-run metadata is now queryable over ops API; access remains restricted to `ROLE_OPS|ROLE_ADMIN`.
 - Current slice returns `parametersJson` and `resultJson` as raw JSON text; typed projection/normalization is intentionally deferred.
 - Batch type naming remains exact-match filtering; cross-module naming normalization is a follow-up concern if needed.
+
+## Verification Session: 2026-03-26 (Phase 5 Slice 5.12 - Partition Archive Readiness + Backup/Restore Runbook Baseline)
+
+### Scope
+- Add read-only archive-candidate API for managed partition parents
+- Add runbook baseline for backup/restore rehearsal and safe archive workflow
+- Keep API/schema/deploy/env unchanged and preserve existing endpoint contracts
+
+### Changes Applied
+- Added `PartitionArchiveReadinessService` under `ops/maintenance`:
+  - read-only candidate listing with defaults:
+    - `retentionMonths=12` (`1..120`)
+    - `limit=200` (`1..500`)
+    - `parentTable` defaults to managed allowlist:
+      - `ledger_journals_p`, `ledger_postings_p`, `audit_events_p`
+  - source query from PostgreSQL partition catalogs (`pg_inherits`, `pg_class`, `pg_namespace`)
+  - candidate rule:
+    - parse partition names matching `<parent>_yyyy_MM`
+    - include when `partitionMonth < asOfMonth - retentionMonths`
+  - stable ordering:
+    - `partitionMonth ASC`, then `partitionName ASC`
+  - response contract:
+    - `{ asOfMonth, retentionMonths, limit, candidateCount, truncated, items[] }`
+    - item fields:
+      - `parentTable`, `partitionName`, `partitionMonth`, `reason`
+      - `reason` fixed to `OLDER_THAN_RETENTION`
+  - safety:
+    - no detach/drop/delete behavior in this slice
+- Extended `OpsMaintenanceController`:
+  - new endpoint `GET /api/ops/maintenance/partitions/archive-candidates`
+  - auth guard `ROLE_OPS|ROLE_ADMIN`
+  - no runtime-mode guard (read-only endpoint)
+  - invalid query parameters mapped to `400`
+- Added runbook document:
+  - `27-backup-restore-and-partition-archive-runbook.md`
+  - includes:
+    - logical backup template
+    - restore-to-scratch template
+    - post-restore verification checklist
+    - archive-candidates review/approval safety workflow
+
+### Focused Verification Results
+- Targeted + regression minimum:
+  - `OpsPartitionArchiveCandidatesIntegrationTest`: **5/5 passed**
+  - `OpsPartitionMaintenanceIntegrationTest`: **4/4 passed**
+  - `OpsBatchRunReportingIntegrationTest`: **6/6 passed**
+  - `OpsIdempotencyMaintenanceIntegrationTest`: **5/5 passed**
+  - `ReconciliationOpsIntegrationTest`: **4/4 passed**
+
+### Risks / Follow-up
+- Candidate parsing intentionally depends on naming convention `<parent>_yyyy_MM`; non-standard partition names are ignored.
+- Endpoint provides dry-run candidate visibility only; actual archive execution (detach/drop/compress) remains out of scope.
+- Runbook provides baseline templates and checks; environment-specific hardening steps should be added by operations teams per deployment context.
