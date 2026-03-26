@@ -1,5 +1,6 @@
 package com.corebank.corebank_api.lending;
 
+import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.integration.IdempotencyService;
 import com.corebank.corebank_api.integration.OutboxMetadata;
 import com.corebank.corebank_api.integration.OutboxService;
@@ -11,14 +12,22 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class LoanApplicationService {
 
+	private static final Logger log = LoggerFactory.getLogger(LoanApplicationService.class);
 	private static final Duration IDEMPOTENCY_TTL = Duration.ofDays(1);
 
 	private final IdempotencyService idempotencyService;
@@ -26,6 +35,8 @@ public class LoanApplicationService {
 	private final LoanContractService loanContractService;
 	private final AuditService auditService;
 	private final OutboxService outboxService;
+	private final LoanRetryPolicy loanRetryPolicy;
+	private final TransactionTemplate transactionTemplate;
 	private final ObjectMapper objectMapper;
 
 	public LoanApplicationService(
@@ -34,17 +45,30 @@ public class LoanApplicationService {
 			LoanContractService loanContractService,
 			AuditService auditService,
 			OutboxService outboxService,
-			ObjectMapper objectMapper) {
+			ObjectMapper objectMapper,
+			LoanRetryPolicy loanRetryPolicy,
+			PlatformTransactionManager transactionManager) {
 		this.idempotencyService = idempotencyService;
 		this.systemModeService = systemModeService;
 		this.loanContractService = loanContractService;
 		this.auditService = auditService;
 		this.outboxService = outboxService;
+		this.loanRetryPolicy = loanRetryPolicy;
+		this.transactionTemplate = new TransactionTemplate(transactionManager);
+		this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 		this.objectMapper = objectMapper.copy().findAndRegisterModules();
 	}
 
-	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public LoanDisbursementResponse disburseLoan(LoanDisbursementRequest request) {
+		return executeWithRetry(
+				"disburseLoan",
+				request.idempotencyKey(),
+				() -> Objects.requireNonNull(
+						transactionTemplate.execute(status -> executeDisburseLoanAttempt(request)),
+						"disburseLoan attempt returned null response"));
+	}
+
+	private LoanDisbursementResponse executeDisburseLoanAttempt(LoanDisbursementRequest request) {
 		String requestJson = toJson(request);
 		IdempotencyService.StartResult startResult = idempotencyService.checkBeforeExecution(
 				request.idempotencyKey(),
@@ -117,8 +141,16 @@ public class LoanApplicationService {
 		}
 	}
 
-	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public LoanRepaymentResponse repayLoan(LoanRepaymentRequest request) {
+		return executeWithRetry(
+				"repayLoan",
+				request.idempotencyKey(),
+				() -> Objects.requireNonNull(
+						transactionTemplate.execute(status -> executeRepayLoanAttempt(request)),
+						"repayLoan attempt returned null response"));
+	}
+
+	private LoanRepaymentResponse executeRepayLoanAttempt(LoanRepaymentRequest request) {
 		String requestJson = toJson(request);
 		IdempotencyService.StartResult startResult = idempotencyService.checkBeforeExecution(
 				request.idempotencyKey(),
@@ -285,6 +317,43 @@ public class LoanApplicationService {
 				result.overdueInstallmentCount(),
 				result.transitioned(),
 				result.contractStatus());
+	}
+
+	private <T> T executeWithRetry(String operation, String idempotencyKey, Supplier<T> action) {
+		int maxAttempts = loanRetryPolicy.maxAttempts();
+		for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+			try {
+				return action.get();
+			} catch (RuntimeException ex) {
+				if (!loanRetryPolicy.isTransient(ex) || attempt >= maxAttempts) {
+					throw ex;
+				}
+
+				String sqlState = loanRetryPolicy.extractSqlState(ex);
+				long backoffMillis = loanRetryPolicy.backoffMillisBeforeNextAttempt(attempt);
+				log.warn(
+						"Transient lending failure op={} idempotencyKey={} attempt={}/{} type={} sqlState={} retryInMs={}",
+						operation,
+						idempotencyKey,
+						attempt,
+						maxAttempts,
+						ex.getClass().getSimpleName(),
+						sqlState,
+						backoffMillis);
+				sleepBackoff(backoffMillis);
+			}
+		}
+
+		throw new CoreBankException("Lending retry attempts exhausted unexpectedly");
+	}
+
+	private void sleepBackoff(long backoffMillis) {
+		try {
+			Thread.sleep(backoffMillis);
+		} catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			throw new CoreBankException("Lending retry was interrupted", ex);
+		}
 	}
 
 	private String toJson(Object value) {
