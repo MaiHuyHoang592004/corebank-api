@@ -1,24 +1,29 @@
 package com.corebank.corebank_api.deposit;
 
+import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.integration.IdempotencyService;
 import com.corebank.corebank_api.integration.OutboxMetadata;
 import com.corebank.corebank_api.integration.OutboxService;
-import com.corebank.corebank_api.ledger.LedgerCommandService;
 import com.corebank.corebank_api.ops.audit.AuditService;
 import com.corebank.corebank_api.ops.system.SystemModeService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class DepositApplicationService {
 
+	private static final Logger log = LoggerFactory.getLogger(DepositApplicationService.class);
 	private static final Duration IDEMPOTENCY_TTL = Duration.ofDays(1);
 
 	private final IdempotencyService idempotencyService;
@@ -26,6 +31,8 @@ public class DepositApplicationService {
 	private final DepositContractService depositContractService;
 	private final AuditService auditService;
 	private final OutboxService outboxService;
+	private final DepositRetryPolicy depositRetryPolicy;
+	private final TransactionTemplate transactionTemplate;
 	private final ObjectMapper objectMapper;
 
 	public DepositApplicationService(
@@ -34,17 +41,30 @@ public class DepositApplicationService {
 			DepositContractService depositContractService,
 			AuditService auditService,
 			OutboxService outboxService,
-			ObjectMapper objectMapper) {
+			ObjectMapper objectMapper,
+			DepositRetryPolicy depositRetryPolicy,
+			PlatformTransactionManager transactionManager) {
 		this.idempotencyService = idempotencyService;
 		this.systemModeService = systemModeService;
 		this.depositContractService = depositContractService;
 		this.auditService = auditService;
 		this.outboxService = outboxService;
+		this.depositRetryPolicy = depositRetryPolicy;
+		this.transactionTemplate = new TransactionTemplate(transactionManager);
+		this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 		this.objectMapper = objectMapper.copy().findAndRegisterModules();
 	}
 
-	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public OpenDepositResponse openDeposit(OpenDepositRequest request) {
+		return executeWithRetry(
+				"openDeposit",
+				request.idempotencyKey(),
+				() -> Objects.requireNonNull(
+						transactionTemplate.execute(status -> executeOpenDepositAttempt(request)),
+						"openDeposit attempt returned null response"));
+	}
+
+	private OpenDepositResponse executeOpenDepositAttempt(OpenDepositRequest request) {
 		String requestJson = toJson(request);
 		IdempotencyService.StartResult startResult = idempotencyService.checkBeforeExecution(
 				request.idempotencyKey(),
@@ -122,8 +142,16 @@ public class DepositApplicationService {
 		}
 	}
 
-	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public AccrueInterestResponse accrueInterest(AccrueInterestRequest request) {
+		return executeWithRetry(
+				"accrueInterest",
+				request.idempotencyKey(),
+				() -> Objects.requireNonNull(
+						transactionTemplate.execute(status -> executeAccrueInterestAttempt(request)),
+						"accrueInterest attempt returned null response"));
+	}
+
+	private AccrueInterestResponse executeAccrueInterestAttempt(AccrueInterestRequest request) {
 		String requestJson = toJson(request);
 		IdempotencyService.StartResult startResult = idempotencyService.checkBeforeExecution(
 				request.idempotencyKey(),
@@ -191,8 +219,16 @@ public class DepositApplicationService {
 		}
 	}
 
-	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public MaturityResponse processMaturity(MaturityRequest request) {
+		return executeWithRetry(
+				"processMaturity",
+				request.idempotencyKey(),
+				() -> Objects.requireNonNull(
+						transactionTemplate.execute(status -> executeProcessMaturityAttempt(request)),
+						"processMaturity attempt returned null response"));
+	}
+
+	private MaturityResponse executeProcessMaturityAttempt(MaturityRequest request) {
 		String requestJson = toJson(request);
 		IdempotencyService.StartResult startResult = idempotencyService.checkBeforeExecution(
 				request.idempotencyKey(),
@@ -257,6 +293,43 @@ public class DepositApplicationService {
 		} catch (RuntimeException ex) {
 			idempotencyService.markFailed(request.idempotencyKey(), startResult.requestHash());
 			throw ex;
+		}
+	}
+
+	private <T> T executeWithRetry(String operation, String idempotencyKey, Supplier<T> action) {
+		int maxAttempts = depositRetryPolicy.maxAttempts();
+		for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+			try {
+				return action.get();
+			} catch (RuntimeException ex) {
+				if (!depositRetryPolicy.isTransient(ex) || attempt >= maxAttempts) {
+					throw ex;
+				}
+
+				String sqlState = depositRetryPolicy.extractSqlState(ex);
+				long backoffMillis = depositRetryPolicy.backoffMillisBeforeNextAttempt(attempt);
+				log.warn(
+						"Transient deposit failure op={} idempotencyKey={} attempt={}/{} type={} sqlState={} retryInMs={}",
+						operation,
+						idempotencyKey,
+						attempt,
+						maxAttempts,
+						ex.getClass().getSimpleName(),
+						sqlState,
+						backoffMillis);
+				sleepBackoff(backoffMillis);
+			}
+		}
+
+		throw new CoreBankException("Deposit retry attempts exhausted unexpectedly");
+	}
+
+	private void sleepBackoff(long backoffMillis) {
+		try {
+			Thread.sleep(backoffMillis);
+		} catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			throw new CoreBankException("Deposit retry was interrupted", ex);
 		}
 	}
 
