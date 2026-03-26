@@ -274,13 +274,17 @@ public class LoanContractService {
 
 		List<OverdueTransitionResult> transitionedContracts = jdbcTemplate.query(
 				"""
-				WITH updated AS (
-				    UPDATE repayment_schedules rs
-				    SET status = 'OVERDUE',
-				        updated_at = now()
-				    FROM loan_contracts lc
-				    WHERE rs.contract_id = lc.contract_id
-				      AND lc.status = 'ACTIVE'
+				WITH candidates AS (
+				    SELECT rs.schedule_id,
+				           rs.contract_id,
+				           (
+				               (rs.fees_due_minor - rs.fees_paid_minor)
+				             + (rs.interest_due_minor - rs.interest_paid_minor)
+				             + (rs.principal_due_minor - rs.principal_paid_minor)
+				           ) AS overdue_amount_minor
+				    FROM repayment_schedules rs
+				    JOIN loan_contracts lc ON lc.contract_id = rs.contract_id
+				    WHERE lc.status = 'ACTIVE'
 				      AND rs.status IN ('PENDING', 'PARTIALLY_PAID')
 				      AND rs.due_date < ?
 				      AND (
@@ -288,12 +292,16 @@ public class LoanContractService {
 				        + (rs.interest_due_minor - rs.interest_paid_minor)
 				        + (rs.principal_due_minor - rs.principal_paid_minor)
 				      ) > 0
-				    RETURNING rs.contract_id,
-				              (
-				                  (rs.fees_due_minor - rs.fees_paid_minor)
-				                + (rs.interest_due_minor - rs.interest_paid_minor)
-				                + (rs.principal_due_minor - rs.principal_paid_minor)
-				              ) AS overdue_amount_minor
+				    ORDER BY rs.contract_id ASC, rs.installment_no ASC, rs.schedule_id ASC
+				    FOR UPDATE OF rs
+				),
+				updated AS (
+				    UPDATE repayment_schedules rs
+				    SET status = 'OVERDUE',
+				        updated_at = now()
+				    FROM candidates c
+				    WHERE rs.schedule_id = c.schedule_id
+				    RETURNING c.contract_id, c.overdue_amount_minor
 				)
 				SELECT u.contract_id,
 				       COUNT(*) AS overdue_installment_count,
@@ -303,6 +311,7 @@ public class LoanContractService {
 				FROM updated u
 				JOIN loan_contracts lc ON lc.contract_id = u.contract_id
 				GROUP BY u.contract_id, lc.outstanding_principal_minor, lc.status
+				ORDER BY u.contract_id ASC
 				""",
 				(rs, rowNum) -> new OverdueTransitionResult(
 						rs.getObject("contract_id", UUID.class),
@@ -344,7 +353,7 @@ public class LoanContractService {
 			throw new CoreBankException("Only ACTIVE loan contracts can transition to DEFAULTED");
 		}
 
-		int overdueInstallmentCount = countOverdueInstallments(contract.contractId(), asOfDate);
+		int overdueInstallmentCount = lockEligibleOverdueInstallments(contract.contractId(), asOfDate).size();
 		if (overdueInstallmentCount == 0) {
 			throw new CoreBankException("Loan contract has no overdue installments eligible for default");
 		}
@@ -424,6 +433,27 @@ public class LoanContractService {
 				""",
 				REPAYMENT_SCHEDULE_ROW_MAPPER,
 				contractId);
+	}
+
+	private List<Long> lockEligibleOverdueInstallments(UUID contractId, LocalDate asOfDate) {
+		return jdbcTemplate.query(
+				"""
+				SELECT schedule_id
+				FROM repayment_schedules
+				WHERE contract_id = ?
+				  AND status = 'OVERDUE'
+				  AND due_date < ?
+				  AND (
+				      (fees_due_minor - fees_paid_minor)
+				    + (interest_due_minor - interest_paid_minor)
+				    + (principal_due_minor - principal_paid_minor)
+				  ) > 0
+				ORDER BY installment_no ASC, schedule_id ASC
+				FOR UPDATE
+				""",
+				(rs, rowNum) -> rs.getLong("schedule_id"),
+				contractId,
+				asOfDate);
 	}
 
 	private int countOverdueInstallments(UUID contractId, LocalDate asOfDate) {
