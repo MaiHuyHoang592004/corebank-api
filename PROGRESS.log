@@ -1575,3 +1575,55 @@
 - Retry policy is intentionally hard-coded in this slice; runtime tunability is deferred to avoid config-surface changes.
 - Payment path latency can increase by bounded backoff under transient lock contention.
 - This slice hardens payment application orchestration; transient retry for deposit/lending remains follow-up work.
+
+## Verification Session: 2026-03-27 (Phase 5 Slice 5.15 - Deposit Deadlock/Lock Transient Retry Baseline)
+
+### Scope
+- Complete and stabilize deposit transient retry hardening for application orchestration
+- Keep deposit API/schema/deploy/env unchanged and preserve backward compatibility
+- Limit retry to lock/deadlock/serialization-class transient database failures only
+
+### Changes Applied
+- Added `DepositRetryPolicy` in deposit module:
+  - fixed policy values:
+    - `maxAttempts = 3`
+    - backoff `50ms` then `150ms`
+  - transient classifier whitelist:
+    - `CannotAcquireLockException`
+    - `PessimisticLockingFailureException`
+    - `DeadlockLoserDataAccessException`
+    - `SQLException` with SQLState `40P01`, `55P03`, `40001`
+  - default behavior for all other failures: non-transient (no retry)
+- Hardened `DepositApplicationService` orchestration without changing request/response contract:
+  - wrapped `openDeposit`, `accrueInterest`, `processMaturity` with bounded retry loop
+  - each attempt executes in `REQUIRES_NEW` transaction via `TransactionTemplate`
+  - replay/idempotency path remains unchanged (`checkBeforeExecution`, `markFailed`, `markSucceeded`)
+  - retry only when failure is classified transient and attempts remain
+  - added warning logs with operation, idempotency key, attempt count, exception type, SQLState, and backoff
+- Stabilized transient integration tests to avoid false failures unrelated to retry behavior:
+  - maturity setup now uses valid contract dates (`start_date < maturity_date <= current_date`)
+  - maturity path seeds accrual before maturity so maturity journal lines remain positive
+  - global journal assertions changed to per-test delta assertions to avoid cross-test count coupling
+  - removed empty vararg misuse in `count(...)` calls for no-arg SQL
+- Added focused tests:
+  - `DepositRetryPolicyTest` for transient classifier + SQLState mapping + backoff contract
+  - `DepositTransientRetryIntegrationTest` for:
+    - transient first-attempt lock failure in `openDeposit` then successful retry with single side effects
+    - transient first-attempt deadlock in `accrueInterest` then successful retry with single side effects
+    - transient first-attempt deadlock in `processMaturity` then successful retry with single side effects
+    - non-transient `openDeposit` failure path without retry and idempotency status `FAILED`
+
+### Focused Verification Results
+- Targeted + regression minimum:
+  - `DepositRetryPolicyTest`: **4/4 passed**
+  - `DepositTransientRetryIntegrationTest`: **4/4 passed**
+  - `DepositApplicationServiceIntegrationTest`: **9/9 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `PaymentIdempotencyIntegrationTest`: **7/7 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+  - `SystemModeServiceTest`: **16/16 passed**
+
+### Risks / Follow-up
+- Retry policy is intentionally hard-coded in this slice; runtime tunability is deferred to avoid config-surface changes.
+- Deposit path latency can increase by bounded backoff under transient lock contention.
+- This slice hardens deposit application orchestration; transient retry for lending remains follow-up work.
