@@ -1627,3 +1627,51 @@
 - Retry policy is intentionally hard-coded in this slice; runtime tunability is deferred to avoid config-surface changes.
 - Deposit path latency can increase by bounded backoff under transient lock contention.
 - This slice hardens deposit application orchestration; transient retry for lending remains follow-up work.
+
+## Verification Session: 2026-03-27 (Phase 5 Slice 5.16 - Lending Deadlock/Lock Transient Retry Baseline)
+
+### Scope
+- Add bounded transient retry handling to lending disbursement and repayment application orchestration
+- Keep lending API/schema/deploy/env unchanged and preserve backward compatibility
+- Limit retry to lock/deadlock/serialization-class transient database failures only
+
+### Changes Applied
+- Added `LoanRetryPolicy` in lending module:
+  - fixed policy values:
+    - `maxAttempts = 3`
+    - backoff `50ms` then `150ms`
+  - transient classifier whitelist:
+    - `CannotAcquireLockException`
+    - `PessimisticLockingFailureException`
+    - `DeadlockLoserDataAccessException`
+    - `SQLException` with SQLState `40P01`, `55P03`, `40001`
+  - default behavior for all other failures: non-transient (no retry)
+- Hardened `LoanApplicationService` orchestration without changing request/response contract:
+  - wrapped `disburseLoan` and `repayLoan` with bounded retry loop
+  - each attempt executes in `REQUIRES_NEW` transaction via `TransactionTemplate`
+  - replay/idempotency path remains unchanged (`checkBeforeExecution`, `markFailed`, `markSucceeded`)
+  - retry only when failure is classified transient and attempts remain
+  - added warning logs with operation, idempotency key, attempt count, exception type, SQLState, and backoff
+- Kept out of scope in this slice:
+  - no retry changes for `markOverdueInstallments` and `markContractDefaulted`
+- Added focused tests:
+  - `LoanRetryPolicyTest` for transient classifier + SQLState mapping + backoff contract
+  - `LoanTransientRetryIntegrationTest` for:
+    - transient first-attempt lock failure in `disburseLoan` then successful retry with single side effects
+    - transient first-attempt deadlock in `repayLoan` then successful retry with single side effects
+    - non-transient `disburseLoan` failure path without retry and idempotency status `FAILED`
+
+### Focused Verification Results
+- Targeted + regression minimum:
+  - `LoanRetryPolicyTest`: **4/4 passed**
+  - `LoanTransientRetryIntegrationTest`: **3/3 passed**
+  - `LoanApplicationServiceIntegrationTest`: **14/14 passed**
+  - `DepositApplicationServiceIntegrationTest`: **9/9 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+  - `SystemModeServiceTest`: **16/16 passed**
+
+### Risks / Follow-up
+- Retry policy is intentionally hard-coded in this slice; runtime tunability is deferred to avoid config-surface changes.
+- Lending path latency can increase by bounded backoff under transient lock contention.
+- This slice hardens lending disbursement/repayment only; overdue/default transitions are intentionally left unchanged.
