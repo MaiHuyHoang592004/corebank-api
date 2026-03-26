@@ -1794,3 +1794,14 @@
 - Rate limiting is fail-open by design during Redis degradation; this preserves availability but temporarily removes abuse throttling.
 - Redis success replay cache is intentionally non-authoritative; PostgreSQL remains the source of truth for idempotency conflict and in-progress state.
 - Fixed-window rate limiting is intentionally simple in this slice; if fairer burst smoothing is needed later, move to sliding-window/token-bucket in a separate phase.
+
+## Portfolio Stop-Line Note: 2026-03-27
+
+- Runtime hardening intentionally stops after Phase 5.18.
+- The project now has enough domain breadth and production-style control surface to be presented as a believable fintech/backend portfolio system.
+- Future work should be showcase-oriented unless there is a very specific reason to reopen runtime scope.
+- The Redis story is complete enough for interview use:
+  - rate limiting reduces load on public write paths
+  - conservative success replay cache reduces repeated idempotency reads
+  - PostgreSQL still remains the authoritative truth for money and idempotency correctness
+- From this point, README/demo/interview packaging has higher ROI than additional infra or ops hardening slices.
