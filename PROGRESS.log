@@ -1716,3 +1716,81 @@
 - Deterministic locking can increase wait time under high contention; expected tradeoff for reduced deadlock risk.
 - Overdue transition remains global (all eligible contracts) in current API behavior; tests now avoid relying on globally isolated fixture state.
 - If future batch-scale tuning is needed, consider adding bounded windowing (`limit`/chunking) for overdue transitions in a separate slice.
+
+## Verification Session: 2026-03-27 (Phase 5 Slice 5.18 - Redis Rate Limit + Conservative Idempotency Replay Cache)
+
+### Scope
+- Add Redis-backed rate limiting for public money-write HTTP paths without changing existing request/response contracts
+- Add conservative Redis success-replay cache for idempotency while keeping PostgreSQL as authoritative truth
+- Keep schema/deploy/env unchanged and preserve backward compatibility
+
+### Changes Applied
+- Added Redis integration layer under `integration/redis`:
+  - `RedisRateLimitService`
+    - fixed-window rate limit with hard-coded policy:
+      - `5 requests / 60 seconds`
+    - key scope: `principal-or-ip + route + current window`
+    - degraded behavior: fail-open on Redis errors with throttled warning logs
+  - `RedisIdempotencyCacheService`
+    - caches successful idempotent responses only
+    - key scope: `idempotencyKey + requestHash`
+    - TTL bounded by authoritative DB `expires_at`
+    - degraded behavior: fail-through to PostgreSQL truth with throttled warning logs
+- Added public HTTP rate-limit wiring:
+  - `MoneyWriteRateLimitInterceptor`
+  - `MoneyWriteRateLimitWebConfig`
+  - applied only to existing public deposit write endpoints:
+    - `POST /api/deposits/open`
+    - `POST /api/deposits/accrue`
+    - `POST /api/deposits/maturity`
+  - behavior:
+    - success responses include `X-RateLimit-Limit` and `X-RateLimit-Remaining`
+    - limit exceed returns `429 Too Many Requests` with `Retry-After`
+  - intentionally not applied to:
+    - reporting read paths
+    - ops/admin paths
+    - non-existent public controllers for transfer/payment/lending
+- Updated `IdempotencyService`:
+  - checks Redis success replay cache before DB lookup using `idempotencyKey + requestHash`
+  - keeps DB-first truth for:
+    - `STARTED`
+    - `IN_PROGRESS`
+    - `FAILED`
+    - payload mismatch conflict detection
+  - on `SUCCEEDED`:
+    - warms Redis replay cache from DB replay path
+    - stores Redis replay cache only `afterCommit` so Redis never gets ahead of PostgreSQL truth
+  - `markFailed(...)` behavior unchanged; failed executions do not write success replay cache
+- Added focused tests:
+  - `DepositRateLimitIntegrationTest`
+    - repeated deposit write requests hit `429`
+    - reporting endpoint remains unaffected
+    - ops endpoint remains unaffected
+  - `DepositRateLimitRedisUnavailableIntegrationTest`
+    - Redis rate-limit failure path allows request to proceed (`fail-open`)
+  - `IdempotencyRedisReplayCacheIntegrationTest`
+    - success writes replay cache
+    - same payload replays successfully
+    - different payload still conflicts via DB truth
+    - failed execution does not create success replay cache
+
+### Focused Verification Results
+- Requested targeted run:
+  - `DepositRateLimitIntegrationTest`
+  - `DepositRateLimitRedisUnavailableIntegrationTest`
+  - `IdempotencyRedisReplayCacheIntegrationTest`
+- Maven invocation executed the broader suite in this environment; all observed tests passed, including:
+  - `DepositRateLimitIntegrationTest`: **3/3 passed**
+  - `DepositRateLimitRedisUnavailableIntegrationTest`: **1/1 passed**
+  - `IdempotencyRedisReplayCacheIntegrationTest`: **3/3 passed**
+  - `PaymentIdempotencyIntegrationTest`: **7/7 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `DepositApplicationServiceIntegrationTest`: **9/9 passed**
+  - `LoanApplicationServiceIntegrationTest`: **17/17 passed**
+
+### Risks / Follow-up
+- Redis rate limiting is intentionally scoped only to currently exposed public deposit HTTP paths; if public controllers are later added for payment/transfer/lending, extend the same policy there.
+- Rate limiting is fail-open by design during Redis degradation; this preserves availability but temporarily removes abuse throttling.
+- Redis success replay cache is intentionally non-authoritative; PostgreSQL remains the source of truth for idempotency conflict and in-progress state.
+- Fixed-window rate limiting is intentionally simple in this slice; if fairer burst smoothing is needed later, move to sliding-window/token-bucket in a separate phase.
