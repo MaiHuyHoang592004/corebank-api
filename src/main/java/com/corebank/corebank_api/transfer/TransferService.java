@@ -3,299 +3,196 @@ package com.corebank.corebank_api.transfer;
 import com.corebank.corebank_api.account.AccountBalanceRepository;
 import com.corebank.corebank_api.account.CustomerAccount;
 import com.corebank.corebank_api.common.CoreBankException;
+import com.corebank.corebank_api.common.IdempotentMoneyCommandTemplate;
 import com.corebank.corebank_api.common.InsufficientFundsException;
-import com.corebank.corebank_api.integration.IdempotencyService;
 import com.corebank.corebank_api.integration.OutboxMetadata;
 import com.corebank.corebank_api.integration.OutboxService;
 import com.corebank.corebank_api.ledger.LedgerCommandService;
 import com.corebank.corebank_api.limits.LimitCheckService;
 import com.corebank.corebank_api.ops.audit.AuditService;
-import com.corebank.corebank_api.ops.system.SystemModeService;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
-import java.util.Objects;
 import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.TransactionDefinition;
-import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class TransferService {
 
-	private static final Logger log = LoggerFactory.getLogger(TransferService.class);
 	private static final Duration IDEMPOTENCY_TTL = Duration.ofDays(1);
 
 	private final AccountBalanceRepository accountBalanceRepository;
 	private final LedgerCommandService ledgerCommandService;
-	private final IdempotencyService idempotencyService;
 	private final AuditService auditService;
 	private final OutboxService outboxService;
-	private final SystemModeService systemModeService;
 	private final LimitCheckService limitCheckService;
 	private final TransferRetryPolicy transferRetryPolicy;
-	private final TransactionTemplate transactionTemplate;
-	private final ObjectMapper objectMapper = new ObjectMapper();
+	private final IdempotentMoneyCommandTemplate moneyCommandTemplate;
 
 	public TransferService(
 			AccountBalanceRepository accountBalanceRepository,
 			LedgerCommandService ledgerCommandService,
-			IdempotencyService idempotencyService,
 			AuditService auditService,
 			OutboxService outboxService,
-			SystemModeService systemModeService,
 			LimitCheckService limitCheckService,
 			TransferRetryPolicy transferRetryPolicy,
-			PlatformTransactionManager transactionManager) {
+			IdempotentMoneyCommandTemplate moneyCommandTemplate) {
 		this.accountBalanceRepository = accountBalanceRepository;
 		this.ledgerCommandService = ledgerCommandService;
-		this.idempotencyService = idempotencyService;
 		this.auditService = auditService;
 		this.outboxService = outboxService;
-		this.systemModeService = systemModeService;
 		this.limitCheckService = limitCheckService;
 		this.transferRetryPolicy = transferRetryPolicy;
-		this.transactionTemplate = new TransactionTemplate(transactionManager);
-		this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+		this.moneyCommandTemplate = moneyCommandTemplate;
 	}
 
 	public TransferResponse transfer(TransferRequest request) {
-		int maxAttempts = transferRetryPolicy.maxAttempts();
-		for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-			try {
-				return Objects.requireNonNull(
-						transactionTemplate.execute(status -> executeSingleAttempt(request)),
-						"transfer attempt returned null response");
-			} catch (RuntimeException ex) {
-				if (!transferRetryPolicy.isTransient(ex) || attempt >= maxAttempts) {
-					throw ex;
-				}
-
-				String sqlState = transferRetryPolicy.extractSqlState(ex);
-				long backoffMillis = transferRetryPolicy.backoffMillisBeforeNextAttempt(attempt);
-				log.warn(
-						"Transient transfer failure on attempt {}/{} for idempotencyKey={} type={} sqlState={} retryInMs={}",
-						attempt,
-						maxAttempts,
-						request.idempotencyKey(),
-						ex.getClass().getSimpleName(),
-						sqlState,
-						backoffMillis);
-				sleepBackoff(backoffMillis);
-			}
-		}
-
-		throw new CoreBankException("Transfer retry attempts exhausted");
-	}
-
-	private TransferResponse executeSingleAttempt(TransferRequest request) {
-		String requestJson = toJson(request);
-		IdempotencyService.StartResult startResult = idempotencyService.checkBeforeExecution(
+		return moneyCommandTemplate.execute(
+				"transfer",
 				request.idempotencyKey(),
-				requestJson,
-				Instant.now().plus(IDEMPOTENCY_TTL));
-
-		if (startResult.replay()) {
-			return fromJson(startResult.responseBodyJson(), TransferResponse.class);
-		}
-
-		try {
-			// Check system mode
-			systemModeService.enforceWriteAllowed();
-
-			// Lock accounts in deterministic order to prevent deadlocks
-			List<CustomerAccount> lockedAccounts = accountBalanceRepository.lockByIdsInDeterministicOrder(
-					List.of(request.sourceAccountId(), request.destinationAccountId()));
-
-			if (lockedAccounts.size() != 2) {
-				throw new CoreBankException("Unable to lock both accounts for transfer");
-			}
-
-			// Find source and destination accounts by ID (accounts are locked in UUID order)
-			CustomerAccount sourceAccount = null;
-			CustomerAccount destinationAccount = null;
-
-			for (CustomerAccount account : lockedAccounts) {
-				if (account.getCustomerAccountId().equals(request.sourceAccountId())) {
-					sourceAccount = account;
-				} else if (account.getCustomerAccountId().equals(request.destinationAccountId())) {
-					destinationAccount = account;
-				}
-			}
-
-			if (sourceAccount == null || destinationAccount == null) {
-				throw new CoreBankException("Unable to find both accounts after locking");
-			}
-
-			if (!"ACTIVE".equals(sourceAccount.getStatus())) {
-				throw new CoreBankException("Source account is not active");
-			}
-
-			if (!sourceAccount.getCurrency().equals(request.currency())) {
-				throw new CoreBankException("Source account currency does not match transfer currency");
-			}
-
-			// Validate destination account
-			if (!destinationAccount.getCustomerAccountId().equals(request.destinationAccountId())) {
-				throw new CoreBankException("Destination account mismatch after locking");
-			}
-
-			if (!"ACTIVE".equals(destinationAccount.getStatus())) {
-				throw new CoreBankException("Destination account is not active");
-			}
-
-			if (!destinationAccount.getCurrency().equals(request.currency())) {
-				throw new CoreBankException("Destination account currency does not match transfer currency");
-			}
-
-			// Check sufficient funds
-			long sourceAvailableBefore = sourceAccount.getAvailableBalanceMinor();
-			if (sourceAvailableBefore < request.amountMinor()) {
-				throw new InsufficientFundsException("Insufficient available balance for transfer");
-			}
-
-			// Check limits for source account
-			limitCheckService.enforceLimits(request.sourceAccountId(), request.amountMinor(), request.currency());
-
-			// Calculate new balances
-			long sourcePostedBefore = sourceAccount.getPostedBalanceMinor();
-			long destinationPostedBefore = destinationAccount.getPostedBalanceMinor();
-			long sourcePostedAfter = sourcePostedBefore - request.amountMinor();
-			long destinationPostedAfter = destinationPostedBefore + request.amountMinor();
-			long sourceAvailableAfter = sourceAvailableBefore - request.amountMinor();
-			long destinationAvailableAfter = destinationAccount.getAvailableBalanceMinor() + request.amountMinor();
-
-			// Update source account available balance
-			boolean sourceUpdated = accountBalanceRepository.updateAvailableBalance(
-					sourceAccount.getCustomerAccountId(),
-					sourceAvailableAfter,
-					sourceAccount.getVersion());
-
-			if (!sourceUpdated) {
-				throw new CoreBankException("Failed to update source account available balance");
-			}
-
-			// Update destination account available balance
-			boolean destinationUpdated = accountBalanceRepository.updateAvailableBalance(
-					destinationAccount.getCustomerAccountId(),
-					destinationAvailableAfter,
-					destinationAccount.getVersion());
-
-			if (!destinationUpdated) {
-				throw new CoreBankException("Failed to update destination account available balance");
-			}
-
-			// Post balanced journal
-			// Note: completed transfer updates posted balance via ledger posting, while
-			// available balance has already been updated above.
-			UUID journalId = ledgerCommandService.postJournal(
-					new LedgerCommandService.PostJournalCommand(
+				request,
+				TransferResponse.class,
+				IDEMPOTENCY_TTL,
+				transferRetryPolicy,
+				() -> executeTransferBusiness(request),
+				(response, responseJson) -> {
+					auditService.appendEvent(new AuditService.AuditCommand(
+							request.actor(),
 							"INTERNAL_TRANSFER",
 							"TRANSFER",
-							UUID.randomUUID(), // transfer reference ID
-							request.currency(),
-							null,
-							request.actor(),
+							response.journalId().toString(),
 							request.correlationId(),
-							List.of(
-									new LedgerCommandService.PostingInstruction(
-											request.debitLedgerAccountId(),
-											request.sourceAccountId(),
-											"D",
-											request.amountMinor(),
-											request.currency(),
-											true),
-									new LedgerCommandService.PostingInstruction(
-											request.creditLedgerAccountId(),
-											request.destinationAccountId(),
-											"C",
-											request.amountMinor(),
-											request.currency(),
-											true))));
+							request.requestId(),
+							request.sessionId(),
+							request.traceId(),
+							null,
+							responseJson));
 
-			// Build response
-			TransferResponse response = new TransferResponse(
-					journalId,
-					request.sourceAccountId(),
-					request.destinationAccountId(),
-					request.amountMinor(),
-					request.currency(),
-					sourcePostedAfter,
-					sourceAvailableBefore,
-					sourceAvailableAfter,
-					destinationPostedAfter,
-					destinationAccount.getAvailableBalanceMinor(),
-					destinationAvailableAfter,
-					"COMPLETED");
-
-			String responseJson = toJson(response);
-
-			// Write audit event
-			auditService.appendEvent(new AuditService.AuditCommand(
-					request.actor(),
-					"INTERNAL_TRANSFER",
-					"TRANSFER",
-					journalId.toString(),
-					request.correlationId(),
-					request.requestId(),
-					request.sessionId(),
-					request.traceId(),
-					null,
-					responseJson));
-
-			// Write outbox message
-			outboxService.appendMessage(
-					"TRANSFER",
-					journalId.toString(),
-					"TRANSFER_COMPLETED",
-					response,
-					OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
-
-			// Mark idempotency as succeeded
-			idempotencyService.markSucceeded(
-					request.idempotencyKey(),
-					startResult.requestHash(),
-					startResult.expiresAt(),
-					responseJson);
-
-			// Increment usage counter for limit tracking
-			limitCheckService.incrementUsage(request.sourceAccountId(), request.amountMinor(), request.currency());
-
-			return response;
-		} catch (RuntimeException ex) {
-			idempotencyService.markFailed(request.idempotencyKey(), startResult.requestHash());
-			throw ex;
-		}
+					outboxService.appendMessage(
+							"TRANSFER",
+							response.journalId().toString(),
+							"TRANSFER_COMPLETED",
+							response,
+							OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
+				},
+				response -> limitCheckService.incrementUsage(
+						request.sourceAccountId(),
+						request.amountMinor(),
+						request.currency()));
 	}
 
-	private void sleepBackoff(long backoffMillis) {
-		try {
-			Thread.sleep(backoffMillis);
-		} catch (InterruptedException ex) {
-			Thread.currentThread().interrupt();
-			throw new CoreBankException("Transfer retry was interrupted", ex);
-		}
-	}
+	private TransferResponse executeTransferBusiness(TransferRequest request) {
+		List<CustomerAccount> lockedAccounts = accountBalanceRepository.lockByIdsInDeterministicOrder(
+				List.of(request.sourceAccountId(), request.destinationAccountId()));
 
-	private String toJson(Object value) {
-		try {
-			return objectMapper.writeValueAsString(value);
-		} catch (JsonProcessingException ex) {
-			throw new IllegalStateException("Unable to serialize transfer payload", ex);
+		if (lockedAccounts.size() != 2) {
+			throw new CoreBankException("Unable to lock both accounts for transfer");
 		}
-	}
 
-	private <T> T fromJson(String json, Class<T> targetType) {
-		try {
-			return objectMapper.readValue(json, targetType);
-		} catch (JsonProcessingException ex) {
-			throw new IllegalStateException("Unable to deserialize transfer payload", ex);
+		CustomerAccount sourceAccount = null;
+		CustomerAccount destinationAccount = null;
+
+		for (CustomerAccount account : lockedAccounts) {
+			if (account.getCustomerAccountId().equals(request.sourceAccountId())) {
+				sourceAccount = account;
+			} else if (account.getCustomerAccountId().equals(request.destinationAccountId())) {
+				destinationAccount = account;
+			}
 		}
+
+		if (sourceAccount == null || destinationAccount == null) {
+			throw new CoreBankException("Unable to find both accounts after locking");
+		}
+
+		if (!"ACTIVE".equals(sourceAccount.getStatus())) {
+			throw new CoreBankException("Source account is not active");
+		}
+
+		if (!sourceAccount.getCurrency().equals(request.currency())) {
+			throw new CoreBankException("Source account currency does not match transfer currency");
+		}
+
+		if (!destinationAccount.getCustomerAccountId().equals(request.destinationAccountId())) {
+			throw new CoreBankException("Destination account mismatch after locking");
+		}
+
+		if (!"ACTIVE".equals(destinationAccount.getStatus())) {
+			throw new CoreBankException("Destination account is not active");
+		}
+
+		if (!destinationAccount.getCurrency().equals(request.currency())) {
+			throw new CoreBankException("Destination account currency does not match transfer currency");
+		}
+
+		long sourceAvailableBefore = sourceAccount.getAvailableBalanceMinor();
+		if (sourceAvailableBefore < request.amountMinor()) {
+			throw new InsufficientFundsException("Insufficient available balance for transfer");
+		}
+
+		limitCheckService.enforceLimits(request.sourceAccountId(), request.amountMinor(), request.currency());
+
+		long sourcePostedBefore = sourceAccount.getPostedBalanceMinor();
+		long destinationPostedBefore = destinationAccount.getPostedBalanceMinor();
+		long sourcePostedAfter = sourcePostedBefore - request.amountMinor();
+		long destinationPostedAfter = destinationPostedBefore + request.amountMinor();
+		long sourceAvailableAfter = sourceAvailableBefore - request.amountMinor();
+		long destinationAvailableAfter = destinationAccount.getAvailableBalanceMinor() + request.amountMinor();
+
+		boolean sourceUpdated = accountBalanceRepository.updateAvailableBalance(
+				sourceAccount.getCustomerAccountId(),
+				sourceAvailableAfter,
+				sourceAccount.getVersion());
+
+		if (!sourceUpdated) {
+			throw new CoreBankException("Failed to update source account available balance");
+		}
+
+		boolean destinationUpdated = accountBalanceRepository.updateAvailableBalance(
+				destinationAccount.getCustomerAccountId(),
+				destinationAvailableAfter,
+				destinationAccount.getVersion());
+
+		if (!destinationUpdated) {
+			throw new CoreBankException("Failed to update destination account available balance");
+		}
+
+		UUID journalId = ledgerCommandService.postJournal(
+				new LedgerCommandService.PostJournalCommand(
+						"INTERNAL_TRANSFER",
+						"TRANSFER",
+						UUID.randomUUID(),
+						request.currency(),
+						null,
+						request.actor(),
+						request.correlationId(),
+						List.of(
+								new LedgerCommandService.PostingInstruction(
+										request.debitLedgerAccountId(),
+										request.sourceAccountId(),
+										"D",
+										request.amountMinor(),
+										request.currency(),
+										true),
+								new LedgerCommandService.PostingInstruction(
+										request.creditLedgerAccountId(),
+										request.destinationAccountId(),
+										"C",
+										request.amountMinor(),
+										request.currency(),
+										true))));
+
+		return new TransferResponse(
+				journalId,
+				request.sourceAccountId(),
+				request.destinationAccountId(),
+				request.amountMinor(),
+				request.currency(),
+				sourcePostedAfter,
+				sourceAvailableBefore,
+				sourceAvailableAfter,
+				destinationPostedAfter,
+				destinationAccount.getAvailableBalanceMinor(),
+				destinationAvailableAfter,
+				"COMPLETED");
 	}
 
 	public record TransferRequest(
