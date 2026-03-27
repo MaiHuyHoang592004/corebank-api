@@ -1,6 +1,7 @@
 package com.corebank.corebank_api.ops.hotaccount;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -71,6 +72,10 @@ class OpsHotAccountIntegrationTest {
 				.andExpect(jsonPath("$.ledgerAccountId").value(ledgerAccountId.toString()))
 				.andExpect(jsonPath("$.slotCount").value(4))
 				.andExpect(jsonPath("$.selectionStrategy").value("HASH"))
+				.andExpect(jsonPath("$.runtimeSelectionStrategyApplied").value("HASH"))
+				.andExpect(jsonPath("$.runtimeStrategySemantics").value("NATIVE_HASH"))
+				.andExpect(jsonPath("$.fallbackActive").value(false))
+				.andExpect(jsonPath("$.fallbackReason").value(nullValue()))
 				.andExpect(jsonPath("$.isActive").value(true))
 				.andExpect(jsonPath("$.slots.length()").value(4))
 				.andExpect(jsonPath("$.totalPostedBalanceMinor").value(0))
@@ -89,6 +94,10 @@ class OpsHotAccountIntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.slotCount").value(6))
 				.andExpect(jsonPath("$.selectionStrategy").value("ROUND_ROBIN"))
+				.andExpect(jsonPath("$.runtimeSelectionStrategyApplied").value("HASH"))
+				.andExpect(jsonPath("$.runtimeStrategySemantics").value("HASH_FALLBACK"))
+				.andExpect(jsonPath("$.fallbackActive").value(true))
+				.andExpect(jsonPath("$.fallbackReason").value("CONFIGURED_STRATEGY_NOT_RUNTIME_IMPLEMENTED"))
 				.andExpect(jsonPath("$.slots.length()").value(6));
 
 		Integer slotCountAfterExpansion = jdbcTemplate.queryForObject(
@@ -101,6 +110,11 @@ class OpsHotAccountIntegrationTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.ledgerAccountId").value(ledgerAccountId.toString()))
 				.andExpect(jsonPath("$.slotCount").value(6))
+				.andExpect(jsonPath("$.selectionStrategy").value("ROUND_ROBIN"))
+				.andExpect(jsonPath("$.runtimeSelectionStrategyApplied").value("HASH"))
+				.andExpect(jsonPath("$.runtimeStrategySemantics").value("HASH_FALLBACK"))
+				.andExpect(jsonPath("$.fallbackActive").value(true))
+				.andExpect(jsonPath("$.fallbackReason").value("CONFIGURED_STRATEGY_NOT_RUNTIME_IMPLEMENTED"))
 				.andExpect(jsonPath("$.slots.length()").value(6));
 
 		int auditCountAfter = countHotAccountAudit();
@@ -150,6 +164,26 @@ class OpsHotAccountIntegrationTest {
 
 		mockMvc.perform(get("/api/ops/hot-accounts/{ledgerAccountId}", ledgerAccountId))
 				.andExpect(status().isNotFound());
+	}
+
+	@Test
+	@WithMockUser(username = "ops-user", roles = "OPS")
+	void getHotAccount_randomStrategy_reportsHashFallbackSemantics() throws Exception {
+		UUID ledgerAccountId = createLedgerAccount("LEDGER-HOT-RANDOM");
+
+		mockMvc.perform(put("/api/ops/hot-accounts/{ledgerAccountId}/profile", ledgerAccountId)
+						.with(csrf())
+						.contentType("application/json")
+						.content("{\"slotCount\":4,\"selectionStrategy\":\"RANDOM\",\"isActive\":true}"))
+				.andExpect(status().isOk());
+
+		mockMvc.perform(get("/api/ops/hot-accounts/{ledgerAccountId}", ledgerAccountId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.selectionStrategy").value("RANDOM"))
+				.andExpect(jsonPath("$.runtimeSelectionStrategyApplied").value("HASH"))
+				.andExpect(jsonPath("$.runtimeStrategySemantics").value("HASH_FALLBACK"))
+				.andExpect(jsonPath("$.fallbackActive").value(true))
+				.andExpect(jsonPath("$.fallbackReason").value("CONFIGURED_STRATEGY_NOT_RUNTIME_IMPLEMENTED"));
 	}
 
 	private UUID createLedgerAccount(String codePrefix) {
