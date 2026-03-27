@@ -47,6 +47,8 @@ class ReportingControllerIntegrationTest {
 	@BeforeEach
 	void setUp() {
 		jdbcTemplate.update("DELETE FROM reconciliation_breaks");
+		jdbcTemplate.update("DELETE FROM external_settlement_entries");
+		jdbcTemplate.update("DELETE FROM external_settlement_statements");
 		jdbcTemplate.update("DELETE FROM read_model_aggregate_activity");
 		jdbcTemplate.update("DELETE FROM read_model_event_feed");
 		jdbcTemplate.update("DELETE FROM outbox_events");
@@ -350,6 +352,48 @@ class ReportingControllerIntegrationTest {
 	}
 
 	@Test
+	void externalReconciliationBreaks_returnsFilteredRows() throws Exception {
+		insertExternalReconciliationBreak(
+				910L,
+				"stmt-ext-910",
+				"ORPHAN_EXTERNAL",
+				"HIGH",
+				"OPEN",
+				"pay-910-1",
+				"2026-03-25T10:10:00Z");
+		insertExternalReconciliationBreak(
+				910L,
+				"stmt-ext-910",
+				"STATUS_MISMATCH",
+				"HIGH",
+				"OPEN",
+				"pay-910-2",
+				"2026-03-25T10:09:00Z");
+		insertExternalReconciliationBreak(
+				911L,
+				"stmt-ext-911",
+				"MISSING_EXTERNAL",
+				"HIGH",
+				"RESOLVED",
+				"pay-911-1",
+				"2026-03-25T10:08:00Z");
+
+		mockMvc.perform(get("/api/reporting/reconciliation/external/breaks")
+						.queryParam("runId", "910")
+						.queryParam("statementRef", "stmt-ext-910")
+						.queryParam("breakType", "ORPHAN_EXTERNAL")
+						.queryParam("status", "OPEN")
+						.queryParam("limit", "50"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.limit").value(50))
+				.andExpect(jsonPath("$.items.length()").value(1))
+				.andExpect(jsonPath("$.items[0].runId").value(910))
+				.andExpect(jsonPath("$.items[0].statementRef").value("stmt-ext-910"))
+				.andExpect(jsonPath("$.items[0].breakType").value("ORPHAN_EXTERNAL"))
+				.andExpect(jsonPath("$.items[0].details.matchRuleCode").value("RULE_ORPHAN_EXTERNAL"));
+	}
+
+	@Test
 	void hotAccountSlots_returnsProfileSlotsAndAggregates() throws Exception {
 		UUID ledgerAccountId = createLedgerAccountForReportingHot();
 		insertHotAccountProfile(ledgerAccountId, 3, "HASH", true);
@@ -520,6 +564,60 @@ class ReportingControllerIntegrationTest {
 								openedAtIso8601,
 								resolvedAtIso8601
 						});
+	}
+
+	private void insertExternalReconciliationBreak(
+			long runId,
+			String statementRef,
+			String breakType,
+			String severity,
+			String status,
+			String referenceId,
+			String openedAtIso8601) throws Exception {
+		String detailsJson = objectMapper.writeValueAsString(Map.of(
+				"runId", runId,
+				"statementRef", statementRef,
+				"statementDate", "2026-03-25",
+				"matchRuleCode", "RULE_ORPHAN_EXTERNAL",
+				"externalRef", "ext-" + referenceId,
+				"referenceType", "PAYMENT_ORDER",
+				"referenceId", referenceId,
+				"currency", "VND"));
+
+		jdbcTemplate.update(
+				"""
+				INSERT INTO reconciliation_breaks (
+				    reconciliation_break_id,
+				    reconciliation_run_id,
+				    break_type,
+				    reference_type,
+				    reference_id,
+				    severity,
+				    status,
+				    details_json,
+				    opened_at,
+				    resolved_at
+				) VALUES (
+				    ?,
+				    ?,
+				    ?,
+				    'PAYMENT_ORDER',
+				    ?,
+				    ?,
+				    ?,
+				    CAST(? AS jsonb),
+				    CAST(? AS TIMESTAMP WITH TIME ZONE),
+				    NULL
+				)
+				""",
+				UUID.randomUUID(),
+				UUID.nameUUIDFromBytes(("recon-run:" + runId).getBytes()),
+				breakType,
+				referenceId,
+				severity,
+				status,
+				detailsJson,
+				openedAtIso8601);
 	}
 
 	private UUID createLedgerAccountForReportingHot() {
