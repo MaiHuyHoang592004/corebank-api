@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CoreBank Live Showcase</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/dashboard/styles.css" />
+</head>
+<body>
+  <div class="bg-shape bg-shape-a" aria-hidden="true"></div>
+  <div class="bg-shape bg-shape-b" aria-hidden="true"></div>
+
+  <main class="page">
+    <header class="hero card">
+      <p class="eyebrow">Core Banking Live Showcase</p>
+      <h1>End-to-End Demo Dashboard</h1>
+      <p class="hero-copy">
+        Use this page to run deterministic demo flows across payment, transfer, deposit, and lending.
+        <strong>PostgreSQL is the authoritative truth</strong>; Redis and read models are non-authoritative optimizations.
+      </p>
+      <div class="hero-links">
+        <a href="/dashboard/docs/readme" target="_blank" rel="noopener">README</a>
+        <a href="/dashboard/docs/demo-script" target="_blank" rel="noopener">Demo Script</a>
+        <a href="/dashboard/docs/interview-prep" target="_blank" rel="noopener">Interview Prep</a>
+      </div>
+    </header>
+
+    <section class="top-grid">
+      <article class="card auth-card">
+        <h2>Auth Panel</h2>
+        <p class="muted">Demo-only Basic Auth for showcase usage.</p>
+        <div class="quick-fill">
+          <button type="button" data-fill="demo_user">Quick Fill demo_user</button>
+          <button type="button" data-fill="demo_ops">Quick Fill demo_ops</button>
+          <button type="button" data-fill="demo_admin">Quick Fill demo_admin</button>
+        </div>
+        <label>
+          Username
+          <input id="auth-username" autocomplete="username" placeholder="demo_admin" />
+        </label>
+        <label>
+          Password
+          <input id="auth-password" type="password" autocomplete="current-password" placeholder="demo_admin" />
+        </label>
+        <button id="save-auth" type="button" class="primary">Use Credentials</button>
+        <p id="auth-state" class="status-text">No credentials loaded yet.</p>
+      </article>
+
+      <article class="card setup-card">
+        <h2>Setup Panel</h2>
+        <p class="muted">Initialize deterministic demo data (idempotent/upsert).</p>
+        <button id="run-setup" type="button" class="primary">Initialize Demo Data</button>
+        <pre id="setup-output" class="output" aria-live="polite">Run setup to auto-fill scenario payloads.</pre>
+      </article>
+    </section>
+
+    <section class="tabs card">
+      <div class="tab-header" role="tablist">
+        <button type="button" role="tab" class="tab-btn active" data-tab="payment">Payment</button>
+        <button type="button" role="tab" class="tab-btn" data-tab="transfer">Transfer</button>
+        <button type="button" role="tab" class="tab-btn" data-tab="deposit">Deposit</button>
+        <button type="button" role="tab" class="tab-btn" data-tab="lending">Lending</button>
+      </div>
+
+      <div class="tab-body active" data-panel="payment">
+        <p class="muted">Invariant: hold changes available balance, capture posts accounting, void restores remaining hold.</p>
+        <div class="action-grid">
+          <article class="action-card">
+            <h3>Authorize Hold</h3>
+            <textarea id="payment-authorize-payload"></textarea>
+            <button type="button" class="action-btn" data-action="payment-authorize">Send</button>
+          </article>
+          <article class="action-card">
+            <h3>Capture Hold</h3>
+            <textarea id="payment-capture-payload"></textarea>
+            <button type="button" class="action-btn" data-action="payment-capture">Send</button>
+          </article>
+          <article class="action-card">
+            <h3>Void Hold</h3>
+            <textarea id="payment-void-payload"></textarea>
+            <button type="button" class="action-btn" data-action="payment-void">Send</button>
+          </article>
+        </div>
+      </div>
+
+      <div class="tab-body" data-panel="transfer">
+        <p class="muted">Invariant: idempotent transfer write + deterministic safety under retry/concurrency.</p>
+        <div class="action-grid single">
+          <article class="action-card">
+            <h3>Internal Transfer</h3>
+            <textarea id="transfer-payload"></textarea>
+            <button type="button" class="action-btn" data-action="transfer-internal">Send</button>
+            <button type="button" class="secondary action-btn" data-action="transfer-replay">Replay Same Key</button>
+          </article>
+        </div>
+      </div>
+
+      <div class="tab-body" data-panel="deposit">
+        <p class="muted">Invariant: version-bound contract + open/accrue/maturity lifecycle correctness.</p>
+        <div class="action-grid">
+          <article class="action-card">
+            <h3>Open Deposit</h3>
+            <textarea id="deposit-open-payload"></textarea>
+            <button type="button" class="action-btn" data-action="deposit-open">Send</button>
+          </article>
+          <article class="action-card">
+            <h3>Accrue Interest</h3>
+            <textarea id="deposit-accrue-payload"></textarea>
+            <button type="button" class="action-btn" data-action="deposit-accrue">Send</button>
+          </article>
+          <article class="action-card">
+            <h3>Process Maturity</h3>
+            <textarea id="deposit-maturity-payload"></textarea>
+            <button type="button" class="action-btn" data-action="deposit-maturity">Send</button>
+          </article>
+        </div>
+      </div>
+
+      <div class="tab-body" data-panel="lending">
+        <p class="muted">Invariant: disburse/repay core lifecycle. Overdue/default are evidence-only in this showcase.</p>
+        <div class="action-grid">
+          <article class="action-card">
+            <h3>Disburse Loan</h3>
+            <textarea id="lending-disburse-payload"></textarea>
+            <button type="button" class="action-btn" data-action="lending-disburse">Send</button>
+          </article>
+          <article class="action-card">
+            <h3>Repay Loan</h3>
+            <textarea id="lending-repay-payload"></textarea>
+            <button type="button" class="action-btn" data-action="lending-repay">Send</button>
+          </article>
+          <article class="action-card evidence-only">
+            <h3>Overdue / Default (Evidence Only)</h3>
+            <p>Live commands are intentionally excluded from dashboard scope.</p>
+            <ul>
+              <li><a href="/dashboard/docs/sequence-diagrams" target="_blank" rel="noopener">Sequence diagrams</a></li>
+              <li><a href="/dashboard/docs/demo-script" target="_blank" rel="noopener">Demo narrative</a></li>
+              <li><a href="/dashboard/docs/interview-prep" target="_blank" rel="noopener">Interview talking points</a></li>
+            </ul>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="bottom-grid">
+      <article class="card response-card">
+        <h2>Response Viewer</h2>
+        <p id="response-meta" class="status-text">No request sent yet.</p>
+        <pre id="response-output" class="output" aria-live="polite">{}</pre>
+      </article>
+      <article class="card evidence-card">
+        <h2>Evidence Links</h2>
+        <ul>
+          <li><a href="/dashboard/docs/readme" target="_blank" rel="noopener">What this system proves</a></li>
+          <li><a href="/dashboard/docs/source-of-truth-map" target="_blank" rel="noopener">Source-of-truth map</a></li>
+          <li><a href="/dashboard/docs/runtime-failure-modes" target="_blank" rel="noopener">Failure modes</a></li>
+          <li><a href="/dashboard/docs/acceptance-criteria" target="_blank" rel="noopener">Acceptance criteria</a></li>
+          <li><a href="/dashboard/docs/demo-script" target="_blank" rel="noopener">10-minute script</a></li>
+          <li><a href="/dashboard/docs/interview-prep" target="_blank" rel="noopener">Interview prep</a></li>
+        </ul>
+      </article>
+    </section>
+  </main>
+
+  <script src="/dashboard/app.js" defer></script>
+</body>
+</html>
