@@ -139,6 +139,16 @@ What to avoid unless asked:
 - all dead-letter UX details
 - all scheduler/maintenance stories
 
+## If Asked: Hot-Account Strategy Semantics
+Say:
+
+"The profile keeps the configured strategy, but runtime currently applies native HASH only. If profile is configured as ROUND_ROBIN or RANDOM, the runtime explicitly reports HASH_FALLBACK so ops can see there is no fake native support."
+
+Proof in repo:
+- [19-runtime-failure-modes.md](19-runtime-failure-modes.md)
+- `src/main/java/com/corebank/corebank_api/ops/hotaccount/HotAccountOpsService.java`
+- `src/main/java/com/corebank/corebank_api/ledger/HotAccountSlotRuntimeService.java`
+
 ## Redis Talking Point
 Say this exactly or very close to it:
 
@@ -154,4 +164,3 @@ Proof in repo:
 Say:
 
 "I stopped here on purpose. At this point the project already looks like a real fintech backend. More infra polish would add less interview value than a clean, explainable architecture and a strong correctness story."
-
