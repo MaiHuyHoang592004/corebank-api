@@ -40,12 +40,24 @@ class ReconciliationOpsIntegrationTest {
 
 	@BeforeEach
 	void setUp() {
+		jdbcTemplate.execute(
+				"TRUNCATE TABLE ledger_postings, ledger_journals, hold_events, payment_events, audit_events RESTART IDENTITY CASCADE");
+		jdbcTemplate.update("DELETE FROM funds_holds");
+		jdbcTemplate.update("DELETE FROM payment_orders");
+		jdbcTemplate.update("DELETE FROM repayment_schedules");
+		jdbcTemplate.update("DELETE FROM loan_events");
+		jdbcTemplate.update("DELETE FROM loan_contracts");
+		jdbcTemplate.update("DELETE FROM deposit_accruals");
+		jdbcTemplate.update("DELETE FROM deposit_events");
+		jdbcTemplate.update("DELETE FROM deposit_contracts");
+		jdbcTemplate.update("DELETE FROM limit_usage_counters");
+		jdbcTemplate.update("DELETE FROM limit_assignments");
 		jdbcTemplate.update("DELETE FROM reconciliation_breaks");
 		jdbcTemplate.update("DELETE FROM batch_runs");
 		jdbcTemplate.update("DELETE FROM account_balance_snapshots");
+		jdbcTemplate.update("DELETE FROM encrypted_customer_secrets");
 		jdbcTemplate.update("DELETE FROM customer_accounts");
 		jdbcTemplate.update("DELETE FROM customers");
-		jdbcTemplate.update("DELETE FROM audit_events WHERE action = 'RECONCILIATION_RUN_EXECUTED'");
 		setRuntimeMode("RUNNING");
 	}
 
