@@ -70,7 +70,7 @@ class LoanTransientRetryIntegrationTest {
 						idempotencyKey,
 						seeded.borrowerAccountId(),
 						seeded.productId(),
-						UUID.randomUUID(),
+						seeded.productVersionId(),
 						1_200_000L,
 						"VND",
 						12.0,
@@ -105,7 +105,7 @@ class LoanTransientRetryIntegrationTest {
 						"idem-loan-transient-repay-disburse-" + UUID.randomUUID(),
 						seeded.borrowerAccountId(),
 						seeded.productId(),
-						UUID.randomUUID(),
+						seeded.productVersionId(),
 						300_000L,
 						"VND",
 						12.0,
@@ -166,7 +166,7 @@ class LoanTransientRetryIntegrationTest {
 						idempotencyKey,
 						seeded.borrowerAccountId(),
 						seeded.productId(),
-						UUID.randomUUID(),
+						seeded.productVersionId(),
 						300_000L,
 						"VND",
 						9.0,
@@ -187,6 +187,7 @@ class LoanTransientRetryIntegrationTest {
 	private SeededData seedLoanDisbursementData(String currency, long postedBalance, long availableBalance) {
 		UUID customerId = UUID.randomUUID();
 		UUID productId = UUID.randomUUID();
+		UUID productVersionId = UUID.randomUUID();
 		UUID borrowerAccountId = UUID.randomUUID();
 		UUID loanReceivableLedgerAccountId = UUID.randomUUID();
 		UUID customerSettlementLedgerAccountId = UUID.randomUUID();
@@ -210,6 +211,22 @@ class LoanTransientRetryIntegrationTest {
 				"LN-" + productId.toString().substring(0, 8),
 				"Personal Loan",
 				currency);
+
+		jdbcTemplate.update(
+				"""
+				INSERT INTO bank_product_versions (
+				    product_version_id,
+				    product_id,
+				    version_no,
+				    effective_from,
+				    effective_to,
+				    status,
+				    configuration_json,
+				    created_at
+				) VALUES (?, ?, 1, now() - interval '1 day', NULL, 'ACTIVE', '{}'::jsonb, now())
+				""",
+				productVersionId,
+				productId);
 
 		jdbcTemplate.update(
 				"""
@@ -248,7 +265,12 @@ class LoanTransientRetryIntegrationTest {
 				"Customer Settlement",
 				currency);
 
-		return new SeededData(productId, borrowerAccountId, loanReceivableLedgerAccountId, customerSettlementLedgerAccountId);
+		return new SeededData(
+				productId,
+				productVersionId,
+				borrowerAccountId,
+				loanReceivableLedgerAccountId,
+				customerSettlementLedgerAccountId);
 	}
 
 	private int count(String sql, Object... args) {
@@ -258,6 +280,7 @@ class LoanTransientRetryIntegrationTest {
 
 	private record SeededData(
 			UUID productId,
+			UUID productVersionId,
 			UUID borrowerAccountId,
 			UUID loanReceivableLedgerAccountId,
 			UUID customerSettlementLedgerAccountId) {

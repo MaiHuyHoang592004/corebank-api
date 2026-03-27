@@ -53,7 +53,7 @@ class LoanApplicationServiceIntegrationTest {
 				"idem-loan-disburse-1",
 				seeded.borrowerAccountId(),
 				seeded.productId(),
-				UUID.randomUUID(),
+				seeded.productVersionId(),
 				1_200_000L,
 				"VND",
 				12.0,
@@ -122,7 +122,7 @@ class LoanApplicationServiceIntegrationTest {
 				"idem-loan-disburse-2",
 				seeded.borrowerAccountId(),
 				seeded.productId(),
-				UUID.randomUUID(),
+				seeded.productVersionId(),
 				500_000L,
 				"VND",
 				10.0,
@@ -153,7 +153,7 @@ class LoanApplicationServiceIntegrationTest {
 				"idem-loan-disburse-3",
 				seeded.borrowerAccountId(),
 				seeded.productId(),
-				UUID.randomUUID(),
+				seeded.productVersionId(),
 				300_000L,
 				"VND",
 				9.0,
@@ -174,22 +174,6 @@ class LoanApplicationServiceIntegrationTest {
 	@Test
 	void disburseLoan_rejectsMismatchedProductVersionWhenGovernedVersionExists() {
 		SeededData seeded = seedLoanDisbursementData("VND", 1_000_000L, 1_000_000L);
-		UUID activeVersionId = UUID.randomUUID();
-		jdbcTemplate.update(
-				"""
-				INSERT INTO bank_product_versions (
-				    product_version_id,
-				    product_id,
-				    version_no,
-				    effective_from,
-				    effective_to,
-				    status,
-				    configuration_json,
-				    created_at
-				) VALUES (?, ?, 1, now() - interval '1 day', NULL, 'ACTIVE', '{}'::jsonb, now())
-				""",
-				activeVersionId,
-				seeded.productId());
 
 		LoanApplicationService.LoanDisbursementRequest request = new LoanApplicationService.LoanDisbursementRequest(
 				"idem-loan-disburse-version-mismatch",
@@ -221,7 +205,7 @@ class LoanApplicationServiceIntegrationTest {
 						"idem-loan-disburse-r1",
 						seeded.borrowerAccountId(),
 						seeded.productId(),
-						UUID.randomUUID(),
+						seeded.productVersionId(),
 						300_000L,
 						"VND",
 						12.0,
@@ -963,7 +947,7 @@ class LoanApplicationServiceIntegrationTest {
 				"idem-loan-disburse-" + suffix,
 				seeded.borrowerAccountId(),
 				seeded.productId(),
-				UUID.randomUUID(),
+				seeded.productVersionId(),
 				300_000L,
 				"VND",
 				12.0,
@@ -980,6 +964,7 @@ class LoanApplicationServiceIntegrationTest {
 	private SeededData seedLoanDisbursementData(String currency, long postedBalance, long availableBalance) {
 		UUID customerId = UUID.randomUUID();
 		UUID productId = UUID.randomUUID();
+		UUID productVersionId = UUID.randomUUID();
 		UUID borrowerAccountId = UUID.randomUUID();
 		UUID loanReceivableLedgerAccountId = UUID.randomUUID();
 		UUID customerSettlementLedgerAccountId = UUID.randomUUID();
@@ -1003,6 +988,22 @@ class LoanApplicationServiceIntegrationTest {
 				"LN-" + productId.toString().substring(0, 8),
 				"Personal Loan",
 				currency);
+
+		jdbcTemplate.update(
+				"""
+				INSERT INTO bank_product_versions (
+				    product_version_id,
+				    product_id,
+				    version_no,
+				    effective_from,
+				    effective_to,
+				    status,
+				    configuration_json,
+				    created_at
+				) VALUES (?, ?, 1, now() - interval '1 day', NULL, 'ACTIVE', '{}'::jsonb, now())
+				""",
+				productVersionId,
+				productId);
 
 		jdbcTemplate.update(
 				"""
@@ -1041,7 +1042,12 @@ class LoanApplicationServiceIntegrationTest {
 				"Customer Settlement",
 				currency);
 
-		return new SeededData(productId, borrowerAccountId, loanReceivableLedgerAccountId, customerSettlementLedgerAccountId);
+		return new SeededData(
+				productId,
+				productVersionId,
+				borrowerAccountId,
+				loanReceivableLedgerAccountId,
+				customerSettlementLedgerAccountId);
 	}
 
 	private <T> InvocationOutcome<T> executeConcurrentCallable(
@@ -1069,6 +1075,7 @@ class LoanApplicationServiceIntegrationTest {
 
 	private record SeededData(
 			UUID productId,
+			UUID productVersionId,
 			UUID borrowerAccountId,
 			UUID loanReceivableLedgerAccountId,
 			UUID customerSettlementLedgerAccountId) {

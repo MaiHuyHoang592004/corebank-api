@@ -398,6 +398,7 @@ class OpsApprovalExecutionIntegrationTest {
 	private LoanSeed seedLoanContractEligibleForDefault() {
 		UUID customerId = UUID.randomUUID();
 		UUID productId = UUID.randomUUID();
+		UUID productVersionId = UUID.randomUUID();
 		UUID borrowerAccountId = UUID.randomUUID();
 		UUID loanReceivableLedger = UUID.randomUUID();
 		UUID customerSettlementLedger = UUID.randomUUID();
@@ -420,6 +421,22 @@ class OpsApprovalExecutionIntegrationTest {
 				productId,
 				"LN-APPROVAL-" + productId.toString().substring(0, 8),
 				"Loan Approval Product");
+
+		jdbcTemplate.update(
+				"""
+				INSERT INTO bank_product_versions (
+				    product_version_id,
+				    product_id,
+				    version_no,
+				    effective_from,
+				    effective_to,
+				    status,
+				    configuration_json,
+				    created_at
+				) VALUES (?, ?, 1, now() - interval '1 day', NULL, 'ACTIVE', '{}'::jsonb, now())
+				""",
+				productVersionId,
+				productId);
 
 		jdbcTemplate.update(
 				"""
@@ -461,7 +478,7 @@ class OpsApprovalExecutionIntegrationTest {
 						idempotencyKey,
 						borrowerAccountId,
 						productId,
-						UUID.randomUUID(),
+						productVersionId,
 						500_000L,
 						"VND",
 						12.0,
