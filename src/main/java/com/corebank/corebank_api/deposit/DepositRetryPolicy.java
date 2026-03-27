@@ -1,5 +1,6 @@
 package com.corebank.corebank_api.deposit;
 
+import com.corebank.corebank_api.common.MoneyCommandRetryPolicy;
 import java.sql.SQLException;
 import java.util.Set;
 import org.springframework.dao.CannotAcquireLockException;
@@ -8,7 +9,7 @@ import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.stereotype.Component;
 
 @Component
-public class DepositRetryPolicy {
+public class DepositRetryPolicy implements MoneyCommandRetryPolicy {
 
 	private static final int MAX_ATTEMPTS = 3;
 	private static final long FIRST_RETRY_BACKOFF_MILLIS = 50L;
