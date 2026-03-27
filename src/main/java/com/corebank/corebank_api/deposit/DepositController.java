@@ -1,11 +1,15 @@
 package com.corebank.corebank_api.deposit;
 
+import com.corebank.corebank_api.common.CoreBankException;
+import java.util.Locale;
 import java.util.UUID;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/api/deposits")
@@ -20,24 +24,44 @@ public class DepositController {
 	@PostMapping("/open")
 	public ResponseEntity<DepositApplicationService.OpenDepositResponse> openDeposit(
 			@RequestBody DepositApplicationService.OpenDepositRequest request) {
-		
-		DepositApplicationService.OpenDepositResponse response = depositApplicationService.openDeposit(request);
-		return ResponseEntity.ok(response);
+		try {
+			DepositApplicationService.OpenDepositResponse response = depositApplicationService.openDeposit(request);
+			return ResponseEntity.ok(response);
+		} catch (CoreBankException ex) {
+			throw toHttpException(ex);
+		}
 	}
 
 	@PostMapping("/accrue")
 	public ResponseEntity<DepositApplicationService.AccrueInterestResponse> accrueInterest(
 			@RequestBody DepositApplicationService.AccrueInterestRequest request) {
-		
-		DepositApplicationService.AccrueInterestResponse response = depositApplicationService.accrueInterest(request);
-		return ResponseEntity.ok(response);
+		try {
+			DepositApplicationService.AccrueInterestResponse response = depositApplicationService.accrueInterest(request);
+			return ResponseEntity.ok(response);
+		} catch (CoreBankException ex) {
+			throw toHttpException(ex);
+		}
 	}
 
 	@PostMapping("/maturity")
 	public ResponseEntity<DepositApplicationService.MaturityResponse> processMaturity(
 			@RequestBody DepositApplicationService.MaturityRequest request) {
-		
-		DepositApplicationService.MaturityResponse response = depositApplicationService.processMaturity(request);
-		return ResponseEntity.ok(response);
+		try {
+			DepositApplicationService.MaturityResponse response = depositApplicationService.processMaturity(request);
+			return ResponseEntity.ok(response);
+		} catch (CoreBankException ex) {
+			throw toHttpException(ex);
+		}
+	}
+
+	private ResponseStatusException toHttpException(CoreBankException exception) {
+		String message = exception.getMessage() == null ? "Deposit command failed" : exception.getMessage();
+		String lowered = message.toLowerCase(Locale.ROOT);
+		HttpStatus status = lowered.contains("not found")
+				? HttpStatus.NOT_FOUND
+				: lowered.contains("writes are not allowed")
+						? HttpStatus.CONFLICT
+						: HttpStatus.BAD_REQUEST;
+		return new ResponseStatusException(status, message, exception);
 	}
 }
