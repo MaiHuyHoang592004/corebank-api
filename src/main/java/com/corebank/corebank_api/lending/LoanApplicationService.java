@@ -263,6 +263,7 @@ public class LoanApplicationService {
 
 		List<UUID> affectedContractIds = transitioned.stream()
 				.map(LoanContractService.OverdueTransitionResult::contractId)
+				.sorted(UUID::compareTo)
 				.toList();
 
 		return new LoanOverdueTransitionResponse(
