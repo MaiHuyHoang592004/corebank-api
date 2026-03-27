@@ -164,7 +164,7 @@ public class HotAccountOpsService {
 				totalPosted,
 				totalAvailable,
 				slots,
-				"Hot-account profile management only. Money write-path remains unchanged in this phase.");
+				"Hot-account slot totals are runtime-updated when profile is active. customer_accounts semantics remain authoritative.");
 	}
 
 	private void ensureLedgerAccountExists(UUID ledgerAccountId) {
