@@ -17,8 +17,14 @@ public class MoneyWriteRateLimitWebConfig implements WebMvcConfigurer {
 	public void addInterceptors(InterceptorRegistry registry) {
 		registry.addInterceptor(moneyWriteRateLimitInterceptor)
 				.addPathPatterns(
+						"/api/payments/authorize-hold",
+						"/api/payments/capture-hold",
+						"/api/payments/void-hold",
+						"/api/transfers/internal",
 						"/api/deposits/open",
 						"/api/deposits/accrue",
-						"/api/deposits/maturity");
+						"/api/deposits/maturity",
+						"/api/lending/disburse",
+						"/api/lending/repay");
 	}
 }
