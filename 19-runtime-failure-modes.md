@@ -91,6 +91,10 @@ Expected behavior:
 - write pressure is distributed across balance slots
 - reads aggregate slot totals
 - no caller assumes one-row-per-account if account is marked hot
+- configured strategy and runtime-applied strategy are explicit in hot-account read responses:
+  - `selectionStrategy=HASH` -> `runtimeSelectionStrategyApplied=HASH`, `runtimeStrategySemantics=NATIVE_HASH`
+  - `selectionStrategy=ROUND_ROBIN|RANDOM` -> runtime currently applies `HASH` with `runtimeStrategySemantics=HASH_FALLBACK`
+- fallback semantics are intentional in the current slice and must not be interpreted as native runtime support for `ROUND_ROBIN` or `RANDOM`
 
 ## Operational rules
 1. Never repair ledger truth by editing historical rows.
