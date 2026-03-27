@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestController
@@ -89,6 +90,32 @@ public class ProductGovernanceController {
 		}
 	}
 
+	@GetMapping("/governance/missing-active-versions")
+	public ResponseEntity<ProductGovernanceService.MissingActiveVersionPage> listMissingActiveVersions(
+			@RequestParam(required = false) Integer limit,
+			Authentication authentication) {
+		iamAuthorizationService.requirePermission(authentication, "PRODUCT_GOVERNANCE_READ");
+		try {
+			return ResponseEntity.ok(productGovernanceService.listMissingActiveVersions(limit));
+		} catch (CoreBankException ex) {
+			throw toHttpException(ex);
+		}
+	}
+
+	@PostMapping("/governance/backfill-active-versions")
+	public ResponseEntity<ProductGovernanceService.BackfillActiveVersionsResult> backfillMissingActiveVersions(
+			@RequestBody(required = false) BackfillActiveVersionsRequest request,
+			Authentication authentication) {
+		iamAuthorizationService.requirePermission(authentication, "PRODUCT_GOVERNANCE_WRITE");
+		try {
+			boolean dryRun = request == null || request.dryRun() == null || request.dryRun();
+			Integer limit = request == null ? null : request.limit();
+			return ResponseEntity.ok(productGovernanceService.backfillMissingActiveVersions(dryRun, limit));
+		} catch (CoreBankException ex) {
+			throw toHttpException(ex);
+		}
+	}
+
 	private ResponseStatusException toHttpException(CoreBankException exception) {
 		String message = exception.getMessage() == null ? "Product governance validation failed" : exception.getMessage();
 		String lowered = message.toLowerCase(Locale.ROOT);
@@ -104,5 +131,10 @@ public class ProductGovernanceController {
 			Instant effectiveFrom,
 			Instant effectiveTo,
 			Map<String, Object> configuration) {
+	}
+
+	public record BackfillActiveVersionsRequest(
+			Boolean dryRun,
+			Integer limit) {
 	}
 }

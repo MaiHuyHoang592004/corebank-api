@@ -333,6 +333,22 @@ class DepositTransientRetryIntegrationTest {
 
 		jdbcTemplate.update(
 				"""
+				INSERT INTO bank_product_versions (
+				    product_version_id,
+				    product_id,
+				    version_no,
+				    effective_from,
+				    effective_to,
+				    status,
+				    configuration_json,
+				    created_at
+				) VALUES (?, ?, 1, now() - interval '1 day', NULL, 'ACTIVE', '{}'::jsonb, now())
+				""",
+				productVersionId,
+				productId);
+
+		jdbcTemplate.update(
+				"""
 				INSERT INTO ledger_accounts (
 				    ledger_account_id,
 				    account_code,
