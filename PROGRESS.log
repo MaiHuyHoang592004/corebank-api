@@ -2033,3 +2033,35 @@
 ### Residual Risk / Follow-up
 - `ROUND_ROBIN` and `RANDOM` currently map to deterministic hash fallback to avoid schema changes in this slice; true strategy-native runtime behavior remains follow-up work.
 - Partition `_p` tables remain readiness-only; no runtime write-path cutover performed in Slice 4 by design.
+
+## Verification Session: 2026-03-28 (Slice 4A - Hot-Account Strategy Transparency)
+
+### Scope
+- Added explicit runtime strategy semantics to hot-account read responses to remove ambiguity between configured strategy and applied runtime behavior.
+- Kept APIs backward compatible (additive response fields only); no money-logic expansion and no schema/config/deploy changes.
+
+### Changes Applied
+- Extended `HotAccountOpsService.HotAccountProfileView` with additive fields:
+  - `runtimeSelectionStrategyApplied`
+  - `runtimeStrategySemantics`
+  - `fallbackActive`
+  - `fallbackReason`
+- Added deterministic mapping:
+  - configured `HASH` -> `NATIVE_HASH` (no fallback)
+  - configured `ROUND_ROBIN|RANDOM` -> `HASH_FALLBACK` with reason `CONFIGURED_STRATEGY_NOT_RUNTIME_IMPLEMENTED`
+- Kept runtime fallback warning/audit behavior unchanged in ledger runtime slotting path.
+- Updated docs:
+  - `19-runtime-failure-modes.md` (explicit configured-vs-applied strategy semantics)
+  - `28-demo-script.md` (interview talking point for strategy transparency)
+
+### Verification Evidence
+- Targeted:
+  - `mvn "-Dtest=OpsHotAccountIntegrationTest,ReportingControllerIntegrationTest,LedgerHotAccountRuntimeIntegrationTest" test` -> PASS
+- Regression required:
+  - `mvn "-Dtest=TransferServiceIntegrationTest,PaymentApplicationServiceIntegrationTest,DepositApplicationServiceIntegrationTest,LoanApplicationServiceIntegrationTest" test` -> PASS
+- Final gate:
+  - `mvn test` -> PASS
+
+### Residual Risk / Follow-up
+- Runtime still does not provide native `ROUND_ROBIN` or `RANDOM`; transparency is now explicit in API responses and docs.
+- Partition write-path cutover remains a separate follow-up slice (4B) by design.
