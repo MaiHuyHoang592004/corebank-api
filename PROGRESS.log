@@ -1883,3 +1883,36 @@
 - Public showcase write endpoints increase surface area by design for interview demo; invariants remain enforced in service layer.
 - `DepositRateLimitIntegrationTest` showed one transient window-boundary flake in an earlier mixed run; immediate rerun passed with unchanged logic.
 - Stop-line remains after Phase 6.0: no new runtime features unless explicitly approved as showcase-only.
+
+## Verification Session: 2026-03-27 (Slice 1 - MoneyCommandTemplate + ObjectMapper Consistency)
+
+### Scope
+- Extracted shared idempotent money command orchestration template for payment/transfer/deposit/lending idempotent write paths.
+- Standardized money-application serialization path to shared Jackson `ObjectMapper` bean.
+- No API/schema/deploy/env changes.
+
+### Changes Applied
+- Added common template + retry abstraction:
+  - `common/IdempotentMoneyCommandTemplate`
+  - `common/MoneyCommandRetryPolicy`
+- Updated retry policies to implement shared contract:
+  - `PaymentRetryPolicy`, `TransferRetryPolicy`, `DepositRetryPolicy`, `LoanRetryPolicy`
+- Migrated money idempotent commands to template orchestration:
+  - `PaymentApplicationService`: `authorizeHold`, `captureHold`, `voidHold`
+  - `TransferService`: `transfer`
+  - `DepositApplicationService`: `openDeposit`, `accrueInterest`, `processMaturity`
+  - `LoanApplicationService`: `disburseLoan`, `repayLoan`
+- Removed per-service local `ObjectMapper` instantiation/copy in the 4 money application services.
+- Preserved non-template lending transitions (`markOverdueInstallments`, `markContractDefaulted`) as-is.
+- Added tests:
+  - `IdempotentMoneyCommandTemplateTest`
+  - `MoneyApplicationSerializationConsistencyTest`
+
+### Verification Evidence
+- `mvn "-Dtest=IdempotentMoneyCommandTemplateTest,MoneyApplicationSerializationConsistencyTest" test` -> PASS
+- `mvn "-Dtest=PaymentApplicationServiceIntegrationTest,PaymentIdempotencyIntegrationTest,TransferServiceIntegrationTest,DepositApplicationServiceIntegrationTest,LoanApplicationServiceIntegrationTest,PaymentTransientRetryIntegrationTest,TransferServiceTransientRetryIntegrationTest,DepositTransientRetryIntegrationTest,LoanTransientRetryIntegrationTest" test` -> PASS
+- `mvn test` -> PASS (full gate)
+
+### Residual Risk / Follow-up
+- Shared template is now a central orchestration point; future changes here must be treated as high-risk and regression-tested across all money paths.
+- Transfer keeps existing behavior where post-success usage increment happens after idempotency success marking (legacy semantics preserved intentionally).
