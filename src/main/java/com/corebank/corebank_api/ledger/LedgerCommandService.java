@@ -25,12 +25,15 @@ public class LedgerCommandService {
 
 	private final JdbcTemplate jdbcTemplate;
 	private final AccountBalanceRepository accountBalanceRepository;
+	private final HotAccountSlotRuntimeService hotAccountSlotRuntimeService;
 
 	public LedgerCommandService(
 			JdbcTemplate jdbcTemplate,
-			AccountBalanceRepository accountBalanceRepository) {
+			AccountBalanceRepository accountBalanceRepository,
+			HotAccountSlotRuntimeService hotAccountSlotRuntimeService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.accountBalanceRepository = accountBalanceRepository;
+		this.hotAccountSlotRuntimeService = hotAccountSlotRuntimeService;
 	}
 
 	@Transactional
@@ -54,6 +57,13 @@ public class LedgerCommandService {
 				throw new CoreBankException("Unable to lock all customer accounts required for ledger posting");
 			}
 		}
+
+		Map<UUID, HotAccountSlotRuntimeService.HotAccountContext> hotAccountContexts =
+				hotAccountSlotRuntimeService.lockActiveContextsInDeterministicOrder(command.postings().stream()
+						.map(PostingInstruction::ledgerAccountId)
+						.filter(Objects::nonNull)
+						.toList());
+		List<HotAccountSlotRuntimeService.SlottingDecision> slottingDecisions = new ArrayList<>();
 
 		UUID journalId = UUID.randomUUID();
 		byte[] prevRowHash = findLatestJournalRowHash().orElse(null);
@@ -104,6 +114,16 @@ public class LedgerCommandService {
 					posting.amountMinor(),
 					posting.currency());
 
+			HotAccountSlotRuntimeService.HotAccountContext hotAccountContext =
+					hotAccountContexts.get(posting.ledgerAccountId());
+			if (hotAccountContext != null) {
+				slottingDecisions.add(hotAccountSlotRuntimeService.applySlotDelta(
+						hotAccountContext,
+						command.referenceId(),
+						posting.entrySide(),
+						posting.amountMinor()));
+			}
+
 			// Only update posted balance if explicitly requested (e.g., for captures, not for transfers)
 			if (posting.customerAccountId() != null && posting.updatePostedBalance()) {
 				long delta = posting.entrySide().equals("C") ? posting.amountMinor() : -posting.amountMinor();
@@ -114,12 +134,13 @@ public class LedgerCommandService {
 						    version = version + 1,
 						    updated_at = now()
 						WHERE customer_account_id = ?
-						""",
+				""",
 						delta,
 						posting.customerAccountId());
 			}
 		}
 
+		hotAccountSlotRuntimeService.appendSlottingAudit(journalId, command, slottingDecisions);
 		return journalId;
 	}
 
