@@ -17,14 +17,17 @@ import org.springframework.web.server.ResponseStatusException;
 public class OpsReconciliationController {
 
 	private final ReconciliationService reconciliationService;
+	private final ExternalReconciliationService externalReconciliationService;
 	private final IamAuthorizationService iamAuthorizationService;
 	private final OpsRuntimeModePolicy opsRuntimeModePolicy;
 
 	public OpsReconciliationController(
 			ReconciliationService reconciliationService,
+			ExternalReconciliationService externalReconciliationService,
 			IamAuthorizationService iamAuthorizationService,
 			OpsRuntimeModePolicy opsRuntimeModePolicy) {
 		this.reconciliationService = reconciliationService;
+		this.externalReconciliationService = externalReconciliationService;
 		this.iamAuthorizationService = iamAuthorizationService;
 		this.opsRuntimeModePolicy = opsRuntimeModePolicy;
 	}
@@ -43,6 +46,30 @@ public class OpsReconciliationController {
 		return ResponseEntity.ok(result);
 	}
 
+	@PostMapping("/external/runs")
+	public ResponseEntity<ExternalReconciliationService.ExternalReconciliationRunResult> runExternalReconciliation(
+			@RequestBody(required = false) ExternalReconciliationRunRequest request,
+			Authentication authentication) {
+		iamAuthorizationService.requireAnyRole(authentication, "ROLE_OPS", "ROLE_ADMIN");
+		opsRuntimeModePolicy.requireNonRunningForMaintenanceJob();
+
+		if (request == null) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "request body is required");
+		}
+
+		LocalDate statementDate = parseStatementDate(request.statementDate());
+		ExternalReconciliationService.ExternalReconciliationRunResult result =
+				externalReconciliationService.run(new ExternalReconciliationService.ExternalReconciliationRunCommand(
+						request.statementRef(),
+						request.provider(),
+						statementDate,
+						request.processingLimit(),
+						request.dryRun(),
+						request.entries(),
+						actor(authentication)));
+		return ResponseEntity.ok(result);
+	}
+
 	private LocalDate parseBusinessDate(String value) {
 		if (value == null || value.trim().isEmpty()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "businessDate is required");
@@ -54,6 +81,17 @@ public class OpsReconciliationController {
 		}
 	}
 
+	private LocalDate parseStatementDate(String value) {
+		if (value == null || value.trim().isEmpty()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "statementDate is required");
+		}
+		try {
+			return LocalDate.parse(value.trim());
+		} catch (RuntimeException ex) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "statementDate must be yyyy-MM-dd");
+		}
+	}
+
 	private String actor(Authentication authentication) {
 		return authentication == null ? "system" : authentication.getName();
 	}
@@ -61,5 +99,14 @@ public class OpsReconciliationController {
 	public record ReconciliationRunRequest(
 			String businessDate,
 			Integer limit) {
+	}
+
+	public record ExternalReconciliationRunRequest(
+			String statementRef,
+			String provider,
+			String statementDate,
+			Integer processingLimit,
+			Boolean dryRun,
+			java.util.List<ExternalReconciliationService.ExternalSettlementEntryInput> entries) {
 	}
 }
