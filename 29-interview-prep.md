@@ -4,7 +4,7 @@
 "CoreBank is a production-like fintech backend portfolio project built as a modular monolith. I focused on the hard parts that make money systems believable: double-entry thinking, posted vs available balance semantics, payment hold/capture/void, deposit and lending lifecycle flows, idempotency, audit, approvals, reconciliation, outbox, and runtime hardening. The key architectural rule is that PostgreSQL remains the source of truth for money and idempotency, while Kafka and Redis are used only for async transport and short-term acceleration."
 
 ## Live Demo Entry (Browser)
-- Run `mvn spring-boot:run` and open `http://localhost:8080/dashboard/`.
+- Run `docker compose up -d postgres redis`, then `mvn spring-boot:run`, and open `http://localhost:9090/dashboard/`.
 - Login with `demo_admin / demo_admin` (or `demo_user` for least privilege).
 - Click `Initialize Demo Data` once.
 - Execute one flow per tab: Payment, Transfer, Deposit, Lending.
@@ -82,5 +82,4 @@ I stopped after Phase 5.18 because the project already crossed the threshold of 
 - a clear explanation of truth boundaries
 
 Beyond this point, more work would mostly be infra polish or marginal ops features. That may be useful in production, but it adds less portfolio value than keeping the system tight, explainable, and defensible.
-
 

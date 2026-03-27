@@ -26,10 +26,11 @@ Then keep these three files open during the demo:
 Start the app and open the browser dashboard:
 
 ```powershell
+docker compose up -d postgres redis
 mvn spring-boot:run
 ```
 
-Open `http://localhost:8080/dashboard/` and use demo credentials:
+Open `http://localhost:9090/dashboard/` and use demo credentials:
 - `demo_user / demo_user`
 - `demo_ops / demo_ops`
 - `demo_admin / demo_admin`
@@ -153,5 +154,4 @@ Proof in repo:
 Say:
 
 "I stopped here on purpose. At this point the project already looks like a real fintech backend. More infra polish would add less interview value than a clean, explainable architecture and a strong correctness story."
-
 
