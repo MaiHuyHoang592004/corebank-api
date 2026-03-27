@@ -1958,3 +1958,45 @@
 ### Residual Risk / Follow-up
 - Strict mode now fails fast when product/version data is incomplete; any future test or seed path creating ACTIVE products must also create at least one ACTIVE/effective version.
 - Backfill endpoint chooses latest version deterministically for promotion; this is acceptable for transition but domain-specific promotion policy may need refinement later if business requires richer version lifecycle governance.
+
+## Verification Session: 2026-03-28 (Slice 3 - External Reconciliation Baseline)
+
+### Scope
+- Added immutable external statement import baseline with statement versioning and deterministic matching.
+- Added external reconciliation run API and external break reporting API.
+- Enforced real concurrency safety for same `statementRef` via advisory transaction lock.
+- No deploy/env changes; no resolve/approve workflow introduced in this slice.
+
+### Changes Applied
+- Added migration `V25__external_reconciliation_baseline.sql`:
+  - new tables: `external_settlement_statements`, `external_settlement_entries`
+  - uniqueness: `(statement_ref, version_no)` and single latest via partial unique `(statement_ref) WHERE is_latest = true`
+  - required indexes:
+    - `ix_ext_stmt_ref_version_desc`
+    - `ix_ext_entries_match_key`
+    - `ix_ledger_journals_ref_id_currency_created`
+  - extended `reconciliation_breaks.break_type` constraint with:
+    - `ORPHAN_EXTERNAL`, `MISSING_EXTERNAL`, `AMOUNT_MISMATCH`, `STATUS_MISMATCH`, `AMBIGUOUS_MATCH`, `DUPLICATE_EXTERNAL`, `DUPLICATE_INTERNAL`
+- Added `ExternalReconciliationService`:
+  - immutable import with new version per rerun
+  - advisory lock per `statementRef`
+  - deterministic matching with fixed short-circuit order
+  - truncation safety for partially cut key-groups -> `AMBIGUOUS_MATCH` (`matchRuleCode=TRUNCATED_KEY_GROUP`)
+  - `MISSING_EXTERNAL` anchored to UTC day: `DATE(created_at AT TIME ZONE 'UTC') = statementDate`
+  - `dryRun=true` writes batch run + audit summary only; no statement/entries/break mutations
+- Added ops endpoint:
+  - `POST /api/ops/reconciliation/external/runs`
+- Added reporting endpoint:
+  - `GET /api/reporting/reconciliation/external/breaks`
+
+### Verification Evidence
+- Targeted suite:
+  - `mvn "-Dtest=ExternalReconciliationOpsIntegrationTest,ReconciliationOpsIntegrationTest,ReportingControllerIntegrationTest" test` -> PASS
+- Regression subset:
+  - `mvn "-Dtest=PaymentApplicationServiceIntegrationTest,TransferServiceIntegrationTest,OutboxPatternIntegrationTest" test` -> PASS
+- Full gate:
+  - `mvn test` -> PASS
+
+### Residual Risk / Follow-up
+- Matching is intentionally read-only and deterministic in this baseline; no break resolve/approve workflow yet.
+- Large external statement payloads are bounded by input and processing limits; operators should rerun by statement batch when source files exceed a single run window.
