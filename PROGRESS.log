@@ -2000,3 +2000,36 @@
 ### Residual Risk / Follow-up
 - Matching is intentionally read-only and deterministic in this baseline; no break resolve/approve workflow yet.
 - Large external statement payloads are bounded by input and processing limits; operators should rerun by statement batch when source files exceed a single run window.
+
+## Verification Session: 2026-03-28 (Slice 4 - Hot-Account Write-Path Actualization)
+
+### Scope
+- Activated hot-account slot updates in the ledger runtime write path without schema/config/deploy changes.
+- Kept public API contracts unchanged; no new endpoints introduced.
+- Explicitly deferred partition write-path cutover to a later slice (4B).
+
+### Changes Applied
+- Added runtime component `ledger/HotAccountSlotRuntimeService`:
+  - locks active hot-account contexts in deterministic order (`ledger_account_id ASC`, `slot_no ASC`)
+  - updates `ledger_account_balance_slots` per posting in same transaction as journal posting
+  - applies deterministic hash slot selection on `(referenceId, ledgerAccountId, entrySide, amountMinor)`
+  - strategy handling:
+    - `HASH` -> direct
+    - `ROUND_ROBIN` / `RANDOM` -> `HASH_FALLBACK` (warning + audit metadata)
+- Updated `LedgerCommandService.postJournal(...)`:
+  - pre-lock active hot-account contexts
+  - apply slot delta (`C` -> `+amount`, `D` -> `-amount`) to both posted and available slot balances
+  - append one journal-level audit event when slotting applied: `HOT_ACCOUNT_SLOTTING_APPLIED`
+- Updated `HotAccountOpsService.getHotAccount(...)` note to reflect runtime slot updates are now active.
+
+### Verification Evidence
+- Targeted:
+  - `mvn "-Dtest=LedgerHotAccountRuntimeIntegrationTest,LedgerHotAccountConcurrencyIntegrationTest,OpsHotAccountIntegrationTest" test` -> PASS
+- Regression required:
+  - `mvn "-Dtest=OpsHotAccountIntegrationTest,TransferServiceIntegrationTest,PaymentApplicationServiceIntegrationTest,DepositApplicationServiceIntegrationTest,LoanApplicationServiceIntegrationTest" test` -> PASS
+- Final gate:
+  - `mvn test` -> PASS
+
+### Residual Risk / Follow-up
+- `ROUND_ROBIN` and `RANDOM` currently map to deterministic hash fallback to avoid schema changes in this slice; true strategy-native runtime behavior remains follow-up work.
+- Partition `_p` tables remain readiness-only; no runtime write-path cutover performed in Slice 4 by design.
