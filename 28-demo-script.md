@@ -10,6 +10,35 @@ The goal is not to show every subsystem. The goal is to show the strongest proof
 - Anchor every claim to one invariant, one proof point in code/tests/docs, and one clear business reason.
 - Do not drift into low-ROI infrastructure polish unless asked.
 
+## Run The Evidence First
+Before the walkthrough, regenerate the current evidence pack:
+
+```powershell
+.\30-showcase-runner.ps1
+```
+
+Then keep these three files open during the demo:
+- [README.md](README.md)
+- [30-showcase-runner.md](30-showcase-runner.md)
+- `showcase-output/latest-showcase-report.md`
+
+## Run Live Dashboard
+Start the app and open the browser dashboard:
+
+```powershell
+mvn spring-boot:run
+```
+
+Open `http://localhost:8080/dashboard/` and use demo credentials:
+- `demo_user / demo_user`
+- `demo_ops / demo_ops`
+- `demo_admin / demo_admin`
+
+Recommended flow in UI:
+1. Click `Initialize Demo Data`.
+2. Run one action in each tab: Payment, Transfer, Deposit, Lending.
+3. Use evidence links in the side panel when interviewer asks for deeper proof.
+
 ## Minute-By-Minute Flow
 1. Minute 0-1: frame the project
 2. Minute 1-3: payment hold/capture/void
@@ -24,9 +53,9 @@ Say:
 "This is a production-like fintech backend portfolio project. I focused on making money flows correct first, then layering in the controls you expect in real systems: idempotency, approvals, outbox, audit, reconciliation, runtime mode, and selective Redis/Kafka usage without letting them become the source of truth."
 
 Proof points:
-- [README.md](D:/corebank-api/README.md)
-- [14-source-of-truth-map.md](D:/corebank-api/14-source-of-truth-map.md)
-- [07-financial-invariants.md](D:/corebank-api/07-financial-invariants.md)
+- [README.md](README.md)
+- [14-source-of-truth-map.md](14-source-of-truth-map.md)
+- [07-financial-invariants.md](07-financial-invariants.md)
 
 Avoid unless asked:
 - full roadmap history
@@ -42,7 +71,7 @@ Invariant proven:
 - hold, capture, and void are modeled explicitly instead of being one generic payment status flip
 
 Proof in repo:
-- [16-sequence-diagrams.md](D:/corebank-api/16-sequence-diagrams.md)
+- [16-sequence-diagrams.md](16-sequence-diagrams.md)
 - `src/test/java/com/corebank/corebank_api/payment/PaymentApplicationServiceIntegrationTest.java`
 - `src/test/java/com/corebank/corebank_api/payment/PaymentIdempotencyIntegrationTest.java`
 
@@ -61,7 +90,7 @@ Invariant proven:
 - failed attempts do not leak partial money state
 
 Proof in repo:
-- [16-sequence-diagrams.md](D:/corebank-api/16-sequence-diagrams.md)
+- [16-sequence-diagrams.md](16-sequence-diagrams.md)
 - `src/test/java/com/corebank/corebank_api/transfer/TransferServiceIntegrationTest.java`
 - `src/test/java/com/corebank/corebank_api/transfer/TransferServiceTransientRetryIntegrationTest.java`
 
@@ -80,7 +109,7 @@ Invariant proven:
 - transient retry hardening was applied without changing truth ownership
 
 Proof in repo:
-- [05-domain-modules.md](D:/corebank-api/05-domain-modules.md)
+- [05-domain-modules.md](05-domain-modules.md)
 - `src/test/java/com/corebank/corebank_api/deposit/DepositApplicationServiceIntegrationTest.java`
 - `src/test/java/com/corebank/corebank_api/deposit/DepositTransientRetryIntegrationTest.java`
 
@@ -98,7 +127,7 @@ Invariant proven:
 - async integration is delayed safely, not treated as financial truth
 
 Proof in repo:
-- [16-sequence-diagrams.md](D:/corebank-api/16-sequence-diagrams.md)
+- [16-sequence-diagrams.md](16-sequence-diagrams.md)
 - `src/test/java/com/corebank/corebank_api/lending/LoanApplicationServiceIntegrationTest.java`
 - `src/test/java/com/corebank/corebank_api/lending/LoanTransientRetryIntegrationTest.java`
 - `src/test/java/com/corebank/corebank_api/reporting/OutboxReportingControllerIntegrationTest.java`
@@ -115,8 +144,8 @@ Say this exactly or very close to it:
 "Redis is intentionally helpful but non-authoritative here. I use it for rate limiting and conservative idempotent success replay caching to reduce load, but PostgreSQL still decides money truth and idempotency truth. That is the important design choice."
 
 Proof in repo:
-- [14-source-of-truth-map.md](D:/corebank-api/14-source-of-truth-map.md)
-- [19-runtime-failure-modes.md](D:/corebank-api/19-runtime-failure-modes.md)
+- [14-source-of-truth-map.md](14-source-of-truth-map.md)
+- [19-runtime-failure-modes.md](19-runtime-failure-modes.md)
 - `src/test/java/com/corebank/corebank_api/deposit/DepositRateLimitIntegrationTest.java`
 - `src/test/java/com/corebank/corebank_api/integration/IdempotencyRedisReplayCacheIntegrationTest.java`
 
@@ -124,3 +153,5 @@ Proof in repo:
 Say:
 
 "I stopped here on purpose. At this point the project already looks like a real fintech backend. More infra polish would add less interview value than a clean, explainable architecture and a strong correctness story."
+
+
