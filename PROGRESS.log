@@ -1916,3 +1916,45 @@
 ### Residual Risk / Follow-up
 - Shared template is now a central orchestration point; future changes here must be treated as high-risk and regression-tested across all money paths.
 - Transfer keeps existing behavior where post-success usage increment happens after idempotency success marking (legacy semantics preserved intentionally).
+
+## Verification Session: 2026-03-27 (Slice 2 - Product Version Strict Rollout)
+
+### Scope
+- Completed 2-step product version strict rollout without schema/deploy/env changes:
+  - Step 1: observability + remediation APIs for missing active versions.
+  - Step 2: strict enforcement in product binding validation (removed legacy no-version fallback).
+- Preserved public deposit/lending API contracts; behavior change is validation strictness only.
+
+### Changes Applied
+- Added governance observability/remediation APIs in product layer:
+  - `GET /api/products/governance/missing-active-versions?limit=`
+  - `POST /api/products/governance/backfill-active-versions` (`dryRun`, `limit`)
+- Added deterministic backfill actions:
+  - `SKIPPED_ALREADY_OK`
+  - `WOULD_FIX_PROMOTED` / `FIXED_PROMOTED`
+  - `WOULD_FIX_CREATED` / `FIXED_CREATED`
+  - `ERROR`
+- Enabled strict product/version binding in `validateProductVersionBinding(...)`:
+  - removed legacy fallback path for products without version rows
+  - requires requested `productVersionId` to belong to product and be ACTIVE/effective
+- Added/updated test coverage:
+  - `ProductGovernanceControllerIntegrationTest`
+  - `ProductGovernanceServiceIntegrationTest` (new)
+  - strict-fixture compatibility updates for existing suites that create loan/deposit products in tests:
+    - `DepositApplicationServiceIntegrationTest`
+    - `DepositTransientRetryIntegrationTest`
+    - `LoanApplicationServiceIntegrationTest`
+    - `LoanTransientRetryIntegrationTest`
+    - `OpsApprovalExecutionIntegrationTest`
+
+### Verification Evidence
+- Targeted rollout suite:
+  - `mvn "-Dtest=ProductGovernanceControllerIntegrationTest,ProductGovernanceServiceIntegrationTest,DepositApplicationServiceIntegrationTest,LoanApplicationServiceIntegrationTest,DemoSetupControllerIntegrationTest" test` -> PASS
+- Strict-fixture regression subset:
+  - `mvn "-Dtest=DepositTransientRetryIntegrationTest,LoanTransientRetryIntegrationTest,OpsApprovalExecutionIntegrationTest" test` -> PASS
+- Final gate:
+  - `mvn test` -> PASS
+
+### Residual Risk / Follow-up
+- Strict mode now fails fast when product/version data is incomplete; any future test or seed path creating ACTIVE products must also create at least one ACTIVE/effective version.
+- Backfill endpoint chooses latest version deterministically for promotion; this is acceptable for transition but domain-specific promotion policy may need refinement later if business requires richer version lifecycle governance.
