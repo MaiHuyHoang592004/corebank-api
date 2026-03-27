@@ -3,6 +3,7 @@ package com.corebank.corebank_api.reporting;
 import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.integration.saga.SagaQueryService;
 import com.corebank.corebank_api.ops.hotaccount.HotAccountOpsService;
+import com.corebank.corebank_api.ops.reconciliation.ExternalReconciliationService;
 import com.corebank.corebank_api.ops.reconciliation.ReconciliationService;
 import java.time.Instant;
 import java.util.UUID;
@@ -23,6 +24,7 @@ public class ReportingController {
 	private final SagaQueryService sagaQueryService;
 	private final OutboxReportingService outboxReportingService;
 	private final ReconciliationService reconciliationService;
+	private final ExternalReconciliationService externalReconciliationService;
 	private final HotAccountOpsService hotAccountOpsService;
 
 	public ReportingController(
@@ -30,11 +32,13 @@ public class ReportingController {
 			SagaQueryService sagaQueryService,
 			OutboxReportingService outboxReportingService,
 			ReconciliationService reconciliationService,
+			ExternalReconciliationService externalReconciliationService,
 			HotAccountOpsService hotAccountOpsService) {
 		this.readModelQueryService = readModelQueryService;
 		this.sagaQueryService = sagaQueryService;
 		this.outboxReportingService = outboxReportingService;
 		this.reconciliationService = reconciliationService;
+		this.externalReconciliationService = externalReconciliationService;
 		this.hotAccountOpsService = hotAccountOpsService;
 	}
 
@@ -125,6 +129,21 @@ public class ReportingController {
 			@RequestParam(required = false) String severity,
 			@RequestParam(defaultValue = "50") int limit) {
 		return ResponseEntity.ok(reconciliationService.listBreaks(runId, status, severity, limit));
+	}
+
+	@GetMapping("/reconciliation/external/breaks")
+	public ResponseEntity<ExternalReconciliationService.ExternalReconciliationBreakPage> externalReconciliationBreaks(
+			@RequestParam(required = false) Long runId,
+			@RequestParam(required = false) String statementRef,
+			@RequestParam(required = false) String breakType,
+			@RequestParam(required = false) String status,
+			@RequestParam(defaultValue = "50") int limit) {
+		return ResponseEntity.ok(externalReconciliationService.listBreaks(
+				runId,
+				statementRef,
+				breakType,
+				status,
+				limit));
 	}
 
 	@GetMapping("/hot-accounts/{ledgerAccountId}/slots")
