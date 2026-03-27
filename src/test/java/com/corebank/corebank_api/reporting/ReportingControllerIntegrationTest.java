@@ -3,6 +3,7 @@ package com.corebank.corebank_api.reporting;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -406,6 +407,10 @@ class ReportingControllerIntegrationTest {
 				.andExpect(jsonPath("$.ledgerAccountId").value(ledgerAccountId.toString()))
 				.andExpect(jsonPath("$.slotCount").value(3))
 				.andExpect(jsonPath("$.selectionStrategy").value("HASH"))
+				.andExpect(jsonPath("$.runtimeSelectionStrategyApplied").value("HASH"))
+				.andExpect(jsonPath("$.runtimeStrategySemantics").value("NATIVE_HASH"))
+				.andExpect(jsonPath("$.fallbackActive").value(false))
+				.andExpect(jsonPath("$.fallbackReason").value(nullValue()))
 				.andExpect(jsonPath("$.isActive").value(true))
 				.andExpect(jsonPath("$.totalPostedBalanceMinor").value(3_500))
 				.andExpect(jsonPath("$.totalAvailableBalanceMinor").value(3_200))
@@ -413,6 +418,22 @@ class ReportingControllerIntegrationTest {
 				.andExpect(jsonPath("$.slots[0].slotNo").value(0))
 				.andExpect(jsonPath("$.slots[1].slotNo").value(1))
 				.andExpect(jsonPath("$.slots[2].slotNo").value(2));
+	}
+
+	@Test
+	void hotAccountSlots_roundRobinConfigured_returnsHashFallbackSemantics() throws Exception {
+		UUID ledgerAccountId = createLedgerAccountForReportingHot();
+		insertHotAccountProfile(ledgerAccountId, 2, "ROUND_ROBIN", true);
+		insertHotAccountSlot(ledgerAccountId, 0, 100L, 80L);
+		insertHotAccountSlot(ledgerAccountId, 1, 200L, 190L);
+
+		mockMvc.perform(get("/api/reporting/hot-accounts/{ledgerAccountId}/slots", ledgerAccountId))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.selectionStrategy").value("ROUND_ROBIN"))
+				.andExpect(jsonPath("$.runtimeSelectionStrategyApplied").value("HASH"))
+				.andExpect(jsonPath("$.runtimeStrategySemantics").value("HASH_FALLBACK"))
+				.andExpect(jsonPath("$.fallbackActive").value(true))
+				.andExpect(jsonPath("$.fallbackReason").value("CONFIGURED_STRATEGY_NOT_RUNTIME_IMPLEMENTED"));
 	}
 
 	@Test
