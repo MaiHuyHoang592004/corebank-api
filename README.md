@@ -33,7 +33,7 @@ References:
 - Reliability layers: outbox pattern, saga/read-model baseline, targeted hardening on transient failures.
 
 ## How To Demo In 10 Minutes
-- Live browser demo: run app and open [`/dashboard/`](http://localhost:8080/dashboard/)
+- Live browser demo: run app and open [`/dashboard/`](http://localhost:9090/dashboard/)
 - Demo credentials:
   - `demo_user / demo_user`
   - `demo_ops / demo_ops`
@@ -45,8 +45,9 @@ References:
 Run:
 
 ```powershell
+docker compose up -d postgres redis
 mvn spring-boot:run
-# then open http://localhost:8080/dashboard/
+# then open http://localhost:9090/dashboard/
 ```
 
 ```powershell
@@ -71,7 +72,7 @@ flowchart LR
 ```
 
 ## Intentional Stop Line
-This repo intentionally stops after Phase 5.18 hardening.
+This repo intentionally stops after Phase 6.0 showcase hardening.
 
 Reason:
 - The project already demonstrates realistic fintech backend signals for interview evaluation.
