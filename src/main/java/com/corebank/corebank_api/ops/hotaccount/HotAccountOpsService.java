@@ -23,6 +23,11 @@ import org.springframework.transaction.annotation.Transactional;
 public class HotAccountOpsService {
 
 	private static final Set<String> ALLOWED_STRATEGIES = Set.of("HASH", "ROUND_ROBIN", "RANDOM");
+	private static final String RUNTIME_SELECTION_STRATEGY_APPLIED = "HASH";
+	private static final String RUNTIME_STRATEGY_SEMANTICS_NATIVE_HASH = "NATIVE_HASH";
+	private static final String RUNTIME_STRATEGY_SEMANTICS_HASH_FALLBACK = "HASH_FALLBACK";
+	private static final String FALLBACK_REASON_CONFIGURED_STRATEGY_NOT_RUNTIME_IMPLEMENTED =
+			"CONFIGURED_STRATEGY_NOT_RUNTIME_IMPLEMENTED";
 
 	private final JdbcTemplate jdbcTemplate;
 	private final AuditService auditService;
@@ -156,6 +161,7 @@ public class HotAccountOpsService {
 		}
 
 		HotAccountProfileRow profile = rows.get(0);
+		RuntimeStrategySemantics runtimeSemantics = resolveRuntimeSemantics(profile.selectionStrategy());
 		return new HotAccountProfileView(
 				profile.ledgerAccountId(),
 				profile.slotCount(),
@@ -164,7 +170,11 @@ public class HotAccountOpsService {
 				totalPosted,
 				totalAvailable,
 				slots,
-				"Hot-account slot totals are runtime-updated when profile is active. customer_accounts semantics remain authoritative.");
+				"Hot-account slot totals are runtime-updated when profile is active. customer_accounts semantics remain authoritative.",
+				runtimeSemantics.runtimeSelectionStrategyApplied(),
+				runtimeSemantics.runtimeStrategySemantics(),
+				runtimeSemantics.fallbackActive(),
+				runtimeSemantics.fallbackReason());
 	}
 
 	private void ensureLedgerAccountExists(UUID ledgerAccountId) {
@@ -206,11 +216,36 @@ public class HotAccountOpsService {
 		return normalized;
 	}
 
+	private RuntimeStrategySemantics resolveRuntimeSemantics(String selectionStrategy) {
+		String normalized = selectionStrategy == null
+				? "HASH"
+				: selectionStrategy.trim().toUpperCase(Locale.ROOT);
+		if (!ALLOWED_STRATEGIES.contains(normalized)) {
+			normalized = "HASH";
+		}
+		if ("HASH".equals(normalized)) {
+			return new RuntimeStrategySemantics(
+					RUNTIME_SELECTION_STRATEGY_APPLIED,
+					RUNTIME_STRATEGY_SEMANTICS_NATIVE_HASH,
+					false,
+					null);
+		}
+		return new RuntimeStrategySemantics(
+				RUNTIME_SELECTION_STRATEGY_APPLIED,
+				RUNTIME_STRATEGY_SEMANTICS_HASH_FALLBACK,
+				true,
+				FALLBACK_REASON_CONFIGURED_STRATEGY_NOT_RUNTIME_IMPLEMENTED);
+	}
+
 	private void appendAudit(HotAccountProfileView profile, String actor) {
 		Map<String, Object> after = new LinkedHashMap<>();
 		after.put("ledgerAccountId", profile.ledgerAccountId());
 		after.put("slotCount", profile.slotCount());
 		after.put("selectionStrategy", profile.selectionStrategy());
+		after.put("runtimeSelectionStrategyApplied", profile.runtimeSelectionStrategyApplied());
+		after.put("runtimeStrategySemantics", profile.runtimeStrategySemantics());
+		after.put("fallbackActive", profile.fallbackActive());
+		after.put("fallbackReason", profile.fallbackReason());
 		after.put("isActive", profile.isActive());
 		after.put("totalPostedBalanceMinor", profile.totalPostedBalanceMinor());
 		after.put("totalAvailableBalanceMinor", profile.totalAvailableBalanceMinor());
@@ -261,7 +296,11 @@ public class HotAccountOpsService {
 			long totalPostedBalanceMinor,
 			long totalAvailableBalanceMinor,
 			List<HotAccountSlotView> slots,
-			String note) {
+			String note,
+			String runtimeSelectionStrategyApplied,
+			String runtimeStrategySemantics,
+			boolean fallbackActive,
+			String fallbackReason) {
 	}
 
 	public record HotAccountSlotView(
@@ -276,5 +315,12 @@ public class HotAccountOpsService {
 			int slotCount,
 			String selectionStrategy,
 			boolean isActive) {
+	}
+
+	private record RuntimeStrategySemantics(
+			String runtimeSelectionStrategyApplied,
+			String runtimeStrategySemantics,
+			boolean fallbackActive,
+			String fallbackReason) {
 	}
 }
