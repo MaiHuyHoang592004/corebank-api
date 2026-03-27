@@ -1,106 +1,101 @@
 # CoreBank
 
-CoreBank is a production-like fintech/backend portfolio project built as a modular monolith.
+## What This Is
+CoreBank is a production-like fintech backend portfolio project built as a modular monolith.
 
-The goal is not to clone a full digital bank. The goal is to show that the backend handles money with the right priorities:
-- PostgreSQL is the financial source of truth
-- double-entry and balance semantics are explicit
-- idempotency, outbox, audit, approvals, and reconciliation are built into the design
-- Redis and Kafka are useful, but never treated as money truth
+It is intentionally focused on one goal: prove money correctness and operational control in a realistic backend, without pretending to be a full digital bank platform.
 
-## What This Project Demonstrates
-- money-moving backend design for transfer, payment, deposit, and lending flows
-- strong financial invariants: posted vs available balance, holds, capture, void, reversal-oriented thinking
-- production-style safety controls: idempotency, audit trail, outbox, runtime mode guards, approvals, reconciliation
-- realistic hardening choices: transient retry, deterministic lock ordering, hot-account baseline, partition readiness, encrypted sensitive data
-- clear source-of-truth boundaries between PostgreSQL, Kafka, Redis, and read models
+## Production-Like Signals
+- Explicit posted vs available balance semantics across payment, transfer, deposit, and lending flows.
+- PostgreSQL-led correctness model for ledger/account/idempotency/approval state.
+- Idempotency, audit trail, outbox, approvals, runtime-mode guards, and reconciliation included as first-class controls.
+- Bounded transient retry and deterministic lock-order hardening on contention-prone money paths.
+- Dead-letter handling and ops/reporting endpoints for operational recovery workflows.
+- Redis used selectively for performance/coordination, not as financial truth.
 
-## Architecture At A Glance
-```mermaid
-flowchart LR
-    Client[Client / Admin / Operator] --> API[Spring Boot Modular Monolith]
-    API --> PG[(PostgreSQL)]
-    API --> Kafka[(Kafka)]
-    API --> Redis[(Redis)]
-    PG --> Ledger[Ledger / Accounts / Holds / Contracts / Audit / Idempotency]
-    Kafka --> Projector[Read Model Projector / Notifications / Async Integration]
-    Redis --> Helpers[Rate Limit / Conservative Replay Cache / Short-term Coordination]
+## Source-of-Truth Decisions
+- PostgreSQL is authoritative for money state, idempotency truth, and approval truth.
+- Kafka is async transport/projection plumbing, not the source of truth.
+- Redis is non-authoritative acceleration (rate limit + conservative success replay cache).
+- Read models are query convenience only; they never authorize money movement.
+
+References:
+- [14-source-of-truth-map.md](14-source-of-truth-map.md)
+- [19-runtime-failure-modes.md](19-runtime-failure-modes.md)
+- [20-acceptance-criteria.md](20-acceptance-criteria.md)
+
+## Core Capabilities
+- Payments: hold, capture, void with idempotent behavior.
+- Transfers: concurrency-safe and idempotent internal transfer flow.
+- Deposits: open, accrue, maturity lifecycle.
+- Lending: disburse, repay, overdue, default transitions.
+- Ops controls: approvals, runtime mode guards, reconciliation, outbox dead-letter operations.
+- Reliability layers: outbox pattern, saga/read-model baseline, targeted hardening on transient failures.
+
+## How To Demo In 10 Minutes
+- Live browser demo: run app and open [`/dashboard/`](http://localhost:8080/dashboard/)
+- Demo credentials:
+  - `demo_user / demo_user`
+  - `demo_ops / demo_ops`
+  - `demo_admin / demo_admin`
+- Use the fixed walkthrough: [28-demo-script.md](28-demo-script.md)
+- Use interview talking structure: [29-interview-prep.md](29-interview-prep.md)
+- Regenerate evidence pack: [30-showcase-runner.md](30-showcase-runner.md)
+
+Run:
+
+```powershell
+mvn spring-boot:run
+# then open http://localhost:8080/dashboard/
 ```
 
-## Core Source-Of-Truth Decisions
-- PostgreSQL holds financial truth, ledger truth, approval truth, and idempotency truth.
-- Kafka is transport for async integration and projection, not the source of truth.
-- Redis is acceleration only. In this repo it is used for rate limiting and conservative success replay caching.
-- Read models are query truth only. They are not used to authorize money movement.
+```powershell
+.\30-showcase-runner.ps1
+```
 
-See:
-- [14-source-of-truth-map.md](D:/corebank-api/14-source-of-truth-map.md)
-- [19-runtime-failure-modes.md](D:/corebank-api/19-runtime-failure-modes.md)
-- [20-acceptance-criteria.md](D:/corebank-api/20-acceptance-criteria.md)
+## Quick Credibility Evidence
+- [28-demo-script.md](28-demo-script.md)
+- [29-interview-prep.md](29-interview-prep.md)
+- [30-showcase-runner.md](30-showcase-runner.md)
+- `showcase-output/latest-showcase-report.md`
 
-## Current Capability Snapshot
-Implemented in the repo today:
-- internal transfer flow with idempotency and concurrency safety
-- payment hold, capture, and void semantics
-- term deposit open, accrual, and maturity flows
-- lending disbursement, repayment, overdue, and default transitions
-- approval and operator-control foundation
-- outbox pattern, dead-letter requeue ops, read-model projection, and saga baseline
-- reconciliation runtime baseline and ops observability baseline
-- Redis-backed rate limiting and conservative success replay cache while keeping PostgreSQL authoritative
-
-## Four Demo Scenarios
-1. Payment hold/capture/void
-   Shows posted vs available semantics, hold lifecycle, and idempotent replay safety.
-2. Transfer with idempotency and concurrency safety
-   Shows deterministic money-write handling under duplicate or concurrent requests.
-3. Deposit lifecycle
-   Shows product-version-bound contract flow, accrual, maturity, and transient retry hardening.
-4. Lending plus overdue/default and outbox recovery narrative
-   Shows loan write path, lock-ordering hardening, operator controls, and async reliability story.
-
-Use:
-- [28-demo-script.md](D:/corebank-api/28-demo-script.md)
-- [16-sequence-diagrams.md](D:/corebank-api/16-sequence-diagrams.md)
-
-## Why It Looks Production-Like
-- The design is finance-first, not CRUD-first.
-- Money correctness is protected by data ownership rules, not by cache optimism.
-- Runtime hardening was added in small slices with tests and evidence in `PROGRESS.log`.
-- Infra choices support the domain instead of replacing the domain.
-- The project stops before low-ROI polish turns into interview noise.
+## Architecture Snapshot
+```mermaid
+flowchart LR
+    Client[Client / Operator] --> API[Spring Boot Modular Monolith]
+    API --> PG[(PostgreSQL Truth Layer)]
+    API --> Kafka[(Kafka Async Bus)]
+    API --> Redis[(Redis Acceleration)]
+    PG --> Money[Accounts / Ledger / Idempotency / Approvals / Audit]
+    Kafka --> Proj[Projectors / Notifications / Read Models]
+```
 
 ## Intentional Stop Line
-This repo intentionally stops after Phase 5.18.
+This repo intentionally stops after Phase 5.18 hardening.
 
-That is the right portfolio boundary because the project already proves:
-- I can model real money flows
-- I can add production-style controls without making Redis or projections authoritative
-- I can explain tradeoffs clearly
+Reason:
+- The project already demonstrates realistic fintech backend signals for interview evaluation.
+- Additional infra-heavy slices from this point have lower explanation ROI than value gained.
+- The narrative is now clear and defensible: PostgreSQL truth first, Redis/Kafka supportive only.
 
-What I intentionally did not keep expanding:
-- extra Redis use cases with low interview ROI
-- more ops UX polish that adds little new insight
-- infrastructure work that is harder to explain than it is valuable
+## Doc Map
+1. [01-project-overview.md](01-project-overview.md)
+2. [04-system-architecture.md](04-system-architecture.md)
+3. [07-financial-invariants.md](07-financial-invariants.md)
+4. [14-source-of-truth-map.md](14-source-of-truth-map.md)
+5. [16-sequence-diagrams.md](16-sequence-diagrams.md)
+6. [18-testing-strategy.md](18-testing-strategy.md)
+7. [19-runtime-failure-modes.md](19-runtime-failure-modes.md)
+8. [20-acceptance-criteria.md](20-acceptance-criteria.md)
+9. [28-demo-script.md](28-demo-script.md)
+10. [29-interview-prep.md](29-interview-prep.md)
 
-## Recommended Reading Order
-1. [01-project-overview.md](D:/corebank-api/01-project-overview.md)
-2. [04-system-architecture.md](D:/corebank-api/04-system-architecture.md)
-3. [07-financial-invariants.md](D:/corebank-api/07-financial-invariants.md)
-4. [14-source-of-truth-map.md](D:/corebank-api/14-source-of-truth-map.md)
-5. [16-sequence-diagrams.md](D:/corebank-api/16-sequence-diagrams.md)
-6. [18-testing-strategy.md](D:/corebank-api/18-testing-strategy.md)
-7. [19-runtime-failure-modes.md](D:/corebank-api/19-runtime-failure-modes.md)
-8. [20-acceptance-criteria.md](D:/corebank-api/20-acceptance-criteria.md)
-9. [28-demo-script.md](D:/corebank-api/28-demo-script.md)
-10. [29-interview-prep.md](D:/corebank-api/29-interview-prep.md)
-
-## Internal Repo-Operating Docs
-The AI/Cline operating docs are still in the repo, but they are secondary to the interview narrative:
-- [AGENTS.md](D:/corebank-api/AGENTS.md)
-- [21-cline-operating-model.md](D:/corebank-api/21-cline-operating-model.md)
-- [22-cline-policy-kit.md](D:/corebank-api/22-cline-policy-kit.md)
-- [23-cline-workflows.md](D:/corebank-api/23-cline-workflows.md)
-- [24-cline-prompts-and-task-templates.md](D:/corebank-api/24-cline-prompts-and-task-templates.md)
-- [25-cline-model-strategy.md](D:/corebank-api/25-cline-model-strategy.md)
-- [26-cline-troubleshooting.md](D:/corebank-api/26-cline-troubleshooting.md)
+## Secondary Internal Docs
+Internal AI/Cline operating docs are kept for workspace operations and are secondary to the interview narrative:
+- [AGENTS.md](AGENTS.md)
+- [21-cline-operating-model.md](21-cline-operating-model.md)
+- [22-cline-policy-kit.md](22-cline-policy-kit.md)
+- [23-cline-workflows.md](23-cline-workflows.md)
+- [24-cline-prompts-and-task-templates.md](24-cline-prompts-and-task-templates.md)
+- [25-cline-model-strategy.md](25-cline-model-strategy.md)
+- [26-cline-troubleshooting.md](26-cline-troubleshooting.md)

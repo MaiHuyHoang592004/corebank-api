@@ -1805,3 +1805,81 @@
   - conservative success replay cache reduces repeated idempotency reads
   - PostgreSQL still remains the authoritative truth for money and idempotency correctness
 - From this point, README/demo/interview packaging has higher ROI than additional infra or ops hardening slices.
+
+## Phase 5.19: Reconciliation Ops Test Isolation Triage (2026-03-27)
+
+### Scope
+- Fixed full-suite flaky failure in `ReconciliationOpsIntegrationTest` setup caused by cleanup/FK ordering and append-only trigger constraints.
+- No runtime/API/schema/deploy changes; test-only isolation fix.
+
+### Root Cause
+- Initial cleanup tried deleting `customer_accounts` while prior-suite `ledger_postings` rows still referenced accounts.
+- First fix attempted `DELETE FROM ledger_postings`, but failed because `ledger_postings` is append-only (`forbid_append_only_mutation` trigger blocks DELETE).
+
+### Fix Applied
+- Updated `ReconciliationOpsIntegrationTest#setUp` to use:
+  - `TRUNCATE ... CASCADE` for append-only tables (`ledger_postings`, `ledger_journals`, `hold_events`, `payment_events`, `audit_events`) to avoid trigger-blocked DELETE.
+  - ordered `DELETE` cleanup for mutable dependent tables before deleting `customer_accounts` and `customers`.
+- Kept cleanup scope limited to test setup only.
+
+### Verification Evidence
+- `mvn "-Dtest=ReconciliationOpsIntegrationTest" test` -> PASS
+- `mvn "-Dtest=ReconciliationOpsIntegrationTest,LoanApplicationServiceIntegrationTest,TransferServiceIntegrationTest" test` -> PASS
+- `mvn test` -> PASS (final gate closed)
+
+### Residual Risk
+- `TRUNCATE ... CASCADE` in this test class intentionally resets append-only history in test DB context; acceptable for integration-test isolation, but should remain test-only and not be copied into runtime code paths.
+
+## Verification Session: 2026-03-27 (Phase 6.0 - Core Banking Live Showcase Dashboard)
+
+### Scope
+- Added showcase-only browser dashboard and minimal live web adapters for payment/transfer/lending + demo setup.
+- Kept money business logic in existing services; controllers are thin request/response mappers.
+- No schema changes, no deploy/env config changes, no new hardening phase opened.
+
+### Changes Applied
+- Added additive public showcase endpoints:
+  - `POST /api/payments/authorize-hold`
+  - `POST /api/payments/capture-hold`
+  - `POST /api/payments/void-hold`
+  - `POST /api/transfers/internal`
+  - `POST /api/lending/disburse`
+  - `POST /api/lending/repay`
+  - `POST /api/demo/setup`
+- Reused existing deposit endpoints for dashboard flow:
+  - `POST /api/deposits/open`, `POST /api/deposits/accrue`, `POST /api/deposits/maturity`
+- Added deterministic demo bootstrap (`DemoSetupService`) with fixed IDs, idempotent upsert behavior, curated response payload for UI autofill.
+- Added scoped demo security baseline:
+  - HTTP Basic demo users: `demo_user`, `demo_ops`, `demo_admin`
+  - CSRF relaxation scoped to demo + showcase write endpoints only
+  - no global CSRF disable for `/api/**`
+- Extended rate-limit path wiring to newly added public write endpoints (reuse Phase 5.18 logic).
+- Added static dashboard UI at `/dashboard/` with:
+  - auth panel + quick-fill
+  - setup panel (`Initialize Demo Data`)
+  - tabs: Payment, Transfer, Deposit, Lending (disburse/repay only)
+  - response viewer and evidence links
+- Added read-only doc bridge endpoints for dashboard evidence links:
+  - `/dashboard/docs/{docKey}` allowlist only
+- Updated README/demo/interview docs for dashboard-first showcase narrative.
+
+### Focused Verification Results
+- Contract tests:
+  - `PaymentControllerIntegrationTest`: **3/3 passed**
+  - `TransferControllerIntegrationTest`: **3/3 passed**
+  - `LendingControllerIntegrationTest`: **3/3 passed**
+  - `DemoSetupControllerIntegrationTest`: **5/5 passed**
+- Regression minimum:
+  - `PaymentApplicationServiceIntegrationTest`: **6/6 passed**
+  - `TransferServiceIntegrationTest`: **9/9 passed**
+  - `DepositApplicationServiceIntegrationTest`: **9/9 passed**
+  - `LoanApplicationServiceIntegrationTest`: **17/17 passed**
+  - `OutboxPatternIntegrationTest`: **13/13 passed**
+  - `DepositRateLimitIntegrationTest`: **3/3 passed**
+  - `IdempotencyRedisReplayCacheIntegrationTest`: **3/3 passed**
+
+### Risks / Follow-up
+- Demo auth and CSRF scope are showcase-only; not a production auth pattern.
+- Public showcase write endpoints increase surface area by design for interview demo; invariants remain enforced in service layer.
+- `DepositRateLimitIntegrationTest` showed one transient window-boundary flake in an earlier mixed run; immediate rerun passed with unchanged logic.
+- Stop-line remains after Phase 6.0: no new runtime features unless explicitly approved as showcase-only.
