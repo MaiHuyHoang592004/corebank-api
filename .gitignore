@@ -1,35 +1,31 @@
-HELP.md
+# Workspace/local tooling
+.claude/
+.cursor/
+.clinerules
+.idea/
+
+# Local scratch artifacts
+ERR
+ERR-dashboard-3001.html
 target/
-.mvn/wrapper/maven-wrapper.jar
-!**/src/main/**/target/
-!**/src/test/**/target/
 
-### STS ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
+# Donor project is local-only
+banking-main/
 
-### IntelliJ IDEA ###
-.idea
-*.iws
-*.iml
-*.ipr
+# Backend artifacts
+back end/target/
+back end/.m2/
+back end/.gitnexus
 
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
+# Maven wrapper binary (generated)
+back end/.mvn/wrapper/maven-wrapper.jar
 
-### VS Code ###
-.vscode/
-.gitnexus
-.m2/
+# Frontend artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/playwright-report/
+frontend/test-results/
+
+# IDE/editor artifacts in subfolders
+**/.idea/
+**/.vscode/
