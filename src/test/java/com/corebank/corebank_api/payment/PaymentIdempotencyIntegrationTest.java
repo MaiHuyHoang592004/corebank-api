@@ -295,6 +295,7 @@ class PaymentIdempotencyIntegrationTest {
 						"VND",
 						"MERCHANT_PAYMENT",
 						suffix,
+						null,
 						"tester",
 						UUID.randomUUID(),
 						UUID.randomUUID(),

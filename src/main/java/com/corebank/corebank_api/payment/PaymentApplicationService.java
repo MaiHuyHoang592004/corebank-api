@@ -71,7 +71,8 @@ public class PaymentApplicationService {
 						request.amountMinor(),
 						request.currency(),
 						request.paymentType(),
-						request.description()));
+						request.description(),
+						request.externalOrderRef()));
 
 		return new AuthorizeHoldResponse(
 				authorization.paymentOrderId(),
@@ -82,7 +83,8 @@ public class PaymentApplicationService {
 				authorization.availableBalanceAfterMinor(),
 				authorization.holdAmountMinor(),
 				authorization.currency(),
-				authorization.status());
+				authorization.status(),
+				authorization.externalOrderRef());
 	}
 
 	public CaptureHoldResponse captureHold(CaptureHoldRequest request) {
@@ -135,7 +137,8 @@ public class PaymentApplicationService {
 				capture.remainingAmountMinor(),
 				capture.holdStatus(),
 				capture.paymentStatus(),
-				capture.currency());
+				capture.currency(),
+				capture.externalOrderRef());
 	}
 
 	public VoidHoldResponse voidHold(VoidHoldRequest request) {
@@ -179,8 +182,62 @@ public class PaymentApplicationService {
 				voidResult.availableBalanceBeforeMinor(),
 				voidResult.availableBalanceAfterMinor(),
 				voidResult.currency(),
-				voidResult.status());
+				voidResult.status(),
+				voidResult.externalOrderRef());
 	}
+
+	public RefundResponse refund(RefundRequest request) {
+		return moneyCommandTemplate.execute(
+				"refundPayment",
+				request.idempotencyKey(),
+				request,
+				RefundResponse.class,
+				IDEMPOTENCY_TTL,
+				paymentRetryPolicy,
+				() -> executeRefundBusiness(request),
+				(response, responseJson) -> {
+					auditService.appendEvent(new AuditService.AuditCommand(
+							request.actor(),
+							"PAYMENT_REFUND_ISSUED",
+							"PAYMENT_ORDER",
+							response.paymentOrderId().toString(),
+							request.correlationId(),
+							request.requestId(),
+							request.sessionId(),
+							request.traceId(),
+							null,
+							responseJson));
+
+					outboxService.appendMessage(
+							"PAYMENT_ORDER",
+							response.paymentOrderId().toString(),
+							"PAYMENT_REFUNDED",
+							response,
+							OutboxMetadata.of(request.correlationId(), request.requestId(), request.actor()));
+				});
+	}
+
+	private RefundResponse executeRefundBusiness(RefundRequest request) {
+		HoldService.RefundResult result = holdService.refund(
+				new HoldService.RefundCommand(
+						request.paymentOrderId(),
+						request.amountMinor(),
+						request.actor(),
+						request.correlationId(),
+						request.description()));
+
+		return new RefundResponse(
+				result.paymentOrderId(),
+				result.refundJournalId(),
+				result.refundedAmountMinor(),
+				result.cumulativeRefundedMinor(),
+				result.capturedAmountMinor(),
+				result.paymentStatus(),
+				result.externalOrderRef(),
+				result.currency());
+	}
+
+	// ------------------------------------------------------------------ request/response records
 
 	public record AuthorizeHoldRequest(
 			String idempotencyKey,
@@ -190,6 +247,7 @@ public class PaymentApplicationService {
 			String currency,
 			String paymentType,
 			String description,
+			String externalOrderRef,
 			String actor,
 			UUID correlationId,
 			UUID requestId,
@@ -206,7 +264,8 @@ public class PaymentApplicationService {
 			long availableBalanceAfterMinor,
 			long holdAmountMinor,
 			String currency,
-			String status) {
+			String status,
+			String externalOrderRef) {
 	}
 
 	public record CaptureHoldRequest(
@@ -231,7 +290,8 @@ public class PaymentApplicationService {
 			long remainingAmountMinor,
 			String holdStatus,
 			String paymentStatus,
-			String currency) {
+			String currency,
+			String externalOrderRef) {
 	}
 
 	public record VoidHoldRequest(
@@ -251,6 +311,30 @@ public class PaymentApplicationService {
 			long availableBalanceBeforeMinor,
 			long availableBalanceAfterMinor,
 			String currency,
-			String status) {
+			String status,
+			String externalOrderRef) {
+	}
+
+	public record RefundRequest(
+			String idempotencyKey,
+			UUID paymentOrderId,
+			long amountMinor,
+			String actor,
+			UUID correlationId,
+			UUID requestId,
+			UUID sessionId,
+			String traceId,
+			String description) {
+	}
+
+	public record RefundResponse(
+			UUID paymentOrderId,
+			UUID refundJournalId,
+			long refundedAmountMinor,
+			long cumulativeRefundedMinor,
+			long capturedAmountMinor,
+			String paymentStatus,
+			String externalOrderRef,
+			String currency) {
 	}
 }
