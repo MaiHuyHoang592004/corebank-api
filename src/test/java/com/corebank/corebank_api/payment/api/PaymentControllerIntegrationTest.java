@@ -50,7 +50,8 @@ class PaymentControllerIntegrationTest {
 				79_500_000L,
 				500_000L,
 				"VND",
-				"AUTHORIZED"));
+				"AUTHORIZED",
+				null));
 	}
 
 	@Test
