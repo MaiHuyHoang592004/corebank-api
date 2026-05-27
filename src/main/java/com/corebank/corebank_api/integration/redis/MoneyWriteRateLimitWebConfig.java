@@ -20,6 +20,7 @@ public class MoneyWriteRateLimitWebConfig implements WebMvcConfigurer {
 						"/api/payments/authorize-hold",
 						"/api/payments/capture-hold",
 						"/api/payments/void-hold",
+						"/api/payments/refund",
 						"/api/transfers/internal",
 						"/api/deposits/open",
 						"/api/deposits/accrue",
