@@ -9,6 +9,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -33,7 +34,8 @@ public class HoldService {
 							rs.getString("hold_status"),
 							rs.getString("payment_status"),
 							rs.getString("currency"),
-							rs.getString("payment_type"));
+							rs.getString("payment_type"),
+							rs.getString("external_order_ref"));
 				}
 			};
 
@@ -60,6 +62,15 @@ public class HoldService {
 
 		if (!lockedAccount.getCurrency().equals(command.currency())) {
 			throw new CoreBankException("Account currency does not match hold currency");
+		}
+
+		if (command.externalOrderRef() != null) {
+			if (command.externalOrderRef().length() > 128) {
+				throw new CoreBankException("externalOrderRef exceeds maximum length of 128");
+			}
+			if (!command.externalOrderRef().matches("^[A-Za-z0-9:_\\-]{1,128}$")) {
+				throw new CoreBankException("externalOrderRef contains invalid characters; allowed: A-Z a-z 0-9 : _ -");
+			}
 		}
 
 		long availableBefore = lockedAccount.getAvailableBalanceMinor();
@@ -90,8 +101,9 @@ public class HoldService {
 				    currency,
 				    payment_type,
 				    status,
-				    description
-				) VALUES (?, ?, ?, ?, ?, ?, 'AUTHORIZED', ?)
+				    description,
+				    external_order_ref
+				) VALUES (?, ?, ?, ?, ?, ?, 'AUTHORIZED', ?, ?)
 				""",
 				paymentOrderId,
 				command.payerAccountId(),
@@ -99,7 +111,8 @@ public class HoldService {
 				command.amountMinor(),
 				command.currency(),
 				command.paymentType(),
-				command.description());
+				command.description(),
+				command.externalOrderRef());
 
 		jdbcTemplate.update(
 				"""
@@ -153,7 +166,8 @@ public class HoldService {
 				availableAfter,
 				command.amountMinor(),
 				command.currency(),
-				"AUTHORIZED");
+				"AUTHORIZED",
+				command.externalOrderRef());
 	}
 
 	public CaptureResult captureHold(CaptureHoldCommand command) {
@@ -192,14 +206,14 @@ public class HoldService {
 										"D",
 										command.amountMinor(),
 										hold.currency(),
-										true), // Update posted balance for captures
+										true),
 								new LedgerCommandService.PostingInstruction(
 										command.creditLedgerAccountId(),
 										beneficiaryCustomerAccountId,
 										"C",
 										command.amountMinor(),
 										hold.currency(),
-										true)))); // Update posted balance for captures
+										true))));
 
 		long remainingAfter = hold.remainingMinor() - command.amountMinor();
 		boolean fullyCaptured = remainingAfter == 0;
@@ -268,7 +282,8 @@ public class HoldService {
 				remainingAfter,
 				nextHoldStatus,
 				nextPaymentStatus,
-				hold.currency());
+				hold.currency(),
+				hold.externalOrderRef());
 	}
 
 	public VoidResult voidHold(VoidHoldCommand command) {
@@ -349,7 +364,126 @@ public class HoldService {
 				lockedAccount.getAvailableBalanceMinor(),
 				availableAfter,
 				hold.currency(),
-				"VOIDED");
+				"VOIDED",
+				hold.externalOrderRef());
+	}
+
+	public RefundResult refund(RefundCommand command) {
+		if (command.amountMinor() <= 0) {
+			throw new CoreBankException("refund amount must be positive");
+		}
+
+		// Lock payment_order — serializes concurrent refunds on same order
+		PaymentOrderSnapshot order = lockPaymentOrder(command.paymentOrderId())
+				.orElseThrow(() -> new CoreBankException("payment_order not found: " + command.paymentOrderId()));
+
+		if (!List.of("CAPTURED", "PARTIALLY_CAPTURED", "PARTIALLY_REFUNDED").contains(order.status())) {
+			throw new CoreBankException("payment_order not in refundable state: " + order.status());
+		}
+
+		// Sum all captured events — robust across partial + multi-capture sequences
+		Long capturedAmount = jdbcTemplate.queryForObject(
+				"""
+				SELECT COALESCE(SUM(amount_minor), 0)
+				FROM payment_events
+				WHERE payment_order_id = ?
+				  AND event_type IN ('CAPTURED', 'PARTIALLY_CAPTURED')
+				""",
+				Long.class,
+				command.paymentOrderId());
+		if (capturedAmount == null) capturedAmount = 0L;
+
+		long refundable = capturedAmount - order.refundedAmountMinor();
+		if (command.amountMinor() > refundable) {
+			throw new CoreBankException("refund amount exceeds refundable balance");
+		}
+
+		// Find the first capture journal — used as reversal_of_journal_id (metadata only)
+		UUID captureJournalId = findFirstCaptureJournalId(command.paymentOrderId());
+
+		// Load capture postings to derive ledger account IDs and customer account IDs
+		List<CapturePosting> capturePostings = loadCapturePostings(captureJournalId);
+		if (capturePostings.isEmpty()) {
+			throw new CoreBankException("No capture postings found for payment order: " + command.paymentOrderId());
+		}
+
+		// Build reversal postings (flip D↔C, use refund amount)
+		List<LedgerCommandService.PostingInstruction> refundPostings = new ArrayList<>();
+		for (CapturePosting cp : capturePostings) {
+			String reversedSide = "D".equals(cp.entrySide()) ? "C" : "D";
+			refundPostings.add(new LedgerCommandService.PostingInstruction(
+					cp.ledgerAccountId(),
+					cp.customerAccountId(),
+					reversedSide,
+					command.amountMinor(),
+					order.currency(),
+					true));
+		}
+
+		// Post reversing journal — this also updates posted_balance_minor for all parties
+		UUID refundJournalId = ledgerCommandService.postJournal(
+				new LedgerCommandService.PostJournalCommand(
+						"PAYMENT_REFUND",
+						"PAYMENT_ORDER",
+						command.paymentOrderId(),
+						order.currency(),
+						captureJournalId,
+						command.actor(),
+						command.correlationId(),
+						refundPostings));
+
+		// Restore payer's available_balance (reduced at authorize time, not restored at capture)
+		jdbcTemplate.update(
+				"""
+				UPDATE customer_accounts
+				SET available_balance_minor = available_balance_minor + ?,
+				    version = version + 1,
+				    updated_at = now()
+				WHERE customer_account_id = ?
+				""",
+				command.amountMinor(),
+				order.payerAccountId());
+
+		long newRefundedAmount = order.refundedAmountMinor() + command.amountMinor();
+		boolean fullyRefunded = newRefundedAmount >= capturedAmount;
+		String nextStatus = fullyRefunded ? "REFUNDED" : "PARTIALLY_REFUNDED";
+
+		jdbcTemplate.update(
+				"""
+				UPDATE payment_orders
+				SET refunded_amount_minor = ?,
+				    status = ?,
+				    updated_at = now()
+				WHERE payment_order_id = ?
+				""",
+				newRefundedAmount,
+				nextStatus,
+				command.paymentOrderId());
+
+		String metadataJson = buildRefundMetadataJson(command.actor(), refundJournalId);
+		jdbcTemplate.update(
+				"""
+				INSERT INTO payment_events (
+				    payment_order_id,
+				    event_type,
+				    amount_minor,
+				    metadata_json
+				) VALUES (?, ?, ?, ?::jsonb)
+				""",
+				command.paymentOrderId(),
+				nextStatus,
+				command.amountMinor(),
+				metadataJson);
+
+		return new RefundResult(
+				command.paymentOrderId(),
+				refundJournalId,
+				command.amountMinor(),
+				newRefundedAmount,
+				capturedAmount,
+				nextStatus,
+				order.externalOrderRef(),
+				order.currency());
 	}
 
 	private Optional<HoldSnapshot> lockHold(UUID holdId) {
@@ -364,7 +498,8 @@ public class HoldService {
 				       fh.status AS hold_status,
 				       po.status AS payment_status,
 				       po.currency,
-				       po.payment_type
+				       po.payment_type,
+				       po.external_order_ref
 				FROM funds_holds fh
 				JOIN payment_orders po ON po.payment_order_id = fh.payment_order_id
 				WHERE fh.hold_id = ?
@@ -376,13 +511,75 @@ public class HoldService {
 			.findFirst();
 	}
 
+	private Optional<PaymentOrderSnapshot> lockPaymentOrder(UUID paymentOrderId) {
+		return jdbcTemplate.query(
+				"""
+				SELECT payment_order_id, payer_account_id, payee_account_id,
+				       amount_minor, currency, payment_type, status,
+				       refunded_amount_minor, external_order_ref
+				FROM payment_orders
+				WHERE payment_order_id = ?
+				FOR UPDATE
+				""",
+				(rs, rowNum) -> new PaymentOrderSnapshot(
+						rs.getObject("payment_order_id", UUID.class),
+						rs.getObject("payer_account_id", UUID.class),
+						rs.getObject("payee_account_id", UUID.class),
+						rs.getLong("amount_minor"),
+						rs.getString("currency"),
+						rs.getString("payment_type"),
+						rs.getString("status"),
+						rs.getLong("refunded_amount_minor"),
+						rs.getString("external_order_ref")),
+				paymentOrderId)
+			.stream()
+			.findFirst();
+	}
+
+	private UUID findFirstCaptureJournalId(UUID paymentOrderId) {
+		List<UUID> ids = jdbcTemplate.query(
+				"""
+				SELECT journal_id
+				FROM ledger_journals
+				WHERE reference_type = 'PAYMENT_ORDER'
+				  AND reference_id = ?
+				  AND journal_type = 'PAYMENT_CAPTURE'
+				ORDER BY created_at ASC
+				LIMIT 1
+				""",
+				(rs, rowNum) -> rs.getObject("journal_id", UUID.class),
+				paymentOrderId);
+		if (ids.isEmpty()) {
+			throw new CoreBankException("No capture journal found for payment order: " + paymentOrderId);
+		}
+		return ids.get(0);
+	}
+
+	private List<CapturePosting> loadCapturePostings(UUID captureJournalId) {
+		return jdbcTemplate.query(
+				"SELECT ledger_account_id, customer_account_id, entry_side FROM ledger_postings WHERE journal_id = ?",
+				(rs, rowNum) -> new CapturePosting(
+						rs.getObject("ledger_account_id", UUID.class),
+						rs.getObject("customer_account_id", UUID.class),
+						rs.getString("entry_side")),
+				captureJournalId);
+	}
+
+	private String buildRefundMetadataJson(String actor, UUID refundJournalId) {
+		String safeActor = actor == null ? "" : actor.replace("\\", "\\\\").replace("\"", "\\\"");
+		return "{\"actor\":\"" + safeActor + "\",\"refundJournalId\":\"" + refundJournalId + "\"}";
+	}
+
+	// ------------------------------------------------------------------ records
+
 	public record AuthorizeHoldCommand(
 			UUID payerAccountId,
 			UUID payeeAccountId,
 			long amountMinor,
 			String currency,
 			String paymentType,
-			String description) {
+			String description,
+			String externalOrderRef) {
 	}
 
 	public record AuthorizationResult(
@@ -394,7 +591,8 @@ public class HoldService {
 			long availableBalanceAfterMinor,
 			long holdAmountMinor,
 			String currency,
-			String status) {
+			String status,
+			String externalOrderRef) {
 	}
 
 	public record CaptureHoldCommand(
@@ -415,7 +613,8 @@ public class HoldService {
 			long remainingAmountMinor,
 			String holdStatus,
 			String paymentStatus,
-			String currency) {
+			String currency,
+			String externalOrderRef) {
 	}
 
 	public record VoidHoldCommand(UUID holdId) {
@@ -428,7 +627,27 @@ public class HoldService {
 			long availableBalanceBeforeMinor,
 			long availableBalanceAfterMinor,
 			String currency,
-			String status) {
+			String status,
+			String externalOrderRef) {
+	}
+
+	public record RefundCommand(
+			UUID paymentOrderId,
+			long amountMinor,
+			String actor,
+			UUID correlationId,
+			String description) {
+	}
+
+	public record RefundResult(
+			UUID paymentOrderId,
+			UUID refundJournalId,
+			long refundedAmountMinor,
+			long cumulativeRefundedMinor,
+			long capturedAmountMinor,
+			String paymentStatus,
+			String externalOrderRef,
+			String currency) {
 	}
 
 	private record HoldSnapshot(
@@ -441,6 +660,25 @@ public class HoldService {
 			String holdStatus,
 			String paymentStatus,
 			String currency,
-			String paymentType) {
+			String paymentType,
+			String externalOrderRef) {
+	}
+
+	private record PaymentOrderSnapshot(
+			UUID paymentOrderId,
+			UUID payerAccountId,
+			UUID payeeAccountId,
+			long amountMinor,
+			String currency,
+			String paymentType,
+			String status,
+			long refundedAmountMinor,
+			String externalOrderRef) {
+	}
+
+	private record CapturePosting(
+			UUID ledgerAccountId,
+			UUID customerAccountId,
+			String entrySide) {
 	}
 }
