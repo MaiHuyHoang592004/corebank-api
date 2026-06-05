@@ -10,7 +10,9 @@
 
 ## Live Demo
 
-**[corebank-api.onrender.com](https://corebank-api.onrender.com)** — open the dashboard and run a guided demo in 3 minutes.
+**[corebank-api-acv7.onrender.com](https://corebank-api-acv7.onrender.com)** — open the dashboard and run a guided demo in 3 minutes.
+
+> Render free-tier services may take 30–90 seconds to wake up on the first request.
 
 *Demo runs on Render free tier. First request may take 30-60 seconds to wake up. PostgreSQL data resets after 90 days (free tier limit). Kafka and Redis are disabled in public showcase — the app runs on PostgreSQL alone.*
 
@@ -24,7 +26,7 @@
 
 ## 3-Minute Walkthrough
 
-1. Open the [live dashboard](https://corebank-api.onrender.com/dashboard/)
+1. Open the [live dashboard](https://corebank-api-acv7.onrender.com/dashboard/index.html)
 2. Login as `demo_admin` / `demo_admin`
 3. Click **Initialize Demo Data** (idempotent — safe to run repeatedly)
 4. Run **Authorize Hold** → funds reserved, double-entry posted
