@@ -1,5 +1,6 @@
 package com.corebank.corebank_api.security;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -11,6 +12,9 @@ import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
 public class DemoSecurityConfig {
+
+	@Value("${corebank.showcase.token-gate-enabled:false}")
+	private boolean tokenGateEnabled;
 
 	@Bean
 	public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -25,8 +29,11 @@ public class DemoSecurityConfig {
 								"/api/deposits/open",
 								"/api/deposits/accrue",
 								"/api/deposits/maturity"))
-				.authorizeHttpRequests(authorize -> authorize
-						.requestMatchers("/dashboard", "/dashboard/**").permitAll()
+				.authorizeHttpRequests(authorize -> {
+					authorize
+						.requestMatchers("/actuator/health").permitAll()
+							.requestMatchers("/", "/index.html").permitAll()
+							.requestMatchers("/dashboard", "/dashboard/**").permitAll()
 						.requestMatchers("/api/demo/**").hasAnyRole("OPS", "ADMIN")
 						.requestMatchers(
 								"/api/payments/**",
@@ -36,8 +43,19 @@ public class DemoSecurityConfig {
 								"/api/deposits/open",
 								"/api/deposits/accrue",
 								"/api/deposits/maturity")
-						.hasAnyRole("USER", "OPS", "ADMIN")
-						.anyRequest().authenticated())
+						.hasAnyRole("USER", "OPS", "ADMIN");
+
+					if (tokenGateEnabled) {
+						authorize
+							.requestMatchers(
+								"/api/ops/maintenance/**",
+								"/api/ops/executions/**",
+								"/api/ops/security/**")
+							.denyAll();
+					}
+
+					authorize.anyRequest().authenticated();
+				})
 				.httpBasic(Customizer.withDefaults())
 				.formLogin(form -> form.disable());
 

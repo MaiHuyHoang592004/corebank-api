@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CoreBank — Fintech Backend Portfolio</title>
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --surface: #131820;
+      --border: #1e2733;
+      --text: #b8c4d4;
+      --heading: #e6edf5;
+      --accent: #5c9cf0;
+      --green: #2ea66b;
+      --amber: #d9a84e;
+      --muted: #697888;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    .container { max-width: 900px; margin: 0 auto; padding: 2rem 1.5rem; }
+    header {
+      text-align: center;
+      padding: 3rem 0 2rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 2rem;
+    }
+    .eyebrow {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+    h1 { font-size: 2.5rem; color: var(--heading); margin: 0.5rem 0; letter-spacing: -0.02em; }
+    h2 { font-size: 1.4rem; color: var(--heading); margin: 2rem 0 0.75rem; }
+    h3 { font-size: 1rem; color: var(--heading); margin: 1rem 0 0.5rem; }
+    .subtitle { font-size: 1.1rem; color: var(--muted); max-width: 600px; margin: 1rem auto; }
+    .cta {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      text-decoration: none;
+      padding: 0.8rem 2rem;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 1rem;
+      margin-top: 1.2rem;
+      transition: background 0.2s;
+    }
+    .cta:hover { background: #4a88e6; }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin: 1.5rem 0;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.2rem;
+    }
+    .card h3 { margin-top: 0; font-size: 0.95rem; display: flex; align-items: center; gap: 0.5rem; }
+    .card p { font-size: 0.85rem; color: var(--muted); margin-top: 0.4rem; }
+    .card .icon { font-size: 1.2rem; }
+    .credentials {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.2rem;
+      margin: 1.5rem 0;
+    }
+    .cred-row {
+      display: flex; align-items: baseline; gap: 0.5rem;
+      font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      padding: 0.3rem 0;
+    }
+    .cred-role { color: var(--amber); min-width: 100px; }
+    .cred-user { color: var(--heading); }
+    .cred-colon { color: var(--muted); }
+    .cred-pass { color: var(--green); }
+    .arch-line {
+      display: flex; align-items: center; gap: 0.6rem;
+      font-family: monospace; font-size: 0.8rem;
+      color: var(--muted);
+      margin: 0.5rem 0;
+    }
+    .arch-node {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.3rem 0.7rem;
+      color: var(--heading);
+    }
+    .arch-node.pg { border-color: var(--accent); color: var(--accent); }
+    .arch-arrow { color: var(--muted); }
+    .step { margin: 0.4rem 0; padding-left: 1.5rem; position: relative; }
+    .step::before {
+      content: attr(data-n);
+      position: absolute; left: 0;
+      font-weight: 700; color: var(--accent); font-size: 0.8rem;
+    }
+    .walkthrough {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.2rem;
+      margin: 1.5rem 0;
+    }
+    .walkthrough ol { padding-left: 1.4rem; font-size: 0.88rem; }
+    .walkthrough li { margin: 0.4rem 0; }
+    code {
+      background: var(--bg); color: var(--heading);
+      padding: 0.15em 0.4em; border-radius: 3px;
+      font-size: 0.85em;
+    }
+    .demo-banner {
+      text-align: center;
+      background: var(--surface);
+      border: 1px solid var(--green);
+      border-radius: 8px;
+      padding: 1.2rem;
+      margin: 1.5rem 0;
+    }
+    .demo-banner .live {
+      display: inline-block;
+      width: 10px; height: 10px;
+      background: var(--green); border-radius: 50%;
+      margin-right: 0.5rem;
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .demo-banner a {
+      color: var(--accent);
+      font-weight: 600;
+      text-decoration: none;
+    }
+    footer {
+      text-align: center; color: var(--muted); font-size: 0.75rem;
+      margin-top: 3rem; padding-top: 1.5rem;
+      border-top: 1px solid var(--border);
+    }
+    @media (max-width: 600px) {
+      h1 { font-size: 1.8rem; }
+      .cards { grid-template-columns: 1fr; }
+      .arch-line { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <p class="eyebrow">Fintech Backend Portfolio</p>
+      <h1>CoreBank API</h1>
+      <p class="subtitle">
+        A production-signal fintech backend demonstrating money correctness,
+        operational control, and PostgreSQL-led architecture — deployable in one command.
+      </p>
+      <a class="cta" href="/dashboard/">Open Live Dashboard</a>
+    </header>
+
+    <div class="demo-banner">
+      <span class="live"></span>
+      <strong>Live Demo</strong> &mdash;
+      <a href="/dashboard/">corebank-api[.]onrender[.]com/dashboard/</a>
+      <br><small style="color:var(--muted);">Deployed on Render free tier &mdash; may take 30-60 seconds to wake up.</small>
+    </div>
+
+    <h2>What This Proves</h2>
+    <div class="cards">
+      <div class="card">
+        <h3><span class="icon">&#128179;</span> Payment Holds</h3>
+        <p>Authorize, capture, or void funds — full double-entry ledger journaling. Same pattern as Stripe/Adyen payment lifecycle.</p>
+      </div>
+      <div class="card">
+        <h3><span class="icon">&#128260;</span> Idempotent Transfers</h3>
+        <p>Send the same transfer twice — get the same result. Exactly-once guarantee via PostgreSQL idempotency keys, not application memory.</p>
+      </div>
+      <div class="card">
+        <h3><span class="icon">&#128736;</span> Operational Controls</h3>
+        <p>Approvals, reconciliation, outbox dead-letter recovery, partition maintenance &mdash; all with role-based access and audit trail.</p>
+      </div>
+      <div class="card">
+        <h3><span class="icon">&#128218;</span> PostgreSQL Truth</h3>
+        <p>Accounts, ledger, idempotency, approvals, and audit live in PostgreSQL. Redis is non-authoritative acceleration. Kafka is async transport.</p>
+      </div>
+    </div>
+
+    <h2>Architecture Decision</h2>
+    <div class="arch-line">
+      <span class="arch-node pg">PostgreSQL</span>
+      <span class="arch-arrow">&#8592;</span>
+      <span>Ledger &middot; Accounts &middot; Idempotency &middot; Audit &middot; Approvals</span>
+    </div>
+    <div class="arch-line">
+      <span class="arch-node" style="border-color:var(--amber);color:var(--amber);">Redis</span>
+      <span class="arch-arrow">&#8592;</span>
+      <span>Rate limiting &middot; Idempotency replay cache (non-authoritative)</span>
+    </div>
+    <div class="arch-line">
+      <span class="arch-node">Kafka</span>
+      <span class="arch-arrow">&#8592;</span>
+      <span>Event projection &middot; Read models (optional in showcase)</span>
+    </div>
+
+    <h2>Demo Access</h2>
+    <div class="credentials">
+      <div class="cred-row">
+        <span class="cred-role">Admin</span>
+        <span class="cred-user">demo_admin</span>
+        <span class="cred-colon">:</span>
+        <span class="cred-pass">demo_admin</span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-role">Operator</span>
+        <span class="cred-user">demo_ops</span>
+        <span class="cred-colon">:</span>
+        <span class="cred-pass">demo_ops</span>
+      </div>
+      <div class="cred-row">
+        <span class="cred-role">User</span>
+        <span class="cred-user">demo_user</span>
+        <span class="cred-colon">:</span>
+        <span class="cred-pass">demo_user</span>
+      </div>
+    </div>
+
+    <div class="walkthrough">
+      <h3 style="margin-top:0;">3-Minute Walkthrough</h3>
+      <ol>
+        <li>Open the <a href="/dashboard/" style="color:var(--accent);">Dashboard</a></li>
+        <li>Login as <code>demo_admin</code> / <code>demo_admin</code></li>
+        <li>Click <strong>Initialize Demo Data</strong> (idempotent — safe to run repeatedly)</li>
+        <li>Run <strong>Authorize Hold</strong> to reserve funds</li>
+        <li>Run <strong>Capture Hold</strong> to settle the payment</li>
+        <li>Run <strong>Internal Transfer</strong> with an <code>Idempotency-Key</code> header</li>
+        <li>Replay the same transfer with the same key — returns the original result (exactly-once)</li>
+      </ol>
+    </div>
+
+    <h2>Technical Evidence</h2>
+    <p style="font-size:0.88rem;color:var(--muted);">
+      This project includes a full suite of production-signal patterns:
+      outbox pattern, CQRS read models, saga state machine, system mode guards,
+      rate limiting, hot-account slotting, external reconciliation,
+      and idempotency with Redis acceleration layer.
+      See the <a href="https://github.com/<username>/corebank-api" style="color:var(--accent);">README</a>
+      for architecture diagrams, sequence flows, financial invariants, and interview prep.
+    </p>
+
+    <footer>
+      CoreBank API &middot; Spring Boot 4 &middot; PostgreSQL 16 &middot; Java 17<br>
+      Built as a fintech backend portfolio project
+    </footer>
+  </div>
+</body>
+</html>

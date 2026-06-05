@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.apache.kafka.common.errors.RetriableException;
 import org.apache.kafka.common.errors.SerializationException;
 import org.springframework.kafka.core.KafkaTemplate;
@@ -31,6 +32,7 @@ import java.util.Locale;
  */
 @Service
 @Slf4j
+@ConditionalOnProperty(name = "corebank.kafka.enabled", havingValue = "true", matchIfMissing = true)
 public class OutboxEventPublisher {
     
     private final OutboxEventRepository outboxEventRepository;

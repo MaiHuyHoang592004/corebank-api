@@ -1,0 +1,25 @@
+# Git
+.git
+
+# Build output (JAR built inside Docker)
+target/
+
+# Claude Code workspace
+.claude/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Docker Compose
+docker-compose*.yml
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

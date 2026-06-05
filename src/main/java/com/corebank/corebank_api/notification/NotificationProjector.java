@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.support.KafkaHeaders;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Service
 @Slf4j
+@ConditionalOnProperty(name = "corebank.kafka.enabled", havingValue = "true", matchIfMissing = true)
 public class NotificationProjector {
 
 	private static final String SUPPORTED_SCHEMA_VERSION = "v1";
