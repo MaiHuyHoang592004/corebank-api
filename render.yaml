@@ -5,6 +5,7 @@ services:
   - type: web
     name: corebank-api
     runtime: docker
+    plan: free
     repo: https://github.com/MaiHuyHoang592004/corebank-api
     branch: main
     dockerfilePath: ./Dockerfile
@@ -12,10 +13,11 @@ services:
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: showcase
+      - key: COREBANK_KAFKA_ENABLED
+        value: "false"
+      - key: JAVA_OPTS
+        value: "-Xmx384m"
       - key: SPRING_DATASOURCE_URL
-        # Render provides DATABASE_URL in postgres:// format.
-        # The app auto-converts it to jdbc:postgresql:// format at startup.
-        # For manual deploy: set SPRING_DATASOURCE_URL directly in JDBC format.
         fromDatabase:
           name: corebank-postgres
           property: connectionString
@@ -27,12 +29,6 @@ services:
         fromDatabase:
           name: corebank-postgres
           property: password
-      - key: COREBANK_KAFKA_ENABLED
-        value: false
-      - key: COREBANK_SHOWCASE_TOKEN
-        generateValue: true
-      - key: JAVA_OPTS
-        value: "-Xmx384m"
 
 databases:
   - name: corebank-postgres
