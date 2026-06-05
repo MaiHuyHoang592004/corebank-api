@@ -2,6 +2,7 @@ package com.corebank.corebank_api.reporting;
 
 import java.util.List;
 import java.util.Map;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -10,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
  * Replays persisted outbox events into the non-authoritative read model.
  */
 @Service
+@ConditionalOnProperty(name = "corebank.kafka.enabled", havingValue = "true", matchIfMissing = true)
 public class ReadModelReplayService {
 
 	private final JdbcTemplate jdbcTemplate;

@@ -1,0 +1,40 @@
+# Render Blueprint — CoreBank API
+# Deploy via: https://dashboard.render.com/blueprints
+
+services:
+  - type: web
+    name: corebank-api
+    runtime: docker
+    repo: https://github.com/MaiHuyHoang592004/corebank-api
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: showcase
+      - key: SPRING_DATASOURCE_URL
+        # Render provides DATABASE_URL in postgres:// format.
+        # The app auto-converts it to jdbc:postgresql:// format at startup.
+        # For manual deploy: set SPRING_DATASOURCE_URL directly in JDBC format.
+        fromDatabase:
+          name: corebank-postgres
+          property: connectionString
+      - key: SPRING_DATASOURCE_USERNAME
+        fromDatabase:
+          name: corebank-postgres
+          property: user
+      - key: SPRING_DATASOURCE_PASSWORD
+        fromDatabase:
+          name: corebank-postgres
+          property: password
+      - key: COREBANK_KAFKA_ENABLED
+        value: false
+      - key: COREBANK_SHOWCASE_TOKEN
+        generateValue: true
+      - key: JAVA_OPTS
+        value: "-Xmx384m"
+
+databases:
+  - name: corebank-postgres
+    plan: free
+    postgresMajorVersion: 16

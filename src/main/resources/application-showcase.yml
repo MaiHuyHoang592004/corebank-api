@@ -1,0 +1,30 @@
+# Showcase profile — public demo deployment
+# Activated via: SPRING_PROFILES_ACTIVE=showcase
+
+spring:
+  autoconfigure:
+    # Disable Kafka auto-config in showcase — avoids KafkaAdmin connection attempts
+    exclude:
+      - org.springframework.boot.autoconfigure.kafka.KafkaAutoConfiguration
+  data:
+    redis:
+      timeout: 2000ms
+      connect-timeout: 2000ms
+
+corebank:
+  kafka:
+    # Disable Kafka in showcase — PostgreSQL outbox rows are still written
+    enabled: false
+  showcase:
+    # Enable token-gate for destructive ops (maintenance, executions, secrets)
+    token-gate-enabled: true
+    # Token value that unlocks destructive ops — change for your deployment
+    token: ${COREBANK_SHOWCASE_TOKEN:demo-secure-token-change-me}
+
+management:
+  endpoint:
+    health:
+      show-details: never
+  health:
+    redis:
+      enabled: false
