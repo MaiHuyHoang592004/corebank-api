@@ -3,9 +3,9 @@ spring:
     name: corebank-api
 
   datasource:
-    url: jdbc:postgresql://localhost:5433/corebank
-    username: corebank
-    password: corebank123
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/corebank}
+    username: ${SPRING_DATASOURCE_USERNAME:corebank}
+    password: ${SPRING_DATASOURCE_PASSWORD:corebank123}
     driver-class-name: org.postgresql.Driver
 
   flyway:
@@ -13,7 +13,7 @@ spring:
     locations: classpath:db/migration
 
 server:
-  port: 9090
+  port: ${PORT:${SERVER_PORT:9090}}
 
 management:
   endpoints:
