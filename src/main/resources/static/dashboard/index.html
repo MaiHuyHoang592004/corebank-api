@@ -14,6 +14,13 @@
   <div class="bg-shape bg-shape-b" aria-hidden="true"></div>
 
   <main class="page">
+
+    <!-- PUBLIC DEMO BANNER -->
+    <div class="demo-banner card">
+      <span class="demo-pulse"></span>
+      <span class="demo-banner-text"><strong>Public Demo Mode</strong> — Synthetic data only. <strong>PostgreSQL</strong> is the financial source of truth. Kafka disabled but ledger/audit/idempotency/outbox rows persist in PostgreSQL.</span>
+    </div>
+
     <header class="hero card">
       <p class="eyebrow">Core Banking Live Showcase</p>
       <h1>End-to-End Demo Dashboard</h1>
@@ -27,6 +34,54 @@
         <a href="/dashboard/docs/interview-prep" target="_blank" rel="noopener">Interview Prep</a>
       </div>
     </header>
+
+    <!-- START HERE PANEL -->
+    <section class="start-here card">
+      <h2>Start Here — 3 Minute Demo</h2>
+      <div class="start-steps">
+        <div class="start-step" data-step="login">
+          <span class="step-num">1</span>
+          <span class="step-desc"><strong>Login</strong> — Click <em>Quick Fill demo_admin</em>, then <em>Use Credentials</em></span>
+        </div>
+        <div class="start-step" data-step="setup">
+          <span class="step-num">2</span>
+          <span class="step-desc"><strong>Initialize Demo Data</strong> — Idempotent, safe to run repeatedly</span>
+        </div>
+        <div class="start-step" data-step="authorize">
+          <span class="step-num">3</span>
+          <span class="step-desc"><strong>Authorize Hold</strong> — Reserves funds but does not capture yet (Payment tab)</span>
+        </div>
+        <div class="start-step" data-step="capture">
+          <span class="step-num">4</span>
+          <span class="step-desc"><strong>Capture Hold</strong> — Posts journal and completes the payment</span>
+        </div>
+        <div class="start-step" data-step="transfer">
+          <span class="step-num">5</span>
+          <span class="step-desc"><strong>Run Transfer</strong> — Moves money between accounts (Transfer tab)</span>
+        </div>
+        <div class="start-step" data-step="replay">
+          <span class="step-num">6</span>
+          <span class="step-desc"><strong>Replay Same Key</strong> — Retry with same idempotency key</span>
+        </div>
+        <div class="start-step" data-step="verified">
+          <span class="step-num">7</span>
+          <span class="step-desc"><strong>Verify</strong> — Same journalId returned = no double-post</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- PROGRESS CHECKLIST -->
+    <section class="progress-bar card">
+      <h2>Demo Progress</h2>
+      <div class="checklist">
+        <span class="check-item" data-check="login">Login</span>
+        <span class="check-item" data-check="setup">Demo Data</span>
+        <span class="check-item" data-check="authorize">Hold Authorized</span>
+        <span class="check-item" data-check="capture">Hold Captured</span>
+        <span class="check-item" data-check="transfer">Transfer Done</span>
+        <span class="check-item" data-check="replay">Replay Verified</span>
+      </div>
+    </section>
 
     <section class="top-grid">
       <article class="card auth-card">
@@ -57,6 +112,13 @@
       </article>
     </section>
 
+    <!-- RESULT SUMMARY CARD -->
+    <section id="result-summary" class="card result-summary" style="display:none">
+      <h2 id="result-summary-title">Last Result</h2>
+      <p id="result-summary-body"></p>
+      <p id="result-summary-detail" class="muted"></p>
+    </section>
+
     <section class="tabs card">
       <div class="tab-header" role="tablist">
         <button type="button" role="tab" class="tab-btn active" data-tab="payment">Payment</button>
@@ -67,19 +129,39 @@
 
       <div class="tab-body active" data-panel="payment">
         <p class="muted">Invariant: hold changes available balance, capture posts accounting, void restores remaining hold.</p>
+
+        <!-- Business explanation cards for Payment -->
+        <div class="biz-cards">
+          <div class="biz-card">
+            <strong>Authorize Hold</strong>
+            <span>Reserves money (reduces available balance) — does not capture yet. <em>Expected: status AUTHORIZED.</em></span>
+          </div>
+          <div class="biz-card">
+            <strong>Capture Hold</strong>
+            <span>Posts double-entry journal and completes capture. <em>Expected: status FULLY_CAPTURED.</em></span>
+          </div>
+          <div class="biz-card">
+            <strong>Void Hold</strong>
+            <span>Releases the hold, restores available balance. <em>Expected: status VOIDED.</em></span>
+          </div>
+        </div>
+
         <div class="action-grid">
           <article class="action-card">
             <h3>Authorize Hold</h3>
+            <p class="adv-label">Advanced Technical Payload</p>
             <textarea id="payment-authorize-payload"></textarea>
             <button type="button" class="action-btn" data-action="payment-authorize">Send</button>
           </article>
           <article class="action-card">
             <h3>Capture Hold</h3>
+            <p class="adv-label">Advanced Technical Payload</p>
             <textarea id="payment-capture-payload"></textarea>
             <button type="button" class="action-btn" data-action="payment-capture">Send</button>
           </article>
           <article class="action-card">
             <h3>Void Hold</h3>
+            <p class="adv-label">Advanced Technical Payload</p>
             <textarea id="payment-void-payload"></textarea>
             <button type="button" class="action-btn" data-action="payment-void">Send</button>
           </article>
@@ -88,9 +170,23 @@
 
       <div class="tab-body" data-panel="transfer">
         <p class="muted">Invariant: idempotent transfer write + deterministic safety under retry/concurrency.</p>
+
+        <!-- Business explanation cards for Transfer -->
+        <div class="biz-cards">
+          <div class="biz-card">
+            <strong>Transfer</strong>
+            <span>Posts money movement with an idempotency key. <em>Expected: status COMPLETED, balance changes.</em></span>
+          </div>
+          <div class="biz-card">
+            <strong>Replay Same Key</strong>
+            <span>Retry returns the same journalId — no double-post. <em>Idempotency proven.</em></span>
+          </div>
+        </div>
+
         <div class="action-grid single">
           <article class="action-card">
             <h3>Internal Transfer</h3>
+            <p class="adv-label">Advanced Technical Payload</p>
             <textarea id="transfer-payload"></textarea>
             <button type="button" class="action-btn" data-action="transfer-internal">Send</button>
             <button type="button" class="secondary action-btn" data-action="transfer-replay">Replay Same Key</button>
@@ -100,19 +196,23 @@
 
       <div class="tab-body" data-panel="deposit">
         <p class="muted">Invariant: version-bound contract + open/accrue/maturity lifecycle correctness.</p>
+        <p class="flow-label">Optional advanced flow</p>
         <div class="action-grid">
           <article class="action-card">
             <h3>Open Deposit</h3>
+            <p class="adv-label">Advanced Technical Payload</p>
             <textarea id="deposit-open-payload"></textarea>
             <button type="button" class="action-btn" data-action="deposit-open">Send</button>
           </article>
           <article class="action-card">
             <h3>Accrue Interest</h3>
+            <p class="adv-label">Advanced Technical Payload</p>
             <textarea id="deposit-accrue-payload"></textarea>
             <button type="button" class="action-btn" data-action="deposit-accrue">Send</button>
           </article>
           <article class="action-card">
             <h3>Process Maturity</h3>
+            <p class="adv-label">Advanced Technical Payload</p>
             <textarea id="deposit-maturity-payload"></textarea>
             <button type="button" class="action-btn" data-action="deposit-maturity">Send</button>
           </article>
@@ -121,14 +221,17 @@
 
       <div class="tab-body" data-panel="lending">
         <p class="muted">Invariant: disburse/repay core lifecycle. Overdue/default are evidence-only in this showcase.</p>
+        <p class="flow-label">Optional advanced flow</p>
         <div class="action-grid">
           <article class="action-card">
             <h3>Disburse Loan</h3>
+            <p class="adv-label">Advanced Technical Payload</p>
             <textarea id="lending-disburse-payload"></textarea>
             <button type="button" class="action-btn" data-action="lending-disburse">Send</button>
           </article>
           <article class="action-card">
             <h3>Repay Loan</h3>
+            <p class="adv-label">Advanced Technical Payload</p>
             <textarea id="lending-repay-payload"></textarea>
             <button type="button" class="action-btn" data-action="lending-repay">Send</button>
           </article>
@@ -147,7 +250,7 @@
 
     <section class="bottom-grid">
       <article class="card response-card">
-        <h2>Response Viewer</h2>
+        <h2>Raw API Response</h2>
         <p id="response-meta" class="status-text">No request sent yet.</p>
         <pre id="response-output" class="output" aria-live="polite">{}</pre>
       </article>
