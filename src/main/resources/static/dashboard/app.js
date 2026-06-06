@@ -7,7 +7,9 @@
     setup: null,
     holdId: ZERO_UUID,
     depositContractId: ZERO_UUID,
-    loanContractId: ZERO_UUID
+    loanContractId: ZERO_UUID,
+    firstTransferJournalId: null,
+    demoProgress: {}
   };
 
   const authUsername = document.getElementById("auth-username");
@@ -16,6 +18,10 @@
   const setupOutput = document.getElementById("setup-output");
   const responseMeta = document.getElementById("response-meta");
   const responseOutput = document.getElementById("response-output");
+  const resultSummary = document.getElementById("result-summary");
+  const resultSummaryTitle = document.getElementById("result-summary-title");
+  const resultSummaryBody = document.getElementById("result-summary-body");
+  const resultSummaryDetail = document.getElementById("result-summary-detail");
 
   const actionConfig = {
     "payment-authorize": { endpoint: "/api/payments/authorize-hold", textareaId: "payment-authorize-payload" },
@@ -71,6 +77,7 @@
     state.actor = username;
     state.authHeader = `Basic ${btoa(`${username}:${password}`)}`;
     setAuthState(`Credentials loaded for ${username}.`);
+    markProgress("login", true);
     refreshPayloadTemplates();
   }
 
@@ -83,6 +90,8 @@
         state.depositContractId = state.setup.sampleContractIds.maturityReadyContractId;
       }
       setupOutput.textContent = pretty(result.body);
+      markProgress("setup", true);
+      showResultSummary("Demo Data Initialized", "Customer, account, product, and ledger IDs loaded into all payload templates.", "");
       refreshPayloadTemplates();
     }
   }
@@ -115,7 +124,17 @@
 
     if (actionName === "payment-authorize" && result.body.holdId) {
       state.holdId = result.body.holdId;
+      markProgress("authorize", true);
+      const status = result.body.status || "AUTHORIZED";
+      showResultSummary("Payment Authorized", `Hold ${result.body.holdId} — Status: ${status}`, `Amount: ${result.body.holdAmountMinor || "—"} ${result.body.currency || ""}`);
       refreshPayloadTemplates();
+    }
+
+    if (actionName === "payment-capture") {
+      markProgress("capture", true);
+      const holdStatus = result.body.holdStatus || "—";
+      const paymentStatus = result.body.paymentStatus || "—";
+      showResultSummary("Payment Captured", `Hold: ${holdStatus}, Payment: ${paymentStatus}`, `Journal: ${result.body.journalId || "—"} | Captured: ${result.body.capturedAmountMinor || "—"}`);
     }
 
     if (actionName === "deposit-open" && result.body.contractId) {
@@ -127,6 +146,51 @@
       state.loanContractId = result.body.contractId;
       refreshPayloadTemplates();
     }
+
+    if (actionName === "transfer-internal") {
+      markProgress("transfer", true);
+      if (!state.firstTransferJournalId) {
+        state.firstTransferJournalId = result.body.journalId;
+      }
+      showResultSummary("Transfer Completed", `Journal: ${result.body.journalId || "—"}`, `Status: ${result.body.status || "COMPLETED"} | Amount: ${result.body.amountMinor || "—"} ${result.body.currency || ""}`);
+    }
+
+    if (actionName === "transfer-replay") {
+      const currentJournalId = result.body.journalId;
+      if (state.firstTransferJournalId && currentJournalId === state.firstTransferJournalId) {
+        markProgress("replay", true);
+        showResultSummary(
+          "Idempotency Verified",
+          `Same journalId returned: <code>${currentJournalId}</code> — no double-post.`,
+          "Idempotency key replay correctly returned the original transfer result."
+        );
+      } else if (state.firstTransferJournalId) {
+        showResultSummary(
+          "Replay Result",
+          `Journal: ${currentJournalId || "—"}`,
+          `Note: journalId differs from first transfer (${state.firstTransferJournalId}).`
+        );
+      } else {
+        showResultSummary("Replay Result", `Journal: ${currentJournalId || "—"}`, "Run a transfer first before replay.");
+      }
+    }
+  }
+
+  function showResultSummary(title, body, detail) {
+    resultSummary.style.display = "block";
+    resultSummaryTitle.textContent = title;
+    resultSummaryBody.innerHTML = body;
+    resultSummaryDetail.textContent = detail || "";
+  }
+
+  function markProgress(step, done) {
+    state.demoProgress[step] = done;
+    document.querySelectorAll(`[data-check="${step}"]`).forEach((el) => {
+      el.classList.toggle("checked", done);
+    });
+    document.querySelectorAll(`[data-step="${step}"]`).forEach((el) => {
+      el.classList.toggle("completed", done);
+    });
   }
 
   async function callApi(method, path, payload) {
