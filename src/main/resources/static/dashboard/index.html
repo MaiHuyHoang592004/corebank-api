@@ -1,273 +1,367 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CoreBank Live Showcase</title>
+  <title>FinLedger Lab — Fintech Backend Live Demo</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Material+Symbols+Outlined:opsz,wght,FILL@20..48,100..700,0..1&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/dashboard/styles.css" />
 </head>
-<body>
-  <div class="bg-shape bg-shape-a" aria-hidden="true"></div>
-  <div class="bg-shape bg-shape-b" aria-hidden="true"></div>
+<body class="flex min-h-screen bg-[#F7FAFC] text-[#1a1c1e] font-sans">
 
-  <main class="page">
-
-    <!-- PUBLIC DEMO BANNER -->
-    <div class="demo-banner card">
-      <span class="demo-pulse"></span>
-      <span class="demo-banner-text"><strong>Public Demo Mode</strong> — Synthetic data only. <strong>PostgreSQL</strong> is the financial source of truth. Kafka disabled but ledger/audit/idempotency/outbox rows persist in PostgreSQL.</span>
+<!-- LEFT SIDEBAR -->
+<aside class="fixed left-0 top-0 h-full w-[280px] z-40 flex flex-col p-4 bg-white border-r border-[#EDF2F7] overflow-y-auto sidebar-scroll">
+  <!-- Logo -->
+  <div class="mb-8 flex items-center gap-3">
+    <div class="w-10 h-10 bg-[#002045] flex items-center justify-center rounded-lg flex-shrink-0">
+      <span class="material-symbols-outlined text-white text-[24px]" style="font-variation-settings:'FILL'1">account_balance</span>
     </div>
+    <div>
+      <h1 class="text-[20px] leading-7 font-bold text-[#002045]">FinLedger Lab</h1>
+      <p class="text-[10px] text-[#43474e] uppercase tracking-widest font-bold">FINTECH BACKEND DEMO</p>
+    </div>
+  </div>
 
-    <header class="hero card">
-      <p class="eyebrow">Core Banking Live Showcase</p>
-      <h1>End-to-End Demo Dashboard</h1>
-      <p class="hero-copy">
-        Use this page to run deterministic demo flows across payment, transfer, deposit, and lending.
-        <strong>PostgreSQL is the authoritative truth</strong>; Redis and read models are non-authoritative optimizations.
-      </p>
-      <div class="hero-links">
-        <a href="/dashboard/docs/readme" target="_blank" rel="noopener">README</a>
-        <a href="/dashboard/docs/demo-script" target="_blank" rel="noopener">Demo Script</a>
-        <a href="/dashboard/docs/interview-prep" target="_blank" rel="noopener">Interview Prep</a>
+  <!-- Start Here Stepper -->
+  <div class="mb-6">
+    <p class="text-[12px] tracking-wider font-bold text-[#43474e] mb-4 flex items-center gap-2 uppercase">
+      <span class="material-symbols-outlined text-[18px]">play_circle</span>
+      Bắt đầu tại đây (Demo 3 phút)
+    </p>
+    <nav class="space-y-1 relative pl-4 border-l-2 border-[#efedf1] ml-2">
+      <div class="relative pb-4" data-step="admin">
+        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
+        <span class="text-[14px] font-bold stepper-label">Admin</span>
       </div>
+      <div class="relative pb-4" data-step="setup">
+        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
+        <span class="text-[14px] font-bold stepper-label">Setup</span>
+      </div>
+      <div class="relative pb-4" data-step="authorize">
+        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
+        <span class="text-[14px] font-bold stepper-label">Authorize Hold</span>
+      </div>
+      <div class="relative pb-4" data-step="capture">
+        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
+        <span class="text-[14px] font-bold stepper-label">Capture Hold</span>
+      </div>
+      <div class="relative pb-4" data-step="transfer">
+        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
+        <span class="text-[14px] font-bold stepper-label">Transfer</span>
+      </div>
+      <div class="relative pb-4" data-step="replay">
+        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
+        <span class="text-[14px] font-bold stepper-label">Replay</span>
+      </div>
+      <div class="relative opacity-50" data-step="verify">
+        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
+        <span class="text-[14px] stepper-label">Verify</span>
+      </div>
+    </nav>
+  </div>
+
+  <!-- Demo Progress -->
+  <div class="mb-6">
+    <p class="text-[12px] tracking-wider font-bold text-[#43474e] mb-3 flex items-center gap-2 uppercase">
+      <span class="material-symbols-outlined text-[18px]">fact_check</span>
+      Tiến độ Demo
+    </p>
+    <ul class="space-y-2 text-[14px]">
+      <li class="flex items-center gap-2" data-check="admin"><span class="material-symbols-outlined text-[18px] check-icon">radio_button_unchecked</span> Health check: UP</li>
+      <li class="flex items-center gap-2" data-check="setup"><span class="material-symbols-outlined text-[18px] check-icon">radio_button_unchecked</span> Auth demo: đã dùng Admin</li>
+      <li class="flex items-center gap-2" data-check="authorize"><span class="material-symbols-outlined text-[18px] check-icon">radio_button_unchecked</span> Dữ liệu demo: chưa khởi tạo</li>
+    </ul>
+  </div>
+
+  <!-- Demo Account Selector -->
+  <div class="mb-6">
+    <p class="text-[12px] tracking-wider font-bold text-[#43474e] mb-3 uppercase">Tài khoản Demo</p>
+    <div class="flex flex-col gap-2">
+      <button data-fill="demo_admin" class="w-full text-left bg-[#d6e0f6] text-[#002045] rounded-lg px-4 py-2 text-[12px] tracking-wider font-bold flex items-center justify-between hover:opacity-90 transition-all">
+        <span>Admin</span>
+        <span id="admin-badge" class="text-[10px] bg-[#002045] text-white px-1.5 py-0.5 rounded uppercase hidden">Đã dùng</span>
+      </button>
+      <button data-fill="demo_ops" class="w-full text-left border border-[#EDF2F7] hover:bg-[#f4f3f7] rounded-lg px-4 py-2 text-[12px] tracking-wider font-bold text-[#43474e] transition-colors">
+        Ops
+      </button>
+      <button data-fill="demo_user" class="w-full text-left border border-[#EDF2F7] hover:bg-[#f4f3f7] rounded-lg px-4 py-2 text-[12px] tracking-wider font-bold text-[#43474e] transition-colors">
+        User
+      </button>
+    </div>
+    <p id="auth-state" class="text-[11px] text-[#43474e] mt-2">Chưa có credentials.</p>
+  </div>
+
+  <!-- Setup Demo Data -->
+  <div class="mb-6">
+    <p class="text-[12px] tracking-wider font-bold text-[#43474e] mb-3 uppercase">Dữ liệu mẫu</p>
+    <button id="run-setup" class="w-full bg-[#002045] text-white rounded-lg px-4 py-3 font-bold text-[14px] hover:opacity-90 active:scale-95 transition-all flex items-center justify-center gap-2">
+      <span class="material-symbols-outlined text-[20px]">database</span>
+      Khởi tạo dữ liệu demo
+    </button>
+  </div>
+
+  <!-- Evidence Links -->
+  <div class="mt-auto pt-4 border-t border-[#EDF2F7]">
+    <p class="text-[10px] tracking-wider font-bold text-[#43474e] mb-3 uppercase">Bằng chứng (Evidence)</p>
+    <div class="space-y-1">
+      <a href="/dashboard/docs/readme" target="_blank" rel="noopener" class="flex items-center gap-2 text-[14px] text-[#43474e] hover:text-[#002045] transition-colors no-underline">
+        <span class="material-symbols-outlined text-[18px]">description</span> README.md
+      </a>
+      <a href="/dashboard/docs/demo-script" target="_blank" rel="noopener" class="flex items-center gap-2 text-[14px] text-[#43474e] hover:text-[#002045] transition-colors no-underline">
+        <span class="material-symbols-outlined text-[18px]">terminal</span> Demo Script
+      </a>
+      <a href="/dashboard/docs/interview-prep" target="_blank" rel="noopener" class="flex items-center gap-2 text-[14px] text-[#43474e] hover:text-[#002045] transition-colors no-underline">
+        <span class="material-symbols-outlined text-[18px]">verified</span> Interview Prep
+      </a>
+    </div>
+  </div>
+</aside>
+
+<!-- MAIN CONTENT -->
+<main class="ml-[280px] mr-[400px] flex-1 min-h-screen">
+
+  <!-- Top Public Demo Bar -->
+  <div class="bg-[#1a365d] text-[#adc7f7] px-8 py-2 text-[14px] flex items-center justify-between border-b border-white/10 sticky top-0 z-30">
+    <div class="flex items-center gap-4">
+      <span class="bg-[#d6e3ff] text-[#2d476f] text-[10px] font-bold px-2 py-0.5 rounded uppercase">PUBLIC DEMO MODE</span>
+      <span class="flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">storage</span> PostgreSQL là nguồn sự thật tài chính</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="material-symbols-outlined cursor-pointer hover:text-white transition-colors">notifications</span>
+      <span class="material-symbols-outlined cursor-pointer hover:text-white transition-colors">settings</span>
+    </div>
+  </div>
+
+  <div class="p-8">
+
+    <!-- Hero -->
+    <header class="mb-10">
+      <div class="flex items-end justify-between mb-2">
+        <h2 class="text-[28px] leading-9 font-bold text-[#002045]">FinLedger Lab — Demo Backend Giao Dịch Fintech</h2>
+        <div class="flex gap-2">
+          <a href="https://github.com/MaiHuyHoang592004/corebank-api" target="_blank" rel="noopener" class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#EDF2F7] bg-white text-[12px] tracking-wider font-bold hover:bg-[#f4f3f7] transition-colors no-underline text-[#1a1c1e]">
+            <span class="material-symbols-outlined text-[18px]">code</span> GitHub
+          </a>
+          <a href="/dashboard/docs/readme" target="_blank" rel="noopener" class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#EDF2F7] bg-white text-[12px] tracking-wider font-bold hover:bg-[#f4f3f7] transition-colors no-underline text-[#1a1c1e]">
+            <span class="material-symbols-outlined text-[18px]">menu_book</span> Docs
+          </a>
+        </div>
+      </div>
+      <p class="text-[16px] leading-6 text-[#43474e] max-w-2xl">Demo backend xử lý giao dịch tiền an toàn: payment hold/capture, transfer idempotency, ledger journal, audit và outbox.</p>
     </header>
 
-    <!-- START HERE PANEL -->
-    <section class="start-here card">
-      <h2>Start Here — 3 Minute Demo</h2>
-      <div class="start-steps">
-        <div class="start-step" data-step="login">
-          <span class="step-num">1</span>
-          <span class="step-desc"><strong>Login</strong> — Click <em>Quick Fill demo_admin</em>, then <em>Use Credentials</em></span>
-        </div>
-        <div class="start-step" data-step="setup">
-          <span class="step-num">2</span>
-          <span class="step-desc"><strong>Initialize Demo Data</strong> — Idempotent, safe to run repeatedly</span>
-        </div>
-        <div class="start-step" data-step="authorize">
-          <span class="step-num">3</span>
-          <span class="step-desc"><strong>Authorize Hold</strong> — Reserves funds but does not capture yet (Payment tab)</span>
-        </div>
-        <div class="start-step" data-step="capture">
-          <span class="step-num">4</span>
-          <span class="step-desc"><strong>Capture Hold</strong> — Posts journal and completes the payment</span>
-        </div>
-        <div class="start-step" data-step="transfer">
-          <span class="step-num">5</span>
-          <span class="step-desc"><strong>Run Transfer</strong> — Moves money between accounts (Transfer tab)</span>
-        </div>
-        <div class="start-step" data-step="replay">
-          <span class="step-num">6</span>
-          <span class="step-desc"><strong>Replay Same Key</strong> — Retry with same idempotency key</span>
-        </div>
-        <div class="start-step" data-step="verified">
-          <span class="step-num">7</span>
-          <span class="step-desc"><strong>Verify</strong> — Same journalId returned = no double-post</span>
-        </div>
-      </div>
-    </section>
+    <!-- Tabs -->
+    <div class="border-b border-[#EDF2F7] mb-8 flex items-center gap-8">
+      <button class="tab-btn pb-3 text-[14px] font-medium text-[#43474e] hover:text-[#002045] transition-colors border-b-2 border-transparent" data-tab="payment">Thanh toán</button>
+      <button class="tab-btn pb-3 text-[14px] font-medium text-[#43474e] hover:text-[#002045] transition-colors border-b-2 border-transparent" data-tab="transfer">Chuyển tiền</button>
+      <button class="tab-btn pb-3 text-[14px] font-medium text-[#43474e] hover:text-[#002045] transition-colors border-b-2 border-transparent flex items-center gap-2" data-tab="deposit">Tiền gửi <span class="text-[10px] bg-[#321b00] text-[#f2bc82] px-1.5 py-0.5 rounded font-bold">Nâng cao</span></button>
+      <button class="tab-btn pb-3 text-[14px] font-medium text-[#43474e] hover:text-[#002045] transition-colors border-b-2 border-transparent flex items-center gap-2" data-tab="lending">Khoản vay <span class="text-[10px] bg-[#321b00] text-[#f2bc82] px-1.5 py-0.5 rounded font-bold">Nâng cao</span></button>
+    </div>
 
-    <!-- PROGRESS CHECKLIST -->
-    <section class="progress-bar card">
-      <h2>Demo Progress</h2>
-      <div class="checklist">
-        <span class="check-item" data-check="login">Login</span>
-        <span class="check-item" data-check="setup">Demo Data</span>
-        <span class="check-item" data-check="authorize">Hold Authorized</span>
-        <span class="check-item" data-check="capture">Hold Captured</span>
-        <span class="check-item" data-check="transfer">Transfer Done</span>
-        <span class="check-item" data-check="replay">Replay Verified</span>
-      </div>
-    </section>
-
-    <section class="top-grid">
-      <article class="card auth-card">
-        <h2>Auth Panel</h2>
-        <p class="muted">Demo-only Basic Auth for showcase usage.</p>
-        <div class="quick-fill">
-          <button type="button" data-fill="demo_user">Quick Fill demo_user</button>
-          <button type="button" data-fill="demo_ops">Quick Fill demo_ops</button>
-          <button type="button" data-fill="demo_admin">Quick Fill demo_admin</button>
-        </div>
-        <label>
-          Username
-          <input id="auth-username" autocomplete="username" placeholder="demo_admin" />
-        </label>
-        <label>
-          Password
-          <input id="auth-password" type="password" autocomplete="current-password" placeholder="demo_admin" />
-        </label>
-        <button id="save-auth" type="button" class="primary">Use Credentials</button>
-        <p id="auth-state" class="status-text">No credentials loaded yet.</p>
-      </article>
-
-      <article class="card setup-card">
-        <h2>Setup Panel</h2>
-        <p class="muted">Initialize deterministic demo data (idempotent/upsert).</p>
-        <button id="run-setup" type="button" class="primary">Initialize Demo Data</button>
-        <pre id="setup-output" class="output" aria-live="polite">Run setup to auto-fill scenario payloads.</pre>
-      </article>
-    </section>
-
-    <!-- RESULT SUMMARY CARD -->
-    <section id="result-summary" class="card result-summary" style="display:none">
-      <h2 id="result-summary-title">Last Result</h2>
-      <p id="result-summary-body"></p>
-      <p id="result-summary-detail" class="muted"></p>
-    </section>
-
-    <section class="tabs card">
-      <div class="tab-header" role="tablist">
-        <button type="button" role="tab" class="tab-btn active" data-tab="payment">Payment</button>
-        <button type="button" role="tab" class="tab-btn" data-tab="transfer">Transfer</button>
-        <button type="button" role="tab" class="tab-btn" data-tab="deposit">Deposit</button>
-        <button type="button" role="tab" class="tab-btn" data-tab="lending">Lending</button>
-      </div>
-
-      <div class="tab-body active" data-panel="payment">
-        <p class="muted">Invariant: hold changes available balance, capture posts accounting, void restores remaining hold.</p>
-
-        <!-- Business explanation cards for Payment -->
-        <div class="biz-cards">
-          <div class="biz-card">
-            <strong>Authorize Hold</strong>
-            <span>Reserves money (reduces available balance) — does not capture yet. <em>Expected: status AUTHORIZED.</em></span>
+    <!-- ===== TAB: PAYMENT ===== -->
+    <div class="tab-body hidden" data-panel="payment">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- Authorize Hold Card -->
+        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
+          <div class="flex items-center justify-between mb-4">
+            <span class="p-2 bg-[#d6e0f6] rounded-lg text-[#002045]">
+              <span class="material-symbols-outlined">lock_clock</span>
+            </span>
           </div>
-          <div class="biz-card">
-            <strong>Capture Hold</strong>
-            <span>Posts double-entry journal and completes capture. <em>Expected: status FULLY_CAPTURED.</em></span>
-          </div>
-          <div class="biz-card">
-            <strong>Void Hold</strong>
-            <span>Releases the hold, restores available balance. <em>Expected: status VOIDED.</em></span>
-          </div>
+          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Authorize Hold</h4>
+          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Tạm giữ số dư nguồn để đảm bảo thanh toán. Chưa thực hiện chuyển khoản thực tế.</p>
+          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="payment-authorize">Giữ tiền</button>
         </div>
-
-        <div class="action-grid">
-          <article class="action-card">
-            <h3>Authorize Hold</h3>
-            <p class="adv-label">Advanced Technical Payload</p>
-            <textarea id="payment-authorize-payload"></textarea>
-            <button type="button" class="action-btn" data-action="payment-authorize">Send</button>
-          </article>
-          <article class="action-card">
-            <h3>Capture Hold</h3>
-            <p class="adv-label">Advanced Technical Payload</p>
-            <textarea id="payment-capture-payload"></textarea>
-            <button type="button" class="action-btn" data-action="payment-capture">Send</button>
-          </article>
-          <article class="action-card">
-            <h3>Void Hold</h3>
-            <p class="adv-label">Advanced Technical Payload</p>
-            <textarea id="payment-void-payload"></textarea>
-            <button type="button" class="action-btn" data-action="payment-void">Send</button>
-          </article>
+        <!-- Capture Hold Card -->
+        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
+          <div class="flex items-center justify-between mb-4">
+            <span class="p-2 bg-[#d6e0f6] rounded-lg text-[#002045]">
+              <span class="material-symbols-outlined">payments</span>
+            </span>
+          </div>
+          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Capture Hold</h4>
+          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Chốt giao dịch đã hold. Số tiền sẽ chính thức được chuyển từ nguồn sang đích.</p>
+          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="payment-capture">Capture thanh toán</button>
+        </div>
+        <!-- Void Hold Card -->
+        <div class="bg-white p-6 rounded-xl border border-[#EF4444]/20 flex flex-col card-shadow">
+          <div class="flex items-center justify-between mb-4">
+            <span class="p-2 bg-[#ffdad6] rounded-lg text-[#EF4444]">
+              <span class="material-symbols-outlined">cancel</span>
+            </span>
+          </div>
+          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Void Hold</h4>
+          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Huỷ lệnh giữ tiền, hoàn trả hạn mức cho chủ thẻ ngay lập tức.</p>
+          <button class="action-btn w-full py-2 bg-[#ffdad6] hover:bg-[#EF4444]/10 text-[#EF4444] font-bold rounded-lg transition-colors" data-action="payment-void">Huỷ hold</button>
         </div>
       </div>
+    </div>
 
-      <div class="tab-body" data-panel="transfer">
-        <p class="muted">Invariant: idempotent transfer write + deterministic safety under retry/concurrency.</p>
-
-        <!-- Business explanation cards for Transfer -->
-        <div class="biz-cards">
-          <div class="biz-card">
-            <strong>Transfer</strong>
-            <span>Posts money movement with an idempotency key. <em>Expected: status COMPLETED, balance changes.</em></span>
+    <!-- ===== TAB: TRANSFER ===== -->
+    <div class="tab-body hidden" data-panel="transfer">
+      <div class="bg-white p-8 rounded-xl border border-[#EDF2F7] relative overflow-hidden card-shadow">
+        <!-- Decorative background -->
+        <div class="absolute top-0 right-0 w-64 h-64 bg-[#002045]/5 rounded-full -mr-32 -mt-32"></div>
+        <div class="relative z-10">
+          <div class="inline-flex items-center gap-2 bg-[#002045] text-[#adc7f7] px-4 py-1.5 rounded-full mb-6">
+            <span class="material-symbols-outlined text-[20px]" style="font-variation-settings:'FILL'1">verified</span>
+            <span class="text-[12px] tracking-wider font-bold">Fintech Core Proof</span>
           </div>
-          <div class="biz-card">
-            <strong>Replay Same Key</strong>
-            <span>Retry returns the same journalId — no double-post. <em>Idempotency proven.</em></span>
+          <h3 class="text-[20px] leading-7 font-semibold text-[#002045] mb-2">Quy trình Chuyển tiền Idempotency</h3>
+          <p class="text-[14px] text-[#43474e] mb-8 max-w-xl">Hệ thống sử dụng Idempotency Key để đảm bảo một giao dịch không bao giờ bị xử lý trùng lặp ngay cả khi có sự cố mạng hoặc người dùng nhấn nút nhiều lần.</p>
+          <div class="flex gap-4">
+            <button class="action-btn bg-[#002045] text-white px-6 py-3 rounded-lg font-bold hover:opacity-90 active:scale-95 transition-all flex items-center gap-3" data-action="transfer-internal">
+              <span class="material-symbols-outlined">send</span>
+              Chạy chuyển tiền
+            </button>
+            <button class="action-btn border-2 border-[#002045] text-[#002045] px-6 py-3 rounded-lg font-bold hover:bg-[#002045]/5 active:scale-95 transition-all flex items-center gap-3 bg-white" data-action="transfer-replay">
+              <span class="material-symbols-outlined">replay</span>
+              Gửi lại cùng key (Replay Same Key)
+            </button>
           </div>
-        </div>
-
-        <div class="action-grid single">
-          <article class="action-card">
-            <h3>Internal Transfer</h3>
-            <p class="adv-label">Advanced Technical Payload</p>
-            <textarea id="transfer-payload"></textarea>
-            <button type="button" class="action-btn" data-action="transfer-internal">Send</button>
-            <button type="button" class="secondary action-btn" data-action="transfer-replay">Replay Same Key</button>
-          </article>
-        </div>
-      </div>
-
-      <div class="tab-body" data-panel="deposit">
-        <p class="muted">Invariant: version-bound contract + open/accrue/maturity lifecycle correctness.</p>
-        <p class="flow-label">Optional advanced flow</p>
-        <div class="action-grid">
-          <article class="action-card">
-            <h3>Open Deposit</h3>
-            <p class="adv-label">Advanced Technical Payload</p>
-            <textarea id="deposit-open-payload"></textarea>
-            <button type="button" class="action-btn" data-action="deposit-open">Send</button>
-          </article>
-          <article class="action-card">
-            <h3>Accrue Interest</h3>
-            <p class="adv-label">Advanced Technical Payload</p>
-            <textarea id="deposit-accrue-payload"></textarea>
-            <button type="button" class="action-btn" data-action="deposit-accrue">Send</button>
-          </article>
-          <article class="action-card">
-            <h3>Process Maturity</h3>
-            <p class="adv-label">Advanced Technical Payload</p>
-            <textarea id="deposit-maturity-payload"></textarea>
-            <button type="button" class="action-btn" data-action="deposit-maturity">Send</button>
-          </article>
-        </div>
-      </div>
-
-      <div class="tab-body" data-panel="lending">
-        <p class="muted">Invariant: disburse/repay core lifecycle. Overdue/default are evidence-only in this showcase.</p>
-        <p class="flow-label">Optional advanced flow</p>
-        <div class="action-grid">
-          <article class="action-card">
-            <h3>Disburse Loan</h3>
-            <p class="adv-label">Advanced Technical Payload</p>
-            <textarea id="lending-disburse-payload"></textarea>
-            <button type="button" class="action-btn" data-action="lending-disburse">Send</button>
-          </article>
-          <article class="action-card">
-            <h3>Repay Loan</h3>
-            <p class="adv-label">Advanced Technical Payload</p>
-            <textarea id="lending-repay-payload"></textarea>
-            <button type="button" class="action-btn" data-action="lending-repay">Send</button>
-          </article>
-          <article class="action-card evidence-only">
-            <h3>Overdue / Default (Evidence Only)</h3>
-            <p>Live commands are intentionally excluded from dashboard scope.</p>
-            <ul>
-              <li><a href="/dashboard/docs/sequence-diagrams" target="_blank" rel="noopener">Sequence diagrams</a></li>
-              <li><a href="/dashboard/docs/demo-script" target="_blank" rel="noopener">Demo narrative</a></li>
-              <li><a href="/dashboard/docs/interview-prep" target="_blank" rel="noopener">Interview talking points</a></li>
+          <!-- Idempotency explanation -->
+          <div class="mt-8 p-4 bg-[#f4f3f7] rounded-lg border border-dashed border-[#c4c6cf] flex items-start gap-4">
+            <span class="material-symbols-outlined text-[#002045] mt-0.5">info</span>
+            <div class="text-[14px]">
+              <p class="font-bold text-[#002045] mb-1">Cơ chế Idempotency</p>
+              <p class="text-[#43474e]">Khi nhấn 'Replay', backend sẽ nhận diện key cũ trong cơ sở dữ liệu và trả về kết quả đã có sẵn mà không thực hiện trừ tiền lần 2.</p>
+            </div>
+          </div>
+          <!-- Idempotency Proof Block -->
+          <div id="transfer-proof-block" class="mt-4 p-4 bg-[#10B981]/5 rounded-lg border border-[#10B981]/20 hidden">
+            <p class="text-[12px] tracking-wider font-bold text-[#10B981] uppercase mb-2">Bằng chứng Idempotency</p>
+            <ul class="space-y-1 text-[14px]">
+              <li class="flex justify-between"><span>First journalId:</span><span id="transfer-first-journal-id" class="font-mono bg-white px-1 rounded text-[13px]">—</span></li>
+              <li class="flex justify-between"><span>Replay journalId:</span><span id="transfer-replay-journal-id" class="font-mono bg-white px-1 rounded text-[13px]">—</span></li>
+              <li id="transfer-proof-conclusion" class="pt-2 border-t border-[#10B981]/10 text-[#10B981] font-bold">—</li>
             </ul>
-          </article>
+          </div>
         </div>
       </div>
-    </section>
+    </div>
 
-    <section class="bottom-grid">
-      <article class="card response-card">
-        <h2>Raw API Response</h2>
-        <p id="response-meta" class="status-text">No request sent yet.</p>
-        <pre id="response-output" class="output" aria-live="polite">{}</pre>
-      </article>
-      <article class="card evidence-card">
-        <h2>Evidence Links</h2>
-        <ul>
-          <li><a href="/dashboard/docs/readme" target="_blank" rel="noopener">What this system proves</a></li>
-          <li><a href="/dashboard/docs/source-of-truth-map" target="_blank" rel="noopener">Source-of-truth map</a></li>
-          <li><a href="/dashboard/docs/runtime-failure-modes" target="_blank" rel="noopener">Failure modes</a></li>
-          <li><a href="/dashboard/docs/acceptance-criteria" target="_blank" rel="noopener">Acceptance criteria</a></li>
-          <li><a href="/dashboard/docs/demo-script" target="_blank" rel="noopener">10-minute script</a></li>
-          <li><a href="/dashboard/docs/interview-prep" target="_blank" rel="noopener">Interview prep</a></li>
-        </ul>
-      </article>
-    </section>
-  </main>
+    <!-- ===== TAB: DEPOSIT ===== -->
+    <div class="tab-body hidden" data-panel="deposit">
+      <p class="text-[14px] text-[#43474e] mb-4 italic">Quy trình mở/accrue/maturity với product version ràng buộc.</p>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
+          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Open Deposit</h4>
+          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Mở hợp đồng tiền gửi có kỳ hạn với lãi suất cố định.</p>
+          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="deposit-open">Mở tiền gửi</button>
+        </div>
+        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
+          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Accrue Interest</h4>
+          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Tính lãi dự thu cho hợp đồng tiền gửi hiện tại.</p>
+          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="deposit-accrue">Tính lãi</button>
+        </div>
+        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
+          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Process Maturity</h4>
+          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Xử lý đáo hạn hợp đồng tiền gửi đến kỳ.</p>
+          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="deposit-maturity">Xử lý đáo hạn</button>
+        </div>
+      </div>
+      </div>
 
-  <script src="/dashboard/app.js" defer></script>
+    <!-- ===== TAB: LENDING ===== -->
+    <div class="tab-body hidden" data-panel="lending">
+      <p class="text-[14px] text-[#43474e] mb-4 italic">Quy trình giải ngân/trả nợ. Overdue/default là evidence-only trong showcase này.</p>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
+          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Disburse Loan</h4>
+          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Giải ngân khoản vay cho borrower account.</p>
+          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="lending-disburse">Giải ngân</button>
+        </div>
+        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
+          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Repay Loan</h4>
+          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Trả nợ gốc + lãi cho khoản vay hiện tại.</p>
+          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="lending-repay">Trả nợ</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<!-- RIGHT PANEL -->
+<aside class="fixed right-0 top-0 h-full w-[400px] z-40 bg-[#f4f3f7] border-l border-[#EDF2F7] flex flex-col">
+  <div class="p-6 border-b border-[#EDF2F7] bg-white flex items-center justify-between">
+    <h3 class="text-[20px] leading-7 font-semibold text-[#002045]">Luồng xử lý nghiệp vụ</h3>
+    <span class="material-symbols-outlined text-[#43474e] cursor-pointer" id="refresh-panel">refresh</span>
+  </div>
+  <div class="flex-1 overflow-y-auto p-6 space-y-6">
+
+    <!-- Result Summary Card -->
+    <div id="result-summary" class="bg-white p-5 rounded-xl border border-[#EDF2F7] card-shadow" style="display:none">
+      <div class="flex items-center justify-between mb-4">
+        <span class="text-[12px] tracking-wider font-bold text-[#43474e] uppercase">Trạng thái</span>
+        <span id="result-status-badge" class="px-3 py-1 rounded-full text-[12px] tracking-wider font-bold flex items-center gap-1"></span>
+      </div>
+      <div class="space-y-4">
+        <div id="result-journal-row" class="hidden">
+          <p class="text-[10px] text-[#43474e] font-bold uppercase mb-1">Journal ID</p>
+          <p id="result-summary-title" class="font-mono text-[13px] bg-[#f4f3f7] px-3 py-2 rounded border border-[#EDF2F7] select-all break-all">—</p>
+        </div>
+        <div>
+          <p id="result-summary-body" class="text-[14px]"></p>
+        </div>
+        <div>
+          <p id="result-summary-detail" class="text-[12px] text-[#43474e]"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Processing Flow -->
+    <div id="processing-flow" class="space-y-3 hidden">
+      <p class="text-[10px] tracking-wider font-bold text-[#43474e] uppercase">Luồng xử lý giao dịch</p>
+      <div class="relative pl-6 space-y-4 border-l border-[#c4c6cf] ml-1.5" id="processing-flow-steps">
+        <!-- Populated dynamically by JS -->
+      </div>
+    </div>
+
+    <!-- Raw JSON Accordion -->
+    <div id="raw-json-section" class="mt-4 hidden">
+      <details class="group bg-[#1E293B] rounded-xl overflow-hidden" open>
+        <summary class="list-none p-4 flex items-center justify-between cursor-pointer text-white/80 hover:bg-white/5 transition-colors">
+          <span class="text-[12px] tracking-wider font-bold flex items-center gap-2">
+            <span class="material-symbols-outlined text-[18px]">data_object</span>
+            Chi tiết kỹ thuật (JSON Raw)
+          </span>
+          <span class="material-symbols-outlined group-open:rotate-180 transition-transform">expand_more</span>
+        </summary>
+        <div class="px-4 pb-4">
+          <p id="response-meta" class="text-[11px] text-white/60 mb-2 font-mono">Chưa gửi request.</p>
+          <pre id="response-output" class="overflow-x-auto font-mono text-[13px] text-[#10B981]/90 whitespace-pre-wrap m-0" aria-live="polite">{}</pre>
+        </div>
+      </details>
+    </div>
+
+  </div>
+  <footer class="p-6 bg-white border-t border-[#EDF2F7]">
+    <p class="text-[11px] text-[#43474e] text-center">FinLedger Lab Architecture Demo</p>
+  </footer>
+</aside>
+
+<!-- HIDDEN ELEMENTS: Auth inputs and payload textareas (required by app.js) -->
+<div class="hidden">
+  <input id="auth-username" autocomplete="username" value="demo_admin" />
+  <input id="auth-password" type="password" autocomplete="current-password" value="demo_admin" />
+  <button id="save-auth">Use Credentials</button>
+  <pre id="setup-output" aria-live="polite"></pre>
+
+  <textarea id="payment-authorize-payload"></textarea>
+  <textarea id="payment-capture-payload"></textarea>
+  <textarea id="payment-void-payload"></textarea>
+  <textarea id="transfer-payload"></textarea>
+  <textarea id="deposit-open-payload"></textarea>
+  <textarea id="deposit-accrue-payload"></textarea>
+  <textarea id="deposit-maturity-payload"></textarea>
+  <textarea id="lending-disburse-payload"></textarea>
+  <textarea id="lending-repay-payload"></textarea>
+</div>
+
+<script src="/dashboard/app.js" defer></script>
 </body>
 </html>
