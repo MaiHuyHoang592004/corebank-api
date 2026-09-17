@@ -209,6 +209,13 @@ public class TransferService {
 			UUID requestId,
 			UUID sessionId,
 			String traceId) {
+		/** Returns a copy with {@code actor} replaced — used to bind it to the authenticated principal. */
+		public TransferRequest withActor(String authenticatedActor) {
+			return new TransferRequest(
+					idempotencyKey, sourceAccountId, destinationAccountId, amountMinor, currency,
+					debitLedgerAccountId, creditLedgerAccountId, description, authenticatedActor,
+					correlationId, requestId, sessionId, traceId);
+		}
 	}
 
 	public record TransferResponse(

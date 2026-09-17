@@ -18,8 +18,11 @@ corebank:
   showcase:
     # Enable token-gate for destructive ops (maintenance, executions, secrets)
     token-gate-enabled: true
-    # Token value that unlocks destructive ops — change for your deployment
-    token: ${COREBANK_SHOWCASE_TOKEN:demo-secure-token-change-me}
+    # Token value that unlocks destructive ops for an ADMIN caller sending it in
+    # the X-Showcase-Token header. No fallback on purpose: unset means every
+    # request to those paths fails closed, never a value anyone can read out of
+    # this public repo's source. Set COREBANK_SHOWCASE_TOKEN before relying on it.
+    token: ${COREBANK_SHOWCASE_TOKEN:}
 
 management:
   endpoint:

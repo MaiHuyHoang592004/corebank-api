@@ -11,13 +11,17 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Propagation;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class LoanApplicationService {
 
+	private static final Logger log = LoggerFactory.getLogger(LoanApplicationService.class);
 	private static final Duration IDEMPOTENCY_TTL = Duration.ofDays(1);
 
 	private final SystemModeService systemModeService;
@@ -27,6 +31,7 @@ public class LoanApplicationService {
 	private final LoanRetryPolicy loanRetryPolicy;
 	private final IdempotentMoneyCommandTemplate moneyCommandTemplate;
 	private final ObjectMapper objectMapper;
+	private final TransactionTemplate batchTransactionTemplate;
 
 	public LoanApplicationService(
 			SystemModeService systemModeService,
@@ -35,7 +40,8 @@ public class LoanApplicationService {
 			OutboxService outboxService,
 			ObjectMapper objectMapper,
 			LoanRetryPolicy loanRetryPolicy,
-			IdempotentMoneyCommandTemplate moneyCommandTemplate) {
+			IdempotentMoneyCommandTemplate moneyCommandTemplate,
+			PlatformTransactionManager transactionManager) {
 		this.systemModeService = systemModeService;
 		this.loanContractService = loanContractService;
 		this.auditService = auditService;
@@ -43,6 +49,41 @@ public class LoanApplicationService {
 		this.objectMapper = objectMapper;
 		this.loanRetryPolicy = loanRetryPolicy;
 		this.moneyCommandTemplate = moneyCommandTemplate;
+		// Programmatic REQUIRES_NEW + retry, same shape as IdempotentMoneyCommandTemplate,
+		// so these two batch jobs get the same transient-deadlock retry every other
+		// money-moving path already has — a declarative @Transactional here would need
+		// a self-invoked call to retry, which never goes through the AOP proxy and would
+		// silently retry without ever opening a fresh transaction.
+		this.batchTransactionTemplate = new TransactionTemplate(transactionManager);
+		this.batchTransactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+	}
+
+	private <T> T executeWithRetry(String operation, java.util.function.Supplier<T> action) {
+		int maxAttempts = loanRetryPolicy.maxAttempts();
+		for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+			try {
+				return batchTransactionTemplate.execute(status -> action.get());
+			} catch (RuntimeException ex) {
+				if (!loanRetryPolicy.isTransient(ex) || attempt >= maxAttempts) {
+					throw ex;
+				}
+				long backoffMillis = loanRetryPolicy.backoffMillisBeforeNextAttempt(attempt);
+				log.warn(
+						"Transient failure in {} attempt={}/{} sqlState={} retryInMs={}",
+						operation,
+						attempt,
+						maxAttempts,
+						loanRetryPolicy.extractSqlState(ex),
+						backoffMillis);
+				try {
+					Thread.sleep(backoffMillis);
+				} catch (InterruptedException interrupted) {
+					Thread.currentThread().interrupt();
+					throw new IllegalStateException(operation + " retry was interrupted", interrupted);
+				}
+			}
+		}
+		throw new IllegalStateException(operation + " retry attempts exhausted unexpectedly");
 	}
 
 	public LoanDisbursementResponse disburseLoan(LoanDisbursementRequest request) {
@@ -159,8 +200,11 @@ public class LoanApplicationService {
 				repayment.updatedInstallmentCount());
 	}
 
-	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public LoanOverdueTransitionResponse markOverdueInstallments(LoanOverdueTransitionRequest request) {
+		return executeWithRetry("markOverdueInstallments", () -> markOverdueInstallmentsOnce(request));
+	}
+
+	private LoanOverdueTransitionResponse markOverdueInstallmentsOnce(LoanOverdueTransitionRequest request) {
 		systemModeService.enforceWriteAllowed();
 
 		List<LoanContractService.OverdueTransitionResult> transitioned = loanContractService.markOverdueInstallments(request.asOfDate());
@@ -211,8 +255,11 @@ public class LoanApplicationService {
 				affectedContractIds);
 	}
 
-	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public LoanDefaultTransitionResponse markContractDefaulted(LoanDefaultTransitionRequest request) {
+		return executeWithRetry("markContractDefaulted", () -> markContractDefaultedOnce(request));
+	}
+
+	private LoanDefaultTransitionResponse markContractDefaultedOnce(LoanDefaultTransitionRequest request) {
 		systemModeService.enforceWriteAllowed();
 
 		LoanContractService.DefaultTransitionResult result = loanContractService.markContractDefaulted(
@@ -282,6 +329,13 @@ public class LoanApplicationService {
 			UUID requestId,
 			UUID sessionId,
 			String traceId) {
+		/** Returns a copy with {@code actor} replaced — used to bind it to the authenticated principal. */
+		public LoanDisbursementRequest withActor(String authenticatedActor) {
+			return new LoanDisbursementRequest(
+					idempotencyKey, borrowerAccountId, productId, productVersionId, principalAmountMinor,
+					currency, annualInterestRate, termMonths, debitLedgerAccountId, creditLedgerAccountId,
+					authenticatedActor, correlationId, requestId, sessionId, traceId);
+		}
 	}
 
 	public record LoanDisbursementResponse(
@@ -309,6 +363,12 @@ public class LoanApplicationService {
 			UUID requestId,
 			UUID sessionId,
 			String traceId) {
+		public LoanRepaymentRequest withActor(String authenticatedActor) {
+			return new LoanRepaymentRequest(
+					idempotencyKey, contractId, payerAccountId, amountMinor, currency,
+					debitLedgerAccountId, creditLedgerAccountId, authenticatedActor,
+					correlationId, requestId, sessionId, traceId);
+		}
 	}
 
 	public record LoanRepaymentResponse(
