@@ -1,10 +1,12 @@
 package com.corebank.corebank_api.deposit;
 
 import com.corebank.corebank_api.common.CoreBankException;
+import com.corebank.corebank_api.ops.iam.IamAuthorizationService;
 import java.util.Locale;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -15,17 +17,26 @@ import org.springframework.web.server.ResponseStatusException;
 @RequestMapping("/api/deposits")
 public class DepositController {
 
-	private final DepositApplicationService depositApplicationService;
+	private static final String[] MONEY_MOVEMENT_ROLES = {"ROLE_USER", "ROLE_OPS", "ROLE_ADMIN"};
 
-	public DepositController(DepositApplicationService depositApplicationService) {
+	private final DepositApplicationService depositApplicationService;
+	private final IamAuthorizationService iamAuthorizationService;
+
+	public DepositController(
+			DepositApplicationService depositApplicationService,
+			IamAuthorizationService iamAuthorizationService) {
 		this.depositApplicationService = depositApplicationService;
+		this.iamAuthorizationService = iamAuthorizationService;
 	}
 
 	@PostMapping("/open")
 	public ResponseEntity<DepositApplicationService.OpenDepositResponse> openDeposit(
-			@RequestBody DepositApplicationService.OpenDepositRequest request) {
+			@RequestBody DepositApplicationService.OpenDepositRequest request,
+			Authentication authentication) {
+		iamAuthorizationService.requireAnyRole(authentication, MONEY_MOVEMENT_ROLES);
 		try {
-			DepositApplicationService.OpenDepositResponse response = depositApplicationService.openDeposit(request);
+			DepositApplicationService.OpenDepositResponse response =
+					depositApplicationService.openDeposit(request.withActor(actor(authentication)));
 			return ResponseEntity.ok(response);
 		} catch (CoreBankException ex) {
 			throw toHttpException(ex);
@@ -34,9 +45,12 @@ public class DepositController {
 
 	@PostMapping("/accrue")
 	public ResponseEntity<DepositApplicationService.AccrueInterestResponse> accrueInterest(
-			@RequestBody DepositApplicationService.AccrueInterestRequest request) {
+			@RequestBody DepositApplicationService.AccrueInterestRequest request,
+			Authentication authentication) {
+		iamAuthorizationService.requireAnyRole(authentication, MONEY_MOVEMENT_ROLES);
 		try {
-			DepositApplicationService.AccrueInterestResponse response = depositApplicationService.accrueInterest(request);
+			DepositApplicationService.AccrueInterestResponse response =
+					depositApplicationService.accrueInterest(request.withActor(actor(authentication)));
 			return ResponseEntity.ok(response);
 		} catch (CoreBankException ex) {
 			throw toHttpException(ex);
@@ -45,13 +59,20 @@ public class DepositController {
 
 	@PostMapping("/maturity")
 	public ResponseEntity<DepositApplicationService.MaturityResponse> processMaturity(
-			@RequestBody DepositApplicationService.MaturityRequest request) {
+			@RequestBody DepositApplicationService.MaturityRequest request,
+			Authentication authentication) {
+		iamAuthorizationService.requireAnyRole(authentication, MONEY_MOVEMENT_ROLES);
 		try {
-			DepositApplicationService.MaturityResponse response = depositApplicationService.processMaturity(request);
+			DepositApplicationService.MaturityResponse response =
+					depositApplicationService.processMaturity(request.withActor(actor(authentication)));
 			return ResponseEntity.ok(response);
 		} catch (CoreBankException ex) {
 			throw toHttpException(ex);
 		}
+	}
+
+	private String actor(Authentication authentication) {
+		return authentication == null ? "system" : authentication.getName();
 	}
 
 	private ResponseStatusException toHttpException(CoreBankException exception) {

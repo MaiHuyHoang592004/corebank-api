@@ -14,5 +14,8 @@ RUN mvn package -DskipTests -q
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
+RUN groupadd --system corebank && useradd --system --gid corebank --no-create-home corebank \
+    && chown -R corebank:corebank /app
+USER corebank
 EXPOSE 9090
 ENTRYPOINT ["java", "-jar", "app.jar"]

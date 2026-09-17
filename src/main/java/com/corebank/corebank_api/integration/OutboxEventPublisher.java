@@ -14,7 +14,6 @@ import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.HashSet;
 import java.util.List;
@@ -55,10 +54,19 @@ public class OutboxEventPublisher {
     }
     
     /**
-     * Scheduled task to process pending outbox events
+     * Scheduled task to process pending outbox events.
+     *
+     * <p>Deliberately NOT @Transactional. Claiming ({@code getPendingEvents}, a
+     * single call into the {@code get_pending_outbox_events} DB function) and every
+     * status update ({@code markAsProcessed}/{@code markAsFailed}/…) are each one
+     * atomic SQL statement on their own — there was never a multi-statement
+     * atomicity requirement tying them together. Wrapping the whole batch loop in
+     * one transaction only held a pooled DB connection (and, via the claim
+     * function's row locks, other workers' progress) open across the blocking
+     * Kafka {@code future.get(...)} call in {@link #processEvent}, for up to
+     * BATCH_SIZE × PUBLISH_TIMEOUT_SECONDS seconds per run.
      */
     @Scheduled(fixedDelay = PROCESSING_INTERVAL_MS)
-    @Transactional
     public void processPendingEvents() {
         try {
             List<OutboxEvent> pendingEvents = outboxEventRepository.getPendingEvents(

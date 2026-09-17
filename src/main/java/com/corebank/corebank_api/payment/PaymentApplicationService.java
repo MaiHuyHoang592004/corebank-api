@@ -253,6 +253,13 @@ public class PaymentApplicationService {
 			UUID requestId,
 			UUID sessionId,
 			String traceId) {
+		/** Returns a copy with {@code actor} replaced — used to bind it to the authenticated principal. */
+		public AuthorizeHoldRequest withActor(String authenticatedActor) {
+			return new AuthorizeHoldRequest(
+					idempotencyKey, payerAccountId, payeeAccountId, amountMinor, currency,
+					paymentType, description, externalOrderRef, authenticatedActor,
+					correlationId, requestId, sessionId, traceId);
+		}
 	}
 
 	public record AuthorizeHoldResponse(
@@ -280,6 +287,11 @@ public class PaymentApplicationService {
 			UUID requestId,
 			UUID sessionId,
 			String traceId) {
+		public CaptureHoldRequest withActor(String authenticatedActor) {
+			return new CaptureHoldRequest(
+					idempotencyKey, holdId, amountMinor, debitLedgerAccountId, creditLedgerAccountId,
+					beneficiaryCustomerAccountId, authenticatedActor, correlationId, requestId, sessionId, traceId);
+		}
 	}
 
 	public record CaptureHoldResponse(
@@ -302,6 +314,10 @@ public class PaymentApplicationService {
 			UUID requestId,
 			UUID sessionId,
 			String traceId) {
+		public VoidHoldRequest withActor(String authenticatedActor) {
+			return new VoidHoldRequest(
+					idempotencyKey, holdId, authenticatedActor, correlationId, requestId, sessionId, traceId);
+		}
 	}
 
 	public record VoidHoldResponse(
@@ -325,6 +341,11 @@ public class PaymentApplicationService {
 			UUID sessionId,
 			String traceId,
 			String description) {
+		public RefundRequest withActor(String authenticatedActor) {
+			return new RefundRequest(
+					idempotencyKey, paymentOrderId, amountMinor, authenticatedActor,
+					correlationId, requestId, sessionId, traceId, description);
+		}
 	}
 
 	public record RefundResponse(

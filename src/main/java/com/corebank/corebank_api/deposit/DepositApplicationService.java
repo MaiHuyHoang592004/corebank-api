@@ -207,6 +207,14 @@ public class DepositApplicationService {
 			UUID requestId,
 			UUID sessionId,
 			String traceId) {
+		/** Returns a copy with {@code actor} replaced — used to bind it to the authenticated principal. */
+		public OpenDepositRequest withActor(String authenticatedActor) {
+			return new OpenDepositRequest(
+					idempotencyKey, customerAccountId, productId, productVersionId, principalAmountMinor,
+					currency, interestRate, termMonths, earlyClosurePenaltyRate, autoRenew,
+					debitLedgerAccountId, creditLedgerAccountId, authenticatedActor,
+					correlationId, requestId, sessionId, traceId);
+		}
 	}
 
 	public record OpenDepositResponse(
@@ -230,6 +238,11 @@ public class DepositApplicationService {
 			UUID requestId,
 			UUID sessionId,
 			String traceId) {
+		public AccrueInterestRequest withActor(String authenticatedActor) {
+			return new AccrueInterestRequest(
+					idempotencyKey, contractId, debitLedgerAccountId, creditLedgerAccountId,
+					authenticatedActor, correlationId, requestId, sessionId, traceId);
+		}
 	}
 
 	public record AccrueInterestResponse(
@@ -251,6 +264,11 @@ public class DepositApplicationService {
 			UUID requestId,
 			UUID sessionId,
 			String traceId) {
+		public MaturityRequest withActor(String authenticatedActor) {
+			return new MaturityRequest(
+					idempotencyKey, contractId, debitLedgerAccountId, creditLedgerAccountId,
+					authenticatedActor, correlationId, requestId, sessionId, traceId);
+		}
 	}
 
 	public record MaturityResponse(

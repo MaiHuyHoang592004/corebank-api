@@ -127,7 +127,9 @@ It is intentionally focused on one goal: prove money correctness and operational
 - [28-demo-script.md](28-demo-script.md)
 - [29-interview-prep.md](29-interview-prep.md)
 - [30-showcase-runner.md](30-showcase-runner.md)
-- `showcase-output/latest-showcase-report.md`
+- `showcase-output/latest-showcase-report.md` — generated locally by
+  `30-showcase-runner.ps1`; gitignored, not part of this repo, so it won't
+  exist until you run the showcase yourself
 
 ### Intentional Stop Line
 This repo intentionally stops after Phase 6.0 showcase hardening.
