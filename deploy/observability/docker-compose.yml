@@ -1,0 +1,72 @@
+# Local observability stack.
+#
+#   docker compose -f deploy/observability/docker-compose.yml up -d
+#
+# Then run the application with:
+#   COREBANK_OTLP_ENABLED=true COREBANK_LOG_FORMAT=ecs ./mvnw spring-boot:run
+#
+# Grafana  http://localhost:3000  (anonymous, admin)
+# Prometheus http://localhost:9091
+#
+# Nothing here is a dependency of the application. With the stack down, the app still
+# runs, still records metrics and still stamps trace ids on every log line; it simply
+# has nowhere to export to, which is why export is a separate switch from tracing.
+name: corebank-observability
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    container_name: corebank-otel-collector
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP — what the application sends to
+      - "8889:8889"   # Prometheus exposition of pushed metrics
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: corebank-tempo
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo/tempo.yaml:ro
+    ports:
+      - "3200:3200"
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: corebank-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=24h
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      # 9091 on the host: 9090 is the application's port.
+      - "9091:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: corebank-grafana
+    environment:
+      # A local lab, not a shared deployment. Anonymous admin removes a login step
+      # that would otherwise sit between a reviewer and the dashboard.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_FEATURE_TOGGLES_ENABLE: traceqlEditor
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - tempo

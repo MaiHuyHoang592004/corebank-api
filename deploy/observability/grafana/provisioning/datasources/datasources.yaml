@@ -1,0 +1,20 @@
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: corebank-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      # Lets a Prometheus exemplar jump straight to the trace that produced it,
+      # which is the shortest path from "latency spiked" to "here is the slow span".
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: corebank-tempo
+
+  - name: Tempo
+    type: tempo
+    uid: corebank-tempo
+    access: proxy
+    url: http://tempo:3200

@@ -1,0 +1,68 @@
+# OpenTelemetry Collector — the one place that knows which backend is in use.
+#
+# The application only ever speaks OTLP. Choosing Tempo, Prometheus, Dynatrace,
+# Datadog or Splunk is a change to the exporters below, not a change to the
+# application, its dependencies or its configuration. That is the whole reason the
+# app exports OTLP rather than a vendor SDK.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  # Never let the collector grow without bound and take the host down with it.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 15
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  # Traces to Tempo.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Metrics are exposed for Prometheus to scrape rather than pushed, which keeps the
+  # collector stateless and lets Prometheus own retention.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  debug:
+    verbosity: basic
+
+  # ---------------------------------------------------------------------------
+  # Dynatrace, for reference. Uncomment, set the two variables, and add this
+  # exporter to the pipelines below; nothing in the application changes.
+  #
+  # otlphttp/dynatrace:
+  #   endpoint: ${env:DYNATRACE_OTLP_ENDPOINT}   # https://<env>.live.dynatrace.com/api/v2/otlp
+  #   headers:
+  #     Authorization: "Api-Token ${env:DYNATRACE_API_TOKEN}"
+  # ---------------------------------------------------------------------------
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [debug]
+  telemetry:
+    logs:
+      level: warn

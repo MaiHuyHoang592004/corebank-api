@@ -21,11 +21,33 @@ server:
   port: ${PORT:${SERVER_PORT:9090}}
   shutdown: graceful
 
+# Structured logs are opt-in. A developer reading a terminal wants the readable
+# format; a log pipeline wants one JSON object per line. ecs is the Elastic Common
+# Schema, which Dynatrace, Datadog, Splunk and Loki all ingest without a custom parser.
+logging:
+  structured:
+    format:
+      console: ${COREBANK_LOG_FORMAT:}
+    ecs:
+      service:
+        # Without this the ECS documents carry a service name but no environment, so a
+        # shared log backend cannot tell staging traffic from production traffic.
+        environment: ${COREBANK_ENVIRONMENT:local}
+    json:
+      context:
+        # Carry the MDC into every JSON log line, which is what puts correlationId,
+        # requestId and the actor next to the message rather than in a separate index.
+        include: true
+  # Used when structured logging is off. traceId and spanId come from Micrometer
+  # Tracing, so a log line can be pivoted to its trace without any extra plumbing.
+  pattern:
+    correlation: "[${spring.application.name:},%X{traceId:-},%X{spanId:-},%X{correlationId:-}] "
+
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       probes:
@@ -41,9 +63,56 @@ management:
         # the application is designed to degrade rather than fail when they are absent.
         readiness:
           include: readinessState,db
+    prometheus:
+      access: read_only
   health:
     # Redis is non-authoritative acceleration (rate limiting + idempotency replay cache)
     # and the documented local run starts PostgreSQL only, so its absence must not make
     # the aggregate health endpoint report DOWN.
     redis:
       enabled: false
+
+  metrics:
+    tags:
+      # Every series carries these, so one Prometheus or Dynatrace instance can hold
+      # several deployments without the queries becoming ambiguous.
+      application: ${spring.application.name}
+      environment: ${COREBANK_ENVIRONMENT:local}
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+  # Tracing is always instrumented, so every log line carries a trace id even with no
+  # collector running. Export is a separate switch: turning it on without a collector
+  # would just produce a steady stream of connection failures.
+  tracing:
+    enabled: true
+    sampling:
+      # A portfolio deployment sees little traffic, so sampling everything costs
+      # nothing and makes a demo reproducible. Lower this under real load.
+      probability: ${COREBANK_TRACE_SAMPLE_RATE:1.0}
+    export:
+      enabled: ${COREBANK_OTLP_ENABLED:false}
+    baggage:
+      correlation:
+        # Propagates the application's own correlation id across service boundaries
+        # and into the MDC alongside the trace id.
+        fields: correlationId,requestId
+
+  # OTLP is the wire format, not the vendor. The same exporter feeds an OpenTelemetry
+  # Collector, Prometheus via the collector, Dynatrace, Datadog or Grafana Tempo;
+  # switching backend is a change of endpoint, not of application code.
+  opentelemetry:
+    resource-attributes:
+      deployment.environment: ${COREBANK_ENVIRONMENT:local}
+      service.namespace: corebank
+    tracing:
+      export:
+        otlp:
+          endpoint: ${COREBANK_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+  otlp:
+    metrics:
+      export:
+        enabled: ${COREBANK_OTLP_ENABLED:false}
+        url: ${COREBANK_OTLP_METRICS_ENDPOINT:http://localhost:4318/v1/metrics}

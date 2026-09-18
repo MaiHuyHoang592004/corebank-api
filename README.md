@@ -106,6 +106,32 @@ filter, so an untagged test still runs.
 Every push and pull request runs both, then builds the container image and scans it.
 See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
+## Observability
+
+```bash
+docker compose -f deploy/observability/docker-compose.yml up -d
+COREBANK_OTLP_ENABLED=true COREBANK_LOG_FORMAT=ecs ./mvnw spring-boot:run
+# Grafana http://localhost:3000
+```
+
+Metrics, traces and structured logs, emitted over OpenTelemetry's wire protocol and
+nothing else, so the backend is a deployment decision: the same build feeds Prometheus
+and Tempo locally, or Dynatrace, Datadog or Splunk by changing an endpoint.
+
+Alongside the usual request rate, latency and heap, five metrics describe the system as
+a bank rather than as a web server: outbox backlog, dead letters, open reconciliation
+breaks, in-flight idempotency keys, and journals posted. Each answers a question a 200
+response cannot — a growing outbox backlog means downstream systems are drifting out of
+date while every API call still succeeds.
+
+Every log line carries the trace id, span id and a correlation id taken from the
+request, so a slow transfer pivots from a latency graph to the exact span and then to
+the log lines that span produced.
+
+[deploy/observability/README.md](deploy/observability/README.md) covers the metric
+catalogue, the alert rules and their runbooks, why the metrics endpoint stays behind
+authentication, and what is deliberately absent.
+
 ## Run on Kubernetes
 
 ```bash

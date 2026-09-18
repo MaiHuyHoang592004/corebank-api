@@ -27,6 +27,15 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: corebank-api
+      annotations:
+        # Discovery hints for a Prometheus that scrapes pods directly. The endpoint
+        # still requires credentials, so the scrape job needs basic_auth as well —
+        # see deploy/observability/prometheus.yml. Metrics disclose request paths and
+        # business volumes, which is not something a banking deployment should serve
+        # anonymously just to make scraping simpler.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        prometheus.io/path: /actuator/prometheus
     spec:
       # 30s of graceful shutdown (spring.lifecycle.timeout-per-shutdown-phase) plus
       # the preStop sleep, with headroom. Too short and the kubelet SIGKILLs a pod
@@ -54,6 +63,10 @@ spec:
           ports:
             - name: http
               containerPort: 9090
+            # Actuator listens here, not on http. The Service publishes http only, so
+            # nothing outside the cluster can reach /actuator through the Ingress.
+            - name: management
+              containerPort: 9091
           envFrom:
             - configMapRef:
                 name: corebank-config
@@ -83,7 +96,7 @@ spec:
           startupProbe:
             httpGet:
               path: /actuator/health/readiness
-              port: http
+              port: management
             periodSeconds: 5
             failureThreshold: 60
           # readiness: "should this pod receive traffic?" Gates on PostgreSQL,
@@ -91,7 +104,7 @@ spec:
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
-              port: http
+              port: management
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
@@ -100,7 +113,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
-              port: http
+              port: management
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3
