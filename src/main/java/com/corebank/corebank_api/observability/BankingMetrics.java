@@ -2,8 +2,10 @@ package com.corebank.corebank_api.observability;
 
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicLong;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -39,18 +41,27 @@ public class BankingMetrics {
 			"SELECT count(*) FROM reconciliation_breaks WHERE status IN ('OPEN', 'INVESTIGATING')";
 	private static final String IDEMPOTENCY_IN_FLIGHT =
 			"SELECT count(*) FROM idempotency_keys WHERE status = 'IN_PROGRESS'";
+	private static final String IDEMPOTENCY_STALE =
+			"SELECT count(*) FROM idempotency_keys "
+					+ "WHERE status = 'IN_PROGRESS' AND claimed_at < now() - (? * interval '1 second')";
 	private static final String JOURNALS = "SELECT count(*) FROM ledger_journals";
 
 	private final JdbcTemplate jdbcTemplate;
+	private final Duration claimLease;
 
 	private final AtomicLong outboxPending = new AtomicLong();
 	private final AtomicLong outboxDeadLetters = new AtomicLong();
 	private final AtomicLong openReconciliationBreaks = new AtomicLong();
 	private final AtomicLong idempotencyInFlight = new AtomicLong();
+	private final AtomicLong idempotencyStale = new AtomicLong();
 	private final AtomicLong ledgerJournals = new AtomicLong();
 
-	public BankingMetrics(JdbcTemplate jdbcTemplate, MeterRegistry registry) {
+	public BankingMetrics(
+			JdbcTemplate jdbcTemplate,
+			MeterRegistry registry,
+			@Value("${corebank.idempotency.claim-lease:PT2M}") Duration claimLease) {
 		this.jdbcTemplate = jdbcTemplate;
+		this.claimLease = claimLease;
 
 		gauge(registry, "corebank.outbox.pending", outboxPending,
 				"Outbox events written but not yet published. Sustained growth means the publisher "
@@ -60,8 +71,12 @@ public class BankingMetrics {
 		gauge(registry, "corebank.reconciliation.open_breaks", openReconciliationBreaks,
 				"Unresolved discrepancies between the ledger and an external statement.");
 		gauge(registry, "corebank.idempotency.in_flight", idempotencyInFlight,
-				"Money commands claimed but not yet resolved. A value that never returns to zero "
-						+ "means keys were stranded by a crash.");
+				"Money commands claimed but not yet resolved. Normal and short-lived under load.");
+		gauge(registry, "corebank.idempotency.stale", idempotencyStale,
+				"Claims older than the takeover lease. These belong to commands whose instance "
+						+ "stopped mid-flight: the money was rolled back, but the customer's "
+						+ "operation did not happen and nobody has retried it. This is the number "
+						+ "worth alerting on; in_flight on its own is just traffic.");
 		gauge(registry, "corebank.ledger.journals", ledgerJournals,
 				"Journals posted. The rate of change is the throughput of money actually moving.");
 	}
@@ -85,7 +100,18 @@ public class BankingMetrics {
 		update(outboxDeadLetters, OUTBOX_DEAD_LETTERS, "outbox dead letters");
 		update(openReconciliationBreaks, OPEN_BREAKS, "open reconciliation breaks");
 		update(idempotencyInFlight, IDEMPOTENCY_IN_FLIGHT, "in-flight idempotency keys");
+		updateStaleClaims();
 		update(ledgerJournals, JOURNALS, "ledger journals");
+	}
+
+	private void updateStaleClaims() {
+		try {
+			Long value = jdbcTemplate.queryForObject(
+					IDEMPOTENCY_STALE, Long.class, claimLease.toSeconds());
+			idempotencyStale.set(value == null ? 0L : value);
+		} catch (RuntimeException ex) {
+			log.warn("Could not refresh the stale idempotency claim metric: {}", ex.getMessage());
+		}
 	}
 
 	private void update(AtomicLong target, String sql, String label) {

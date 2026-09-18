@@ -7,6 +7,28 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:corebank}
     password: ${SPRING_DATASOURCE_PASSWORD:corebank123}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # Sized deliberately, not left at the default of 10.
+      #
+      # A money command can hold two connections at the same time: the business
+      # transaction, and the REQUIRES_NEW transaction that records the idempotency
+      # outcome inside it. So the pool must exceed twice the peak number of concurrent
+      # money commands, or the service starves itself — every in-flight command holds
+      # one connection and waits for a second that nobody can release.
+      #
+      # That is not theoretical. Fourteen concurrent requests against a cold instance
+      # with the default pool of 10 produced ten HTTP 500s and took the full
+      # thirty-second connection timeout to clear. The identical burst against a pool
+      # of 40 finished in one second with no errors. Exactly-once held in both cases;
+      # what failed was availability, not correctness.
+      #
+      # 20 leaves room for roughly ten concurrent money commands per instance. Three
+      # replicas at this setting use 60 of PostgreSQL's default 100 connections, which
+      # is why this is a deliberate number rather than a large one.
+      #
+      # The real fix is to stop holding two connections per command. Until that
+      # refactor, this is the bound that keeps the failure out of reach.
+      maximum-pool-size: ${COREBANK_DB_POOL_SIZE:20}
 
   flyway:
     enabled: true

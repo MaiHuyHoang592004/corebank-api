@@ -40,3 +40,9 @@ data:
   #
   # deploy/observability brings the same collector up locally with docker compose.
   COREBANK_OTLP_ENABLED: "false"
+
+  # A money command can hold two connections at once, so the pool has to exceed twice
+  # the peak concurrent commands per instance or the service starves itself. Three
+  # replicas at 20 use 60 of PostgreSQL's default 100 connections; raising this without
+  # raising max_connections on the database moves the failure rather than removing it.
+  COREBANK_DB_POOL_SIZE: "20"

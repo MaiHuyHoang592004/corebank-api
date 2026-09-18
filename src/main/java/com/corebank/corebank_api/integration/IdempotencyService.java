@@ -7,10 +7,13 @@ import java.sql.Timestamp;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -20,14 +23,28 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
+@Slf4j
 public class IdempotencyService {
 
 	private final JdbcTemplate jdbcTemplate;
 	private final RedisIdempotencyCacheService redisIdempotencyCacheService;
 
+	/**
+	 * How long a claim is presumed live before a retry may take it over.
+	 *
+	 * <p>Two minutes is far longer than any money command legitimately takes and far shorter than
+	 * the time it takes anyone to notice a stuck payment. Setting it too low risks executing a
+	 * command twice while the first attempt is still running; too high and a crash leaves customers
+	 * unable to retry for that long. If a command ever genuinely needs longer than this, the answer
+	 * is to make it asynchronous, not to raise the lease.
+	 */
+	private final Duration claimLease;
+
 	public IdempotencyService(
 			JdbcTemplate jdbcTemplate,
-			RedisIdempotencyCacheService redisIdempotencyCacheService) {
+			RedisIdempotencyCacheService redisIdempotencyCacheService,
+			@Value("${corebank.idempotency.claim-lease:PT2M}") Duration claimLease) {
+		this.claimLease = claimLease;
 		this.jdbcTemplate = jdbcTemplate;
 		this.redisIdempotencyCacheService = redisIdempotencyCacheService;
 	}
@@ -45,25 +62,38 @@ public class IdempotencyService {
 			return evaluateExisting(existing.get(), requestHash, expiresAt);
 		}
 
-		try {
-			jdbcTemplate.update(
-					"""
-					INSERT INTO idempotency_keys (
-					    idempotency_key,
-					    request_hash,
-					    status,
-					    expires_at
-					) VALUES (?, ?, 'IN_PROGRESS', ?)
-					""",
-					idempotencyKey,
-					requestHash,
-					Timestamp.from(expiresAt));
+		// ON CONFLICT rather than catching DuplicateKeyException.
+		//
+		// A unique-violation aborts the PostgreSQL transaction, so every statement after it fails
+		// with SQLSTATE 25P02 until the transaction ends. The previous version caught the exception
+		// and then read the row back inside that same aborted transaction, which could not work: a
+		// duplicate that lost the insert race returned 500 instead of being told the request was
+		// already running. A client that retries on 5xx would have kept hammering.
+		//
+		// Letting the database decide the winner keeps the claim race-safe; the difference is only
+		// that the loser now learns it lost without poisoning its own transaction.
+		int claimed = jdbcTemplate.update(
+				"""
+				INSERT INTO idempotency_keys (
+				    idempotency_key,
+				    request_hash,
+				    status,
+				    expires_at
+				) VALUES (?, ?, 'IN_PROGRESS', ?)
+				ON CONFLICT (idempotency_key) DO NOTHING
+				""",
+				idempotencyKey,
+				requestHash,
+				Timestamp.from(expiresAt));
+
+		if (claimed == 1) {
 			return StartResult.started(requestHash, expiresAt);
-		} catch (DuplicateKeyException ex) {
-			IdempotencyRecord duplicate = findByKey(idempotencyKey)
-					.orElseThrow(() -> new CoreBankException("Idempotency key conflict occurred but record is unavailable", ex));
-			return evaluateExisting(duplicate, requestHash, expiresAt);
 		}
+
+		IdempotencyRecord duplicate = findByKey(idempotencyKey)
+				.orElseThrow(() -> new CoreBankException(
+						"Idempotency key conflict occurred but record is unavailable"));
+		return evaluateExisting(duplicate, requestHash, expiresAt);
 	}
 
 	@Transactional
@@ -140,6 +170,7 @@ public class IdempotencyService {
 				       status,
 				       response_body,
 				       created_at,
+				       claimed_at,
 				       completed_at,
 				       expires_at
 				FROM idempotency_keys
@@ -150,7 +181,8 @@ public class IdempotencyService {
 						rs.getString("request_hash"),
 						rs.getString("status"),
 						rs.getString("response_body"),
-						toInstant(rs.getTimestamp("expires_at"))),
+						toInstant(rs.getTimestamp("expires_at")),
+						toInstant(rs.getTimestamp("claimed_at"))),
 				idempotencyKey);
 
 		return results.stream().findFirst();
@@ -177,6 +209,7 @@ public class IdempotencyService {
 					SET status = 'IN_PROGRESS',
 					    response_body = NULL,
 					    completed_at = NULL,
+					    claimed_at = now(),
 					    expires_at = ?
 					WHERE idempotency_key = ?
 					  AND request_hash = ?
@@ -196,10 +229,66 @@ public class IdempotencyService {
 		}
 
 		if ("IN_PROGRESS".equals(existing.status())) {
-			throw new CoreBankException("Idempotent request is already in progress");
+			return takeOverOrReject(existing, requestHash, expiresAt);
 		}
 
 		throw new CoreBankException("Idempotent request exists in unsupported state: " + existing.status());
+	}
+
+	/**
+	 * Decides whether an IN_PROGRESS claim is still live or was abandoned by a process that is no
+	 * longer running.
+	 *
+	 * <p>A command claims its key, executes, and marks the outcome. If the instance dies between
+	 * the first and the last step the claim is left behind. The database rolls the money back, so
+	 * nothing is lost or double-posted — but without this, the key stayed IN_PROGRESS forever, the
+	 * client's retry was rejected forever, and the maintenance job never touched it because it only
+	 * deletes terminal rows. The operation could not be completed and could not be abandoned.
+	 *
+	 * <p>The lease is the presumption of death. A claim older than the window cannot belong to a
+	 * command still running, because a money command that takes minutes has already failed by a
+	 * different route. The takeover is a conditional update rather than a read followed by a write,
+	 * so when two retries arrive together exactly one wins and the other is told to wait.
+	 */
+	private StartResult takeOverOrReject(IdempotencyRecord existing, String requestHash, Instant expiresAt) {
+		Instant claimedAt = existing.claimedAt();
+		boolean leaseExpired =
+				claimedAt == null || claimedAt.isBefore(Instant.now().minus(claimLease));
+
+		if (!leaseExpired) {
+			// Genuinely concurrent duplicate: the original is still running and will produce the
+			// answer. Rejecting is correct; executing twice is not.
+			throw new CoreBankException("Idempotent request is already in progress");
+		}
+
+		int takenOver = jdbcTemplate.update(
+				"""
+				UPDATE idempotency_keys
+				SET claimed_at = now(),
+				    expires_at = ?
+				WHERE idempotency_key = ?
+				  AND request_hash = ?
+				  AND status = 'IN_PROGRESS'
+				  AND claimed_at < ?
+				""",
+				Timestamp.from(expiresAt),
+				existing.idempotencyKey(),
+				requestHash,
+				Timestamp.from(Instant.now().minus(claimLease)));
+
+		if (takenOver == 1) {
+			log.warn(
+					"Reclaimed an abandoned idempotency claim. key={} claimedAt={} lease={}. The "
+							+ "original attempt did not record an outcome, which normally means the "
+							+ "instance holding it stopped mid-command.",
+					existing.idempotencyKey(),
+					claimedAt,
+					claimLease);
+			return StartResult.started(requestHash, expiresAt);
+		}
+
+		// Another retry took it over first; it is live again and this caller must wait.
+		throw new CoreBankException("Idempotent request is already in progress");
 	}
 
 	private String sha256Hex(String value) {
@@ -244,7 +333,8 @@ public class IdempotencyService {
 			String requestHash,
 			String status,
 			String responseBody,
-			Instant expiresAt) {
+			Instant expiresAt,
+			Instant claimedAt) {
 	}
 
 	public record StartResult(boolean replay, String requestHash, Instant expiresAt, String responseBodyJson) {
