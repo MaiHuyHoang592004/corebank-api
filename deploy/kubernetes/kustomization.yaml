@@ -16,5 +16,25 @@ resources:
 # secret.yaml is intentionally absent: it is generated from secret.example.yaml and
 # is not committed. Apply it separately before the first rollout.
 
-commonLabels:
-  app.kubernetes.io/part-of: corebank
+# The image tag to deploy.
+#
+# CI publishes to GHCR on every push, but `latest` is only applied on the default
+# branch, so it does not exist until a build lands on main. Every build also gets
+# `sha-<commit>` and a sanitised branch tag, which are the tags to use when deploying
+# from a feature branch:
+#
+#   kubectl kustomize deploy/kubernetes | kubectl apply -f -
+#   # or override without editing this file:
+#   cd deploy/kubernetes && kustomize edit set image \
+#     ghcr.io/maihuyhoang592004/corebank-api=ghcr.io/maihuyhoang592004/corebank-api:sha-<commit>
+images:
+  - name: ghcr.io/maihuyhoang592004/corebank-api
+    newTag: latest
+
+# includeSelectors is false deliberately. A Deployment's selector is immutable once
+# created, so folding a common label into it means any later change to that label
+# requires deleting and recreating the Deployment.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: corebank
+    includeSelectors: false

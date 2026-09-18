@@ -39,6 +39,30 @@ kubectl apply -k .
 kubectl -n corebank rollout status deployment/corebank-api --timeout=300s
 ```
 
+### Choosing the image tag
+
+CI publishes to `ghcr.io/maihuyhoang592004/corebank-api` on every push, but the
+`latest` tag is only applied on the default branch. Deploying from a feature branch
+with the default manifest gives `ImagePullBackOff`, because that tag does not exist
+yet. Every build is also tagged `sha-<commit>` and with a sanitised branch name, so
+pick one of those:
+
+```bash
+cd deploy/kubernetes
+kustomize edit set image \
+  ghcr.io/maihuyhoang592004/corebank-api=ghcr.io/maihuyhoang592004/corebank-api:sha-<commit>
+```
+
+The package is private by default, so the cluster needs a pull secret unless the
+package visibility is set to public in the repository's package settings:
+
+```bash
+kubectl -n corebank create secret docker-registry ghcr \
+  --docker-server=ghcr.io --docker-username=<github-user> --docker-password=<token>
+kubectl -n corebank patch serviceaccount default \
+  -p '{"imagePullSecrets":[{"name":"ghcr"}]}'
+```
+
 Then add `127.0.0.1 corebank.local` to `/etc/hosts` and open
 `http://corebank.local/dashboard/`, or skip the Ingress entirely:
 
