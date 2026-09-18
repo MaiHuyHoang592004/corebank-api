@@ -66,6 +66,17 @@ public class LedgerCommandService {
 		List<HotAccountSlotRuntimeService.SlottingDecision> slottingDecisions = new ArrayList<>();
 
 		UUID journalId = UUID.randomUUID();
+
+		// Serialize the hash chain for the rest of this transaction.
+		//
+		// Appending to a tamper-evident chain is read-latest-then-insert, which is not safe under
+		// READ COMMITTED: two concurrent journals both read the same row_hash, both store it as
+		// prev_row_hash, and the chain forks — the property the chain exists to provide is lost,
+		// silently. A linear chain is inherently serial, so this lock is the honest cost of the
+		// design rather than a bottleneck to optimize away. It is transaction-scoped, so it is
+		// released on commit or rollback without an explicit unlock.
+		lockJournalChain();
+
 		byte[] prevRowHash = findLatestJournalRowHash().orElse(null);
 		byte[] rowHash = buildJournalRowHash(command, journalId, prevRowHash);
 
@@ -177,12 +188,22 @@ public class LedgerCommandService {
 		}
 	}
 
+	/**
+	 * Advisory-lock key for the ledger journal hash chain. Arbitrary but stable; it must not
+	 * collide with {@code AuditService}'s key, which guards a different chain.
+	 */
+	private static final long JOURNAL_CHAIN_LOCK_KEY = 842_100_001L;
+
+	private void lockJournalChain() {
+		jdbcTemplate.queryForList("SELECT pg_advisory_xact_lock(?)", JOURNAL_CHAIN_LOCK_KEY);
+	}
+
 	private Optional<byte[]> findLatestJournalRowHash() {
 		List<byte[]> hashes = jdbcTemplate.query(
 				"""
 				SELECT row_hash
 				FROM ledger_journals
-				ORDER BY created_at DESC, journal_id DESC
+				ORDER BY chain_seq DESC
 				LIMIT 1
 				""",
 				(rs, rowNum) -> rs.getBytes("row_hash"));

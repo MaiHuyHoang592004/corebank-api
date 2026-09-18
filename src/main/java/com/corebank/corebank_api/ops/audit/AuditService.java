@@ -20,7 +20,18 @@ public class AuditService {
 		this.jdbcTemplate = jdbcTemplate;
 	}
 
+	/**
+	 * Advisory-lock key for the audit hash chain. Distinct from the ledger journal chain key so the
+	 * two chains never block each other.
+	 */
+	private static final long AUDIT_CHAIN_LOCK_KEY = 842_100_002L;
+
 	public void appendEvent(AuditCommand command) {
+		// See LedgerCommandService#lockJournalChain: read-latest-then-insert forks the chain under
+		// concurrency. The lock is transaction-scoped, so callers must already be in a transaction
+		// for it to span the read and the insert — every money path that audits is.
+		jdbcTemplate.queryForList("SELECT pg_advisory_xact_lock(?)", AUDIT_CHAIN_LOCK_KEY);
+
 		byte[] prevRowHash = findLatestAuditRowHash().orElse(null);
 		byte[] rowHash = buildAuditRowHash(command, prevRowHash);
 
@@ -60,7 +71,7 @@ public class AuditService {
 				"""
 				SELECT row_hash
 				FROM audit_events
-				ORDER BY created_at DESC, audit_id DESC
+				ORDER BY audit_id DESC
 				LIMIT 1
 				""",
 				(rs, rowNum) -> rs.getBytes("row_hash"));

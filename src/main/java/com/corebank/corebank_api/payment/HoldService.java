@@ -10,7 +10,9 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.RowMapper;
@@ -189,6 +191,17 @@ public class HoldService {
 		UUID beneficiaryCustomerAccountId = command.beneficiaryCustomerAccountId() != null
 				? command.beneficiaryCustomerAccountId()
 				: hold.payeeAccountId();
+
+		// Settle the beneficiary's available balance.
+		//
+		// postJournal only moves posted_balance_minor. The payer's available balance was already
+		// reduced when the hold was authorized, so capture must not touch it again — but without
+		// the credit below the beneficiary's posted balance rises while their available balance
+		// does not, leaving captured funds visible and unspendable. Customer-account locks are
+		// taken here, before postJournal takes ledger-account locks, so that capture, transfer and
+		// refund all acquire the two lock classes in the same order.
+		applyAvailableBalanceDeltas(
+				availableDeltas(beneficiaryCustomerAccountId, command.amountMinor()), "capture");
 
 		UUID journalId = ledgerCommandService.postJournal(
 				new LedgerCommandService.PostJournalCommand(
@@ -407,6 +420,26 @@ public class HoldService {
 			throw new CoreBankException("No capture postings found for payment order: " + command.paymentOrderId());
 		}
 
+		// Settle available balances before posting, mirroring captureHold's lock ordering.
+		//
+		// The payer's available balance was reduced at authorize time and is restored here. The
+		// beneficiary was credited at capture, so a refund must take the same amount back out;
+		// omitting that side would let a captured-then-refunded payment leave the beneficiary
+		// permanently richer. Both accounts are locked in one deterministic-order statement so a
+		// refund cannot deadlock against a concurrent transfer touching the same pair.
+		UUID refundBeneficiaryAccountId = capturePostings.stream()
+				.filter(cp -> "C".equals(cp.entrySide()) && cp.customerAccountId() != null)
+				.map(CapturePosting::customerAccountId)
+				.findFirst()
+				.orElse(null);
+
+		Map<UUID, Long> refundDeltas = new LinkedHashMap<>();
+		refundDeltas.merge(order.payerAccountId(), command.amountMinor(), Long::sum);
+		if (refundBeneficiaryAccountId != null) {
+			refundDeltas.merge(refundBeneficiaryAccountId, -command.amountMinor(), Long::sum);
+		}
+		applyAvailableBalanceDeltas(refundDeltas, "refund");
+
 		// Build reversal postings (flip D↔C, use refund amount)
 		List<LedgerCommandService.PostingInstruction> refundPostings = new ArrayList<>();
 		for (CapturePosting cp : capturePostings) {
@@ -431,18 +464,6 @@ public class HoldService {
 						command.actor(),
 						command.correlationId(),
 						refundPostings));
-
-		// Restore payer's available_balance (reduced at authorize time, not restored at capture)
-		jdbcTemplate.update(
-				"""
-				UPDATE customer_accounts
-				SET available_balance_minor = available_balance_minor + ?,
-				    version = version + 1,
-				    updated_at = now()
-				WHERE customer_account_id = ?
-				""",
-				command.amountMinor(),
-				order.payerAccountId());
 
 		long newRefundedAmount = order.refundedAmountMinor() + command.amountMinor();
 		boolean fullyRefunded = newRefundedAmount >= capturedAmount;
@@ -484,6 +505,70 @@ public class HoldService {
 				nextStatus,
 				order.externalOrderRef(),
 				order.currency());
+	}
+
+	private static Map<UUID, Long> availableDeltas(UUID customerAccountId, long deltaMinor) {
+		Map<UUID, Long> deltas = new LinkedHashMap<>();
+		if (customerAccountId != null) {
+			deltas.put(customerAccountId, deltaMinor);
+		}
+		return deltas;
+	}
+
+	/**
+	 * Applies signed available-balance changes to a set of customer accounts inside the caller's
+	 * transaction.
+	 *
+	 * <p>Accounts are locked in one {@code ORDER BY customer_account_id ... FOR UPDATE} statement so
+	 * that every money path acquires customer-account locks in the same order, and net-zero entries
+	 * (a payer refunding itself) are dropped rather than producing two offsetting writes.
+	 *
+	 * <p>A resulting negative balance is rejected as an explicit domain error instead of being left
+	 * to the {@code available_balance_minor >= 0} check constraint, which would surface as a 500.
+	 */
+	private void applyAvailableBalanceDeltas(Map<UUID, Long> deltas, String operation) {
+		Map<UUID, Long> effective = new LinkedHashMap<>();
+		deltas.forEach((accountId, delta) -> {
+			if (accountId != null && delta != null && delta != 0L) {
+				effective.put(accountId, delta);
+			}
+		});
+
+		if (effective.isEmpty()) {
+			return;
+		}
+
+		List<CustomerAccount> lockedAccounts =
+				accountBalanceRepository.lockByIdsInDeterministicOrder(effective.keySet());
+
+		if (lockedAccounts.size() != effective.size()) {
+			throw new CoreBankException(
+					"Unable to lock all customer accounts for " + operation);
+		}
+
+		for (CustomerAccount account : lockedAccounts) {
+			long delta = effective.get(account.getCustomerAccountId());
+			long availableAfter = account.getAvailableBalanceMinor() + delta;
+
+			if (availableAfter < 0) {
+				throw new InsufficientFundsException(
+						"Insufficient available balance on account "
+								+ account.getCustomerAccountId()
+								+ " to complete "
+								+ operation);
+			}
+
+			boolean updated = accountBalanceRepository.updateAvailableBalance(
+					account.getCustomerAccountId(), availableAfter, account.getVersion());
+
+			if (!updated) {
+				throw new CoreBankException(
+						"Failed to update available balance on account "
+								+ account.getCustomerAccountId()
+								+ " during "
+								+ operation);
+			}
+		}
 	}
 
 	private Optional<HoldSnapshot> lockHold(UUID holdId) {

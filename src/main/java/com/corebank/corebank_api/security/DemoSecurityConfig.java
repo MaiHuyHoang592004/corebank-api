@@ -31,7 +31,15 @@ public class DemoSecurityConfig {
 								"/api/deposits/maturity"))
 				.authorizeHttpRequests(authorize -> {
 					authorize
-						.requestMatchers("/actuator/health").permitAll()
+						// The probe paths must be anonymous: kubelet sends no credentials, so a 401 on
+						// liveness restart-loops every pod and a 401 on readiness keeps them all out of
+						// the Service. Listed explicitly rather than as /actuator/health/** so that
+						// per-indicator detail paths stay behind authentication.
+						.requestMatchers(
+								"/actuator/health",
+								"/actuator/health/liveness",
+								"/actuator/health/readiness")
+						.permitAll()
 							.requestMatchers("/", "/index.html").permitAll()
 							.requestMatchers("/dashboard", "/dashboard/**").permitAll()
 						.requestMatchers("/api/demo/**").hasAnyRole("OPS", "ADMIN")
