@@ -10,6 +10,13 @@ COPY pom.xml .
 RUN mvn -B -ntp dependency:go-offline
 
 COPY src/ src/
+# The build packages a few project documents onto the classpath for the dashboard's
+# document links (see <resources> in pom.xml). Maven silently skips a resource
+# directory that does not exist, so omitting these would put the links back to 404
+# in the image without failing the build.
+COPY README.md README.md
+COPY docs/ docs/
+
 RUN mvn -B -ntp package -DskipTests
 
 # ---------------------------------------------------------------- runtime

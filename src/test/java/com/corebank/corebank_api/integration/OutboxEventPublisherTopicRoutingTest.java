@@ -2,8 +2,10 @@ package com.corebank.corebank_api.integration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
+@Tag("fast")
 class OutboxEventPublisherTopicRoutingTest {
 
 	@Test

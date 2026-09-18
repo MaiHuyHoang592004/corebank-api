@@ -2,7 +2,7 @@
 
 **Production-signal fintech backend portfolio — PostgreSQL truth, money correctness, and operational control in a deployable modular monolith.**
 
-[![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](#live-demo) &nbsp; [![Spring Boot](https://img.shields.io/badge/spring%20boot-4.0.4-blue)](#) &nbsp; [![Java](https://img.shields.io/badge/java-17-orange)](#) &nbsp; [![PostgreSQL](https://img.shields.io/badge/postgresql-16-blue)](#)
+[![CI](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml) &nbsp; [![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](#live-demo) &nbsp; [![Spring Boot](https://img.shields.io/badge/spring%20boot-4.0.4-blue)](#) &nbsp; [![Java](https://img.shields.io/badge/java-17-orange)](#) &nbsp; [![PostgreSQL](https://img.shields.io/badge/postgresql-16-blue)](#)
 
 > **Why this exists:** Prove that a backend engineer can design, implement, and deploy a realistic fintech system with correct money semantics — not just wire up a CRUD API.
 
@@ -87,6 +87,24 @@ docker compose up -d postgres redis
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=showcase
 pwsh docs/30-showcase-runner.ps1
 ```
+
+## Tests
+
+```bash
+# Everything. Needs a running Docker daemon: the money paths are covered by
+# integration tests that talk to a real PostgreSQL through Testcontainers.
+./mvnw verify
+
+# The container-free subset — 29 tests, a few seconds, no Docker.
+./mvnw -Dgroups=fast test
+```
+
+The `fast` tag exists so CI can fail a broken build in about a minute instead of
+twenty. It only adds a quicker signal: the full job runs the whole suite with no tag
+filter, so an untagged test still runs.
+
+Every push and pull request runs both, then builds the container image and scans it.
+See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
 ## Deploy (Render)
 

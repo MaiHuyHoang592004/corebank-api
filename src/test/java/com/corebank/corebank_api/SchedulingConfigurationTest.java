@@ -9,6 +9,7 @@ import com.corebank.corebank_api.integration.OutboxEventPublisher;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.util.List;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.env.YamlPropertySourceLoader;
@@ -35,6 +36,7 @@ import org.springframework.scheduling.annotation.Scheduled;
  * <p>These assertions run without a Spring context, a database or Docker, so they stay fast and
  * usable as a pre-push check.
  */
+@Tag("fast")
 class SchedulingConfigurationTest {
 
 	@Test

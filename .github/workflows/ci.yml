@@ -1,0 +1,155 @@
+name: CI
+
+# Every push to a branch in this repository and every pull request. The money paths
+# here are covered almost entirely by tests that talk to a real PostgreSQL through
+# Testcontainers, so "it compiles" is not a useful gate on its own.
+on:
+  push:
+    branches:
+      - main
+      - 'hoangmh/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+# A newer push to the same branch makes the in-flight run irrelevant. The full suite
+# is slow, so not cancelling wastes a runner for twenty minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '17'
+
+jobs:
+  # ---------------------------------------------------------------- fast feedback
+  # The 29 tests tagged "fast" need no container and finish in seconds, so a broken
+  # build or a regressed invariant surfaces in about a minute instead of twenty.
+  #
+  # This job can only ADD signal: the verify job below runs the whole suite with no
+  # tag filter, so forgetting to tag a new test costs speed, never coverage.
+  fast-checks:
+    name: Compile and container-free tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Compile main and test sources
+        run: ./mvnw -B -ntp test-compile
+
+      - name: Run container-free tests
+        run: ./mvnw -B -ntp -Dgroups=fast test
+
+  # ---------------------------------------------------------------- full suite
+  verify:
+    name: Full test suite (Testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      # ubuntu-latest ships a running Docker daemon, which is all Testcontainers
+      # needs. Pulling the images up front keeps the first test from paying for it
+      # and makes a registry problem look like a registry problem.
+      - name: Pre-pull test images
+        run: |
+          docker pull postgres:16-alpine
+          docker pull redis:7-alpine
+
+      - name: Run the full suite
+        run: ./mvnw -B -ntp verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------- image
+  # Only runs once the code is known good. Pull requests build the image to prove the
+  # Dockerfile still works but do not publish one.
+  image:
+    name: Build image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [fast-checks, verify]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image name
+        id: image
+        # GHCR rejects uppercase path segments and this repository's owner has them.
+        run: |
+          echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            # Deterministic across every event type. On a pull request the sha tag is
+            # derived from the PR head rather than github.sha, so it is not a reliable
+            # handle for the scan step below.
+            type=raw,value=ci-${{ github.run_id }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The base JRE image carries CVEs that have no fix available, and failing on
+      # those would make CI permanently red without telling anyone anything. This
+      # fails only on a CRITICAL finding that can actually be remediated.
+      - name: Scan image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.image.outputs.name }}:ci-${{ github.run_id }}
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
