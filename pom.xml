@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.0.4</version>
+		<version>4.0.8</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.corebank</groupId>
@@ -37,6 +37,15 @@
 	</scm>
 	<properties>
 		<java.version>17</java.version>
+		<!--
+			Overrides the Tomcat version managed by Spring Boot 4.0.8 (11.0.24).
+			The container image scan in CI gates on fixable CRITICAL findings, and
+			11.0.24 still carries two: CVE-2026-65182 (security constraint bypass via
+			improper access control) and CVE-2026-65905 (authentication bypass via a
+			replay attack on the DIGEST authenticator). Both are fixed in 11.0.25.
+			Remove this override once the managed version reaches 11.0.25 or later.
+		-->
+		<tomcat.version>11.0.26</tomcat.version>
 	</properties>
 	<dependencies>
 		<dependency>

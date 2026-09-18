@@ -2,7 +2,7 @@
 
 **Production-signal fintech backend portfolio — PostgreSQL truth, money correctness, and operational control in a deployable modular monolith.**
 
-[![CI](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml) &nbsp; [![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](#live-demo) &nbsp; [![Spring Boot](https://img.shields.io/badge/spring%20boot-4.0.4-blue)](#) &nbsp; [![Java](https://img.shields.io/badge/java-17-orange)](#) &nbsp; [![PostgreSQL](https://img.shields.io/badge/postgresql-16-blue)](#)
+[![CI](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml) &nbsp; [![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](#live-demo) &nbsp; [![Spring Boot](https://img.shields.io/badge/spring%20boot-4.0.8-blue)](#) &nbsp; [![Java](https://img.shields.io/badge/java-17-orange)](#) &nbsp; [![PostgreSQL](https://img.shields.io/badge/postgresql-16-blue)](#)
 
 > **Why this exists:** Prove that a backend engineer can design, implement, and deploy a realistic fintech system with correct money semantics — not just wire up a CRUD API.
 
