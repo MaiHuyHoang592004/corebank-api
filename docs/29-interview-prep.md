@@ -25,8 +25,8 @@
    - business transaction commits first
    - outbox guarantees delayed publication instead of unsafe direct publish
 5. Explain the stop line.
-   - the repo already demonstrates real fintech maturity
-   - more infra work would reduce explainability ROI
+   - the domain roadmap (Phase 0 to 5) is complete
+   - further work goes into platform and operations, not more banking features
 
 ## Strongest Five Talking Points
 1. PostgreSQL is the financial source of truth.
@@ -59,8 +59,8 @@ The project relies on idempotency keys, transactional boundaries, outbox-after-c
 ### What is the Redis story in one sentence?
 Redis improves performance and short-term coordination, but PostgreSQL still decides both money truth and idempotency truth.
 
-### Why did you stop at this point?
-Because after Phase 5.18 the repo already proves the most valuable interview signals. More hardening would add code volume faster than it adds explainable value.
+### Why did you stop adding banking features?
+Because the roadmap's Phase 0 to 5 is complete and the remaining value is in running the system, not widening it. More domain code would add volume faster than it adds anything I can explain.
 
 ## What To Emphasize
 - correctness over cleverness
@@ -75,7 +75,7 @@ Because after Phase 5.18 the repo already proves the most valuable interview sig
 - pretending the project is a full bank core replacement
 
 ## Why I Stopped Here
-I stopped after Phase 5.18 because the project already crossed the threshold of a believable fintech backend:
+I stopped adding banking features once the roadmap's Phase 5 was complete, because the project had crossed the threshold of a believable fintech backend:
 - real money-flow modeling
 - production-style controls
 - selective infrastructure hardening

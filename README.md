@@ -14,7 +14,7 @@
 
 > Render free-tier services may take 30–90 seconds to wake up on the first request.
 
-*Demo runs on Render free tier. First request may take 30-60 seconds to wake up. PostgreSQL data resets after 90 days (free tier limit). Kafka and Redis are disabled in public showcase — the app runs on PostgreSQL alone.*
+*Demo runs on Render free tier. PostgreSQL data resets after 90 days (free tier limit). Kafka and Redis are disabled in public showcase — the app runs on PostgreSQL alone.*
 
 ## Demo Credentials
 
@@ -33,9 +33,11 @@
 5. Run **Capture Hold** → payment settled, journal updated
 6. Run **Internal Transfer** with an `Idempotency-Key` header
 7. Replay the same transfer with the same key → returns the **original** response (exactly-once)
-8. Check the **Reconciliation** tab for automated internal/external break detection
+8. Trigger a reconciliation run over the ops API and read the breaks it reports:
+   `POST /api/ops/reconciliation/runs` then `GET /api/ops/reconciliation/breaks`
+   (the dashboard itself has four tabs — payment, transfer, deposit, lending)
 
-For depth: [28-demo-script.md](28-demo-script.md) | [29-interview-prep.md](29-interview-prep.md)
+For depth: [28-demo-script.md](docs/28-demo-script.md) | [29-interview-prep.md](docs/29-interview-prep.md)
 
 ## What This Proves
 
@@ -72,18 +74,18 @@ In public showcase, Kafka and Redis are **optional** — the app runs with Postg
 
 ## Run Locally
 
-```powershell
-# PostgreSQL only (Kafka and Redis are optional)
+```bash
+# PostgreSQL only — Kafka and Redis are optional and the app degrades without them
 docker compose up -d postgres
 ./mvnw spring-boot:run
 # open http://localhost:9090/
 ```
 
-```powershell
-# Full stack with showcase runner
+```bash
+# With Redis enabled, plus the PowerShell showcase runner
 docker compose up -d postgres redis
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=showcase
-.\30-showcase-runner.ps1
+pwsh docs/30-showcase-runner.ps1
 ```
 
 ## Deploy (Render)
@@ -124,13 +126,14 @@ It is intentionally focused on one goal: prove money correctness and operational
 - Reliability layers: outbox pattern, saga/read-model baseline, targeted hardening on transient failures.
 
 ### Quick Credibility Evidence
-- [28-demo-script.md](28-demo-script.md)
-- [29-interview-prep.md](29-interview-prep.md)
-- [30-showcase-runner.md](30-showcase-runner.md)
-- `showcase-output/latest-showcase-report.md`
+- [28-demo-script.md](docs/28-demo-script.md)
+- [29-interview-prep.md](docs/29-interview-prep.md)
+- [30-showcase-runner.md](docs/30-showcase-runner.md)
+- `showcase-output/latest-showcase-report.md` (generated locally by the showcase runner; not committed)
 
 ### Intentional Stop Line
-This repo intentionally stops after Phase 6.0 showcase hardening.
+Feature work on the banking domain is intentionally finished; the roadmap in
+[docs/12-roadmap.md](docs/12-roadmap.md) runs to Phase 5 and the repo has completed it.
 
 Reason:
 - The project already demonstrates realistic fintech backend signals for interview evaluation.
@@ -138,25 +141,15 @@ Reason:
 - The narrative is now clear and defensible: PostgreSQL truth first, Redis/Kafka supportive only.
 
 ### Doc Map
-1. [01-project-overview.md](01-project-overview.md)
-2. [04-system-architecture.md](04-system-architecture.md)
-3. [07-financial-invariants.md](07-financial-invariants.md)
-4. [14-source-of-truth-map.md](14-source-of-truth-map.md)
-5. [16-sequence-diagrams.md](16-sequence-diagrams.md)
-6. [18-testing-strategy.md](18-testing-strategy.md)
-7. [19-runtime-failure-modes.md](19-runtime-failure-modes.md)
-8. [20-acceptance-criteria.md](20-acceptance-criteria.md)
-9. [28-demo-script.md](28-demo-script.md)
-10. [29-interview-prep.md](29-interview-prep.md)
-
-### Secondary Internal Docs
-Internal AI/Cline operating docs are kept for workspace operations and are secondary to the interview narrative:
-- [AGENTS.md](AGENTS.md)
-- [21-cline-operating-model.md](21-cline-operating-model.md)
-- [22-cline-policy-kit.md](22-cline-policy-kit.md)
-- [23-cline-workflows.md](23-cline-workflows.md)
-- [24-cline-prompts-and-task-templates.md](24-cline-prompts-and-task-templates.md)
-- [25-cline-model-strategy.md](25-cline-model-strategy.md)
-- [26-cline-troubleshooting.md](26-cline-troubleshooting.md)
+1. [01-project-overview.md](docs/01-project-overview.md)
+2. [04-system-architecture.md](docs/04-system-architecture.md)
+3. [07-financial-invariants.md](docs/07-financial-invariants.md)
+4. [14-source-of-truth-map.md](docs/14-source-of-truth-map.md)
+5. [16-sequence-diagrams.md](docs/16-sequence-diagrams.md)
+6. [18-testing-strategy.md](docs/18-testing-strategy.md)
+7. [19-runtime-failure-modes.md](docs/19-runtime-failure-modes.md)
+8. [20-acceptance-criteria.md](docs/20-acceptance-criteria.md)
+9. [28-demo-script.md](docs/28-demo-script.md)
+10. [29-interview-prep.md](docs/29-interview-prep.md)
 
 </details>

@@ -33,3 +33,15 @@ build/
 .vscode/
 .gitnexus
 .m2/
+
+### Local environment ###
+.env
+.env.local
+
+### OS ###
+.DS_Store
+Thumbs.db
+
+### Logs ###
+*.log
+!docs/PROGRESS.log

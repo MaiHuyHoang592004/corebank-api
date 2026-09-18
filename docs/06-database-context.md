@@ -82,3 +82,19 @@ Recommended sequence:
 9. approvals/limits/ops
 10. integration/audit/outbox
 11. partitions/read models/hardening
+
+## Migration version numbering
+
+Versions V5 and V6 do not exist. Flyway orders migrations by version and only rejects
+duplicates, so a gap is harmless to the tool, but it is worth stating plainly rather than
+leaving a reader to wonder whether a migration was deleted after being applied: those two
+slots were consumed by work that was folded into neighbouring migrations before the schema
+was ever deployed anywhere.
+
+Two related rough edges in the existing set, kept as-is because rewriting an applied
+migration is worse than documenting it:
+
+- `V7__limit_checking.sql` opens with `DROP TABLE IF EXISTS`, which is only safe because it
+  has never run against a database holding real limit data.
+- `V8__fix_limit_profiles_schema.sql` is a no-op; V7 already creates the column it guards,
+  and its own notice text describes an ordering that cannot happen.

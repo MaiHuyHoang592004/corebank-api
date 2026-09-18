@@ -10,7 +10,9 @@
    - Web Service (Docker)
    - PostgreSQL 16 (free tier)
 4. Wait ~5-10 min for first build
-5. Visit `https://corebank-api.onrender.com/`
+5. Visit the URL Render assigns. It is derived from the service name plus a random
+   suffix, for example `https://corebank-api-<suffix>.onrender.com/`, not the bare
+   service name.
 
 ### Option B: Manual Setup
 
@@ -25,7 +27,8 @@
    - `SPRING_DATASOURCE_USERNAME` → from Render DB
    - `SPRING_DATASOURCE_PASSWORD` → from Render DB
    - `COREBANK_KAFKA_ENABLED=false`
-   - `JAVA_OPTS=-Xmx384m`
+   - `JAVA_OPTS` (optional — the image already sets `-XX:MaxRAMPercentage=70`, which
+     adapts to whatever memory the plan gives the container)
 
 ### DB URL Conversion
 
@@ -40,9 +43,10 @@ If deploying manually, you can either:
 
 ### Verify Deploy
 
-```powershell
-$URL = "https://your-app.onrender.com"
+```bash
+URL="https://your-app.onrender.com"
 curl "$URL/actuator/health"
+curl "$URL/actuator/health/readiness"
 curl "$URL/dashboard/"
 ```
 
@@ -50,7 +54,8 @@ curl "$URL/dashboard/"
 
 - Web service sleeps after 15 min inactivity — first request may take 30-60s
 - PostgreSQL expires after 90 days
-- 512 MB RAM — keep `JAVA_OPTS=-Xmx384m`
+- 512 MB RAM — the image's default `-XX:MaxRAMPercentage=70` sizes the heap from the
+  container limit, so no explicit `-Xmx` is needed
 
 ## Deploy to Railway (Alternative)
 

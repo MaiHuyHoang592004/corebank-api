@@ -11,20 +11,29 @@
 	<groupId>com.corebank</groupId>
 	<artifactId>corebank-api</artifactId>
 	<version>0.0.1-SNAPSHOT</version>
-	<name/>
-	<description/>
-	<url/>
+	<name>CoreBank API</name>
+	<description>Core banking backend: double-entry ledger, payment hold/capture/void, idempotent
+		transfers, deposits and lending, with outbox, approvals, audit and reconciliation controls on
+		a PostgreSQL source of truth.</description>
+	<url>https://github.com/MaiHuyHoang592004/corebank-api</url>
 	<licenses>
-		<license/>
+		<license>
+			<name>MIT License</name>
+			<url>https://opensource.org/licenses/MIT</url>
+			<distribution>repo</distribution>
+		</license>
 	</licenses>
 	<developers>
-		<developer/>
+		<developer>
+			<name>Mai Huy Hoang</name>
+			<url>https://github.com/MaiHuyHoang592004</url>
+		</developer>
 	</developers>
 	<scm>
-		<connection/>
-		<developerConnection/>
-		<tag/>
-		<url/>
+		<connection>scm:git:https://github.com/MaiHuyHoang592004/corebank-api.git</connection>
+		<developerConnection>scm:git:git@github.com:MaiHuyHoang592004/corebank-api.git</developerConnection>
+		<tag>HEAD</tag>
+		<url>https://github.com/MaiHuyHoang592004/corebank-api</url>
 	</scm>
 	<properties>
 		<java.version>17</java.version>
@@ -139,6 +148,35 @@
 	</dependencies>
 
 	<build>
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+			</resource>
+			<!--
+				The dashboard links to a few project documents. They are packaged onto the
+				classpath so the links work inside the container image, whose working directory
+				contains only app.jar. The repository files remain the single source of truth.
+			-->
+			<resource>
+				<directory>${project.basedir}</directory>
+				<targetPath>docs</targetPath>
+				<includes>
+					<include>README.md</include>
+				</includes>
+			</resource>
+			<resource>
+				<directory>${project.basedir}/docs</directory>
+				<targetPath>docs</targetPath>
+				<includes>
+					<include>14-source-of-truth-map.md</include>
+					<include>16-sequence-diagrams.md</include>
+					<include>19-runtime-failure-modes.md</include>
+					<include>20-acceptance-criteria.md</include>
+					<include>28-demo-script.md</include>
+					<include>29-interview-prep.md</include>
+				</includes>
+			</resource>
+		</resources>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>

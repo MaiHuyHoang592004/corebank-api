@@ -1,5 +1,17 @@
 # 15. Recommended Repository File Tree
 
+> **Status: aspirational, not descriptive.** This document records the structure that was
+> *planned*, and it does not match what is on disk — the module names, the migration file
+> names and the directory layout below all differ from the real repository. Read it as a
+> design note only.
+>
+> For the actual layout, run `git ls-files` or browse the repository. The short version:
+> `src/main/java/com/corebank/corebank_api/` holds the modules (account, customer, deposit,
+> integration, ledger, lending, limits, notification, ops, payment, product, reporting,
+> security, transfer), `src/main/resources/db/migration/` holds the Flyway migrations
+> (`V1__init.sql` through `V27__ledger_journal_chain_sequence.sql`, with V5 and V6 absent),
+> and every numbered design document lives in `docs/`.
+
 Tài liệu này mô tả cấu trúc repo khuyến nghị để nhét thẳng vào dự án Spring Boot + PostgreSQL + Kafka + Redis.
 
 Mục tiêu:

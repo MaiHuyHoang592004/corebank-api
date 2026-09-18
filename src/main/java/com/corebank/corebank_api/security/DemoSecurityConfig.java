@@ -41,6 +41,10 @@ public class DemoSecurityConfig {
 								"/actuator/health/readiness")
 						.permitAll()
 							.requestMatchers("/", "/index.html").permitAll()
+							// Spring dispatches handler errors to /error. Without this, an anonymous
+							// request that produces a 404 on an otherwise public path is answered with
+							// 401, which reports the wrong problem to anyone poking at the demo.
+							.requestMatchers("/error").permitAll()
 							.requestMatchers("/dashboard", "/dashboard/**").permitAll()
 						.requestMatchers("/api/demo/**").hasAnyRole("OPS", "ADMIN")
 						.requestMatchers(
