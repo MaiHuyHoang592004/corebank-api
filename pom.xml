@@ -153,6 +153,22 @@
 				</configuration>
 			</plugin>
 			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<!--
+							Scheduling is enabled in the application (see CorebankApiApplication).
+							Tests drive OutboxEventPublisher#processPendingEvents explicitly so that
+							assertions observe a deterministic number of publish attempts; leaving the
+							5-second poller running would race with them. SchedulingConfigurationTest
+							guards that the annotation itself stays in place.
+						-->
+						<spring.task.scheduling.enabled>false</spring.task.scheduling.enabled>
+					</systemPropertyVariables>
+				</configuration>
+			</plugin>
+			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 				<configuration>

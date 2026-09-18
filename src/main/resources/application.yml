@@ -12,11 +12,38 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+  # Let in-flight money commands finish before the JVM exits. Without this a rolling
+  # update SIGTERMs a pod mid-transfer while it still holds SELECT ... FOR UPDATE locks.
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
 server:
   port: ${PORT:${SERVER_PORT:9090}}
+  shutdown: graceful
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        # Liveness answers one question only: is this JVM wedged?
+        # It must never consult the database or Redis — a shared dependency blip would
+        # otherwise restart every replica at once and turn a degradation into an outage.
+        liveness:
+          include: livenessState
+        # Readiness gates traffic. The database is a hard requirement for every money
+        # command, so it belongs here; Redis and the read-model projection do not, because
+        # the application is designed to degrade rather than fail when they are absent.
+        readiness:
+          include: readinessState,db
+  health:
+    # Redis is non-authoritative acceleration (rate limiting + idempotency replay cache)
+    # and the documented local run starts PostgreSQL only, so its absence must not make
+    # the aggregate health endpoint report DOWN.
+    redis:
+      enabled: false
