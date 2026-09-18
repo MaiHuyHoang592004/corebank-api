@@ -156,25 +156,40 @@ jobs:
             # handle for the scan step below.
             type=raw,value=ci-${{ github.run_id }}
 
-      - name: Build and push
+      # Build into the local daemon first, scan that exact artifact, and only then
+      # publish. Building straight to the registry would mean a vulnerable image is
+      # already public by the time the scan runs.
+      - name: Build image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          load: ${{ github.event_name == 'pull_request' }}
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # The base JRE image carries CVEs that have no fix available, and failing on
-      # those would make CI permanently red without telling anyone anything. This
-      # fails only on a CRITICAL finding that can actually be remediated.
-      - name: Scan image
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          image-ref: ${{ steps.image.outputs.name }}:ci-${{ github.run_id }}
-          severity: CRITICAL
-          ignore-unfixed: true
-          exit-code: '1'
-          format: table
+      # Trivy is run from its own pinned image rather than through a third-party
+      # action, so there is one less version to track and the scanner version is
+      # explicit. The base JRE image carries CVEs with no fix available, and failing
+      # on those would make CI permanently red while telling nobody anything, so this
+      # gates only on a CRITICAL finding that can actually be remediated.
+      - name: Scan image for critical vulnerabilities
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.74.0 image \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              --format table \
+              "${{ steps.image.outputs.name }}:ci-${{ github.run_id }}"
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        run: |
+          printf '%s\n' '${{ steps.meta.outputs.tags }}' | while read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "pushing $tag"
+            docker push "$tag"
+          done
