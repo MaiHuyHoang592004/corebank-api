@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: corebank-api
+  namespace: corebank
+  labels:
+    app.kubernetes.io/name: corebank-api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: corebank-api
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

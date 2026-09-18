@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: corebank-config
+  namespace: corebank
+data:
+  # showcase disables Kafka auto-configuration and gates the destructive ops
+  # endpoints. Anything reachable from an Ingress should run with that gate on.
+  SPRING_PROFILES_ACTIVE: showcase
+  COREBANK_KAFKA_ENABLED: "false"
+
+  # The username is not a secret; the password is, and lives in the Secret.
+  SPRING_DATASOURCE_URL: jdbc:postgresql://corebank-postgres:5432/corebank
+
+  # 60% of a 1Gi limit leaves room for metaspace, thread stacks and direct buffers.
+  # A fixed -Xmx would have to be edited by hand every time the limit changes.
+  JAVA_OPTS: "-XX:MaxRAMPercentage=60 -XX:+UseG1GC"
+
+  LOGGING_LEVEL_COM_COREBANK: INFO

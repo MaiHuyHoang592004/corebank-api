@@ -106,6 +106,27 @@ filter, so an untagged test still runs.
 Every push and pull request runs both, then builds the container image and scans it.
 See [.github/workflows/ci.yml](.github/workflows/ci.yml).
 
+## Run on Kubernetes
+
+```bash
+kind create cluster --name corebank --config deploy/kubernetes/kind-cluster.yaml
+cp deploy/kubernetes/secret.example.yaml deploy/kubernetes/secret.yaml   # then edit it
+kubectl apply -f deploy/kubernetes/namespace.yaml -f deploy/kubernetes/secret.yaml
+kubectl apply -k deploy/kubernetes
+kubectl -n corebank rollout status deployment/corebank-api
+```
+
+Three replicas behind a Service and an Ingress, with a startup probe that covers
+Flyway, a readiness probe that gates on PostgreSQL, and a liveness probe that
+deliberately consults nothing shared — so a database blip degrades the system instead
+of restarting every pod at once. Rollouts add a pod before retiring one, and graceful
+shutdown lets in-flight money commands finish rather than dying while holding row
+locks.
+
+[deploy/kubernetes/README.md](deploy/kubernetes/README.md) has the full walkthrough,
+including self-healing, zero-downtime rollout, rollback, scaling, and what is
+deliberately left out.
+
 ## Deploy (Render)
 
 See [DEPLOY.md](DEPLOY.md) for step-by-step instructions. One-click deploy via `render.yaml` blueprint.

@@ -52,6 +52,31 @@ jobs:
       - name: Run container-free tests
         run: ./mvnw -B -ntp -Dgroups=fast test
 
+  # ---------------------------------------------------------------- manifests
+  # Catches typos and removed fields in the Kubernetes manifests without needing a
+  # cluster. kubeconform validates against the published API schemas; -strict rejects
+  # unknown fields, which is what actually catches a misspelled probe or resource key
+  # that a cluster would silently ignore.
+  manifests:
+    name: Validate Kubernetes manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Render and validate
+        run: |
+          kubectl kustomize deploy/kubernetes > /tmp/rendered.yaml
+          kubeconform -strict -summary -kubernetes-version 1.31.0 \
+            /tmp/rendered.yaml deploy/kubernetes/secret.example.yaml
+
   # ---------------------------------------------------------------- full suite
   verify:
     name: Full test suite (Testcontainers)
@@ -94,7 +119,7 @@ jobs:
     name: Build image
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    needs: [fast-checks, verify]
+    needs: [fast-checks, verify, manifests]
     permissions:
       contents: read
       packages: write

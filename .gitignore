@@ -45,3 +45,6 @@ Thumbs.db
 ### Logs ###
 *.log
 !docs/PROGRESS.log
+
+### Kubernetes local secrets ###
+deploy/kubernetes/secret.yaml

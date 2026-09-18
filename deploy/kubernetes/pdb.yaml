@@ -1,0 +1,13 @@
+# Voluntary disruptions only — node drains, cluster upgrades. This does not protect
+# against a node failing outright, and it deliberately does not match the rollout
+# strategy, which already guarantees no capacity loss via maxUnavailable: 0.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: corebank-api
+  namespace: corebank
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: corebank-api

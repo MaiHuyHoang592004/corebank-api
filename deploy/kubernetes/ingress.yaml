@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: corebank-api
+  namespace: corebank
+  labels:
+    app.kubernetes.io/name: corebank-api
+  annotations:
+    # The dashboard posts money commands that wait on row locks; the default 60s
+    # upstream timeout is fine, but be explicit rather than inheriting it silently.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "60"
+spec:
+  ingressClassName: nginx
+  rules:
+    # Add to /etc/hosts for a local cluster:  127.0.0.1  corebank.local
+    - host: corebank.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: corebank-api
+                port:
+                  name: http
