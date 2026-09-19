@@ -58,6 +58,9 @@ spec:
                     app.kubernetes.io/name: corebank-api
       containers:
         - name: app
+          # Placeholder only. kustomization.yaml pins the tag that is actually
+          # deployed, so apply this directory through kustomize, never with
+          # `kubectl apply -f deployment.yaml`.
           image: ghcr.io/maihuyhoang592004/corebank-api:latest
           imagePullPolicy: IfNotPresent
           ports:

@@ -16,20 +16,29 @@ resources:
 # secret.yaml is intentionally absent: it is generated from secret.example.yaml and
 # is not committed. Apply it separately before the first rollout.
 
-# The image tag to deploy.
+# The image tag to deploy, pinned to one commit.
 #
-# CI publishes to GHCR on every push, but `latest` is only applied on the default
-# branch, so it does not exist until a build lands on main. Every build also gets
-# `sha-<commit>` and a sanitised branch tag, which are the tags to use when deploying
-# from a feature branch:
+# This is a version, not a convenience. A floating tag like `latest` answers "what is
+# newest" and never "what is running" — two pods started an hour apart can be running
+# different code under the same tag, and `kubectl rollout undo` rolls back to the same
+# floating name it just left. In a system that moves money, the deployed artefact has
+# to be identifiable after the fact, because that is what an incident timeline and an
+# audit both start from.
 #
-#   kubectl kustomize deploy/kubernetes | kubectl apply -f -
-#   # or override without editing this file:
+# So this file pins `sha-<commit>`, which CI publishes on every build and never
+# reassigns. `latest` additionally does not exist here: CI applies it only on the
+# default branch, and no build has landed on main yet.
+#
+# Releasing is bumping this pin:
+#
 #   cd deploy/kubernetes && kustomize edit set image \
 #     ghcr.io/maihuyhoang592004/corebank-api=ghcr.io/maihuyhoang592004/corebank-api:sha-<commit>
+#   kubectl kustomize deploy/kubernetes | kubectl apply -f -
+#
+# CI fails the manifests job if a rendered manifest carries a floating tag again.
 images:
   - name: ghcr.io/maihuyhoang592004/corebank-api
-    newTag: latest
+    newTag: sha-457ce171bbdcb6f7c96ba0c62e65b4316788975f
 
 # includeSelectors is false deliberately. A Deployment's selector is immutable once
 # created, so folding a common label into it means any later change to that label

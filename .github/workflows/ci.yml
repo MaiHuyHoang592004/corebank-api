@@ -77,6 +77,29 @@ jobs:
           kubeconform -strict -summary -kubernetes-version 1.31.0 \
             /tmp/rendered.yaml deploy/kubernetes/secret.example.yaml
 
+      # The OpenShift overlay drops the in-cluster PostgreSQL and swaps the Ingress
+      # for a Route. Route is not in any schema catalogue kubeconform knows about, so
+      # the schema is vendored in the repository; validating every resource except the
+      # one that is specific to the platform would be a check that cannot fail.
+      - name: Render and validate the OpenShift overlay
+        run: |
+          kubectl kustomize deploy/openshift > /tmp/rendered-openshift.yaml
+          kubeconform -strict -summary -kubernetes-version 1.31.0 \
+            -schema-location default \
+            -schema-location 'deploy/openshift/schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /tmp/rendered-openshift.yaml
+
+      # A floating tag cannot answer "what is running right now", which is the first
+      # question an incident timeline asks. It also makes `kubectl rollout undo` roll
+      # back to the same name it just left. Both renders must name an immutable tag.
+      - name: Reject floating image tags
+        run: |
+          if grep -nE '^\s*image: .*:(latest|main|master)$' \
+              /tmp/rendered.yaml /tmp/rendered-openshift.yaml; then
+            echo "::error::a rendered manifest deploys a floating tag; pin sha-<commit> in deploy/kubernetes/kustomization.yaml"
+            exit 1
+          fi
+
   # ---------------------------------------------------------------- full suite
   verify:
     name: Full test suite (Testcontainers)

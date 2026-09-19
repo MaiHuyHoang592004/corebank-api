@@ -1,0 +1,34 @@
+# The OpenShift equivalent of the base's Ingress.
+#
+# host is deliberately unset. OpenShift generates one from the route name, the
+# namespace and the cluster's apps domain, which is the only value that is correct
+# on every cluster this might be applied to.
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: corebank-api
+  namespace: corebank
+  labels:
+    app.kubernetes.io/name: corebank-api
+  annotations:
+    # The dashboard posts money commands that wait on row locks. The router's
+    # default is 30s, shorter than the base Ingress's 60s, so a command that waits
+    # on a lock would be cut off by the router while the transaction it started is
+    # still running — the caller sees a failure for work that may yet commit.
+    haproxy.router.openshift.io/timeout: 60s
+spec:
+  to:
+    kind: Service
+    name: corebank-api
+    weight: 100
+  port:
+    # The Service publishes http (9090) only. Actuator is on 9091 and is not
+    # published, so /actuator stays unreachable from outside the cluster here for
+    # the same reason it is unreachable through the base's Ingress.
+    targetPort: http
+  tls:
+    # The router terminates TLS and speaks plain HTTP to the pod. Traffic to a
+    # banking API has no business being available over cleartext, so the http
+    # route redirects rather than being served.
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

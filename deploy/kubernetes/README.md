@@ -17,6 +17,11 @@ deploy/kubernetes/
 ├── hpa.yaml              3 to 6 replicas on CPU
 ├── pdb.yaml
 └── kustomization.yaml
+
+deploy/openshift/            overlay — see "Notes on OpenShift" below
+├── kustomization.yaml
+├── route.yaml
+└── schemas/                 vendored Route schema, for kubeconform in CI
 ```
 
 ## Bring it up
@@ -41,17 +46,25 @@ kubectl -n corebank rollout status deployment/corebank-api --timeout=300s
 
 ### Choosing the image tag
 
-CI publishes to `ghcr.io/maihuyhoang592004/corebank-api` on every push, but the
-`latest` tag is only applied on the default branch. Deploying from a feature branch
-with the default manifest gives `ImagePullBackOff`, because that tag does not exist
-yet. Every build is also tagged `sha-<commit>` and with a sanitised branch name, so
-pick one of those:
+`kustomization.yaml` pins one immutable tag, `sha-<commit>`, and releasing is bumping
+that pin. Apply this directory through kustomize — `kubectl apply -f deployment.yaml`
+would use the placeholder tag in that file instead.
 
 ```bash
 cd deploy/kubernetes
 kustomize edit set image \
   ghcr.io/maihuyhoang592004/corebank-api=ghcr.io/maihuyhoang592004/corebank-api:sha-<commit>
 ```
+
+The pin is not a formality. A floating tag answers "what is newest" and never "what
+is running": two pods started an hour apart can be on different code under one name,
+`rollout undo` rolls back to the name it just left, and an incident timeline has
+nothing to anchor to. CI fails the manifests job if a rendered manifest carries a
+floating tag.
+
+`latest` is doubly wrong here — CI applies it only on the default branch, so it does
+not exist yet and deploying it gives `ImagePullBackOff`. Every build is also tagged
+with a sanitised branch name if you want to track a branch instead of a commit.
 
 The package is private by default, so the cluster needs a pull secret unless the
 package visibility is set to public in the repository's package settings:
@@ -168,21 +181,59 @@ command. Without it the HPA reports `<unknown>` and simply never acts.
 
 ## Notes on OpenShift
 
-The image runs as a non-root user and gives group 0 the same rights as the owner,
-which is what OpenShift's `restricted-v2` SCC requires: it assigns an arbitrary UID
-in group 0 rather than the UID in the Dockerfile. The container also drops all
-capabilities, disables privilege escalation and runs with a read-only root
-filesystem, with a writable `emptyDir` mounted at `/tmp` for the JVM and Tomcat.
+The base does not apply on OpenShift. `deploy/openshift/` is an overlay on top of it
+that fixes the two things that stop it, and nothing else.
 
-Route instead of Ingress:
+**Arbitrary UIDs.** The `restricted-v2` SCC assigns each namespace a UID range and
+runs every container as a UID from it, rejecting any pod that asks for a specific
+`runAsUser` or `fsGroup`. The application is fine as it stands: the image runs as a
+non-root user, gives group 0 the same rights as the owner, and the Deployment sets
+`runAsNonRoot` without naming a UID — so the platform picks one. It also drops all
+capabilities, disables privilege escalation and runs read-only with a writable
+`emptyDir` at `/tmp`.
+
+`postgres.yaml` is not fine: it pins `runAsUser: 999` and `fsGroup: 999`, because
+`postgres:16-alpine` needs its data directory owned by the postgres user and cannot
+run as an unknown UID. Relaxing the security context would not help — the image is
+the problem. So the overlay removes the StatefulSet and its Service and expects the
+database to come from the Developer Catalog (whose PostgreSQL template uses a Red Hat
+image built for arbitrary UIDs) or from a managed instance. That is closer to how
+this would really run anyway; `postgres.yaml` says as much about itself.
+
+**Routing.** OpenShift admits traffic with `Route`, not `Ingress`. The overlay
+deletes the Ingress and adds a Route with edge TLS, an HTTP redirect, and the router
+timeout raised from its 30s default to the 60s the base Ingress uses — a money
+command that waits on a row lock must not be cut off by the router while the
+transaction it started is still running.
 
 ```bash
 oc new-project corebank
-oc apply -f secret.yaml
-oc apply -k .
-oc expose service/corebank-api
-oc get route
+oc apply -f deploy/kubernetes/secret.yaml
+
+# Provision a database, then point the overlay at it. The overlay defaults to a
+# Service named `postgresql`, which is what the catalog template creates.
+oc new-app postgresql-persistent \
+  -p POSTGRESQL_DATABASE=corebank \
+  -p POSTGRESQL_USER=corebank \
+  -p POSTGRESQL_PASSWORD=<same as the Secret>
+
+oc apply -k deploy/openshift
+oc -n corebank rollout status deployment/corebank-api
+oc get route corebank-api
 ```
+
+If the database host differs, change `SPRING_DATASOURCE_URL` in the overlay's
+ConfigMap patch before applying. Getting it wrong fails safe rather than quietly:
+readiness gates on the database, so the pods stay out of the Service instead of
+accepting money commands they cannot complete.
+
+CI renders and validates this overlay alongside the base. `Route` is not in any
+schema catalogue `kubeconform` knows about, so its schema is vendored under
+`deploy/openshift/schemas/` — validating every resource except the one that is
+specific to the platform would be a check that cannot fail.
+
+This overlay is validated, not yet deployed: it renders and passes strict schema
+validation, but it has not been applied to a live OpenShift cluster.
 
 ## Deliberately not here
 
