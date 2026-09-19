@@ -29,16 +29,21 @@ resources:
 # reassigns. `latest` additionally does not exist here: CI applies it only on the
 # default branch, and no build has landed on main yet.
 #
-# Releasing is bumping this pin:
+# Releasing is bumping newTag below by hand, then:
 #
-#   cd deploy/kubernetes && kustomize edit set image \
-#     ghcr.io/maihuyhoang592004/corebank-api=ghcr.io/maihuyhoang592004/corebank-api:sha-<commit>
 #   kubectl kustomize deploy/kubernetes | kubectl apply -f -
+#
+# Not with `kustomize edit set image`. It rewrites this whole file through its YAML
+# printer: it reindents every list, adds a redundant newName, and drops the explicit
+# `includeSelectors: false` further down — leaving the comment that explains that
+# field describing something no longer there. The render happens to be unchanged,
+# because false is the default, but a release should not rely on a default it
+# meant to state. Checked with kustomize v5.4.3.
 #
 # CI fails the manifests job if a rendered manifest carries a floating tag again.
 images:
   - name: ghcr.io/maihuyhoang592004/corebank-api
-    newTag: sha-457ce171bbdcb6f7c96ba0c62e65b4316788975f
+    newTag: sha-a500aac382ac110b23948b844e8c581c7580cacc
 
 # includeSelectors is false deliberately. A Deployment's selector is immutable once
 # created, so folding a common label into it means any later change to that label

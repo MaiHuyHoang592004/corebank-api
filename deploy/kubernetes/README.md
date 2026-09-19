@@ -46,15 +46,17 @@ kubectl -n corebank rollout status deployment/corebank-api --timeout=300s
 
 ### Choosing the image tag
 
-`kustomization.yaml` pins one immutable tag, `sha-<commit>`, and releasing is bumping
-that pin. Apply this directory through kustomize — `kubectl apply -f deployment.yaml`
-would use the placeholder tag in that file instead.
+`kustomization.yaml` pins one immutable tag, `sha-<commit>`, and releasing is editing
+`newTag` there. Apply this directory through kustomize — `kubectl apply -f
+deployment.yaml` would use the placeholder tag in that file instead.
 
-```bash
-cd deploy/kubernetes
-kustomize edit set image \
-  ghcr.io/maihuyhoang592004/corebank-api=ghcr.io/maihuyhoang592004/corebank-api:sha-<commit>
-```
+Edit it by hand rather than with `kustomize edit set image`. That command rewrites
+the whole file through its YAML printer: on v5.4.3 it reindents every list, adds a
+redundant `newName`, and silently drops the explicit `includeSelectors: false`,
+leaving the comment that explains that field describing something no longer there.
+The render is unchanged because `false` is the default — but a release should not
+rely on a default it meant to state, and a one-line version bump should not arrive
+as a thirteen-line diff nobody reads.
 
 The pin is not a formality. A floating tag answers "what is newest" and never "what
 is running": two pods started an hour apart can be on different code under one name,
