@@ -41,7 +41,7 @@ telemetry, which is worse than not exporting at all.
 ## What is instrumented
 
 **Metrics.** The Spring and JVM defaults (request rate, latency histograms, heap,
-connection pool) plus five that describe the system as a bank rather than as a web
+connection pool) plus six that describe the system as a bank rather than as a web
 server:
 
 | Metric | What a bad value means |
@@ -49,7 +49,8 @@ server:
 | `corebank_outbox_pending` | Events written inside money transactions but not published. Downstream systems are drifting out of date while the API still returns 200. |
 | `corebank_outbox_dead_letters` | Events that exhausted their retries. Each is a money event a downstream system has permanently missed. |
 | `corebank_reconciliation_open_breaks` | The ledger and an external statement disagree. |
-| `corebank_idempotency_in_flight` | Commands claimed but never resolved, so their outcome is unknown and a retry with the same key will be refused. |
+| `corebank_idempotency_in_flight` | Commands claimed but not yet resolved. Normal and short-lived under load. |
+| `corebank_idempotency_stale` | Claims past the takeover lease: commands whose instance stopped mid-flight. This is the one worth alerting on; in-flight on its own is just traffic. |
 | `corebank_ledger_journals` | Rate of change is the throughput of money actually moving, as opposed to request volume. |
 
 These are refreshed on a schedule and served from memory. A gauge that runs SQL per

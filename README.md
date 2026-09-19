@@ -1,220 +1,168 @@
-# CoreBank API
+# CoreBank
 
-**Production-signal fintech backend portfolio — PostgreSQL truth, money correctness, and operational control in a deployable modular monolith.**
+A core banking backend built around one question: **when this system fails, what happens
+to the money?**
 
-[![CI](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml) &nbsp; [![Live Demo](https://img.shields.io/badge/demo-live-brightgreen)](#live-demo) &nbsp; [![Spring Boot](https://img.shields.io/badge/spring%20boot-4.0.8-blue)](#) &nbsp; [![Java](https://img.shields.io/badge/java-17-orange)](#) &nbsp; [![PostgreSQL](https://img.shields.io/badge/postgresql-16-blue)](#)
+[![CI](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml)
 
-> **Why this exists:** Prove that a backend engineer can design, implement, and deploy a realistic fintech system with correct money semantics — not just wire up a CRUD API.
+## The problem
 
----
+An API that returns `200` has said very little about a money system. The cases that
+decide whether it can be trusted are the ones where it cannot answer at all:
 
-## Live Demo
+- the process dies between reserving funds and recording that it did
+- a client retries a transfer it never got a response for
+- a broker is unreachable while the ledger is perfectly available
+- a balance is high enough to spend and also already committed elsewhere
+- two operators act on the same loan at the same moment
 
-**[corebank-api-acv7.onrender.com](https://corebank-api-acv7.onrender.com)** — open the dashboard and run a guided demo in 3 minutes.
+In each of those the request either has no answer or gets a misleading one, and the
+truth has to live somewhere the request cannot reach. That is what this repository is
+about: deciding where money truth lives, what is allowed to move it, and what is
+supposed to happen when a part of the system stops.
 
-> Render free-tier services may take 30–90 seconds to wake up on the first request.
+## What broke when it was made to fail
 
-*Demo runs on Render free tier. PostgreSQL data resets after 90 days (free tier limit). Kafka and Redis are disabled in public showcase — the app runs on PostgreSQL alone.*
+Reasoning about failure is cheap. These are the ones that were induced on a running
+system against a real PostgreSQL, chosen because nobody knew the outcome in advance.
+Killing a pod to watch Kubernetes restart it is not on the list: that demonstrates
+Kubernetes, not this.
 
-## Demo Credentials
+| Induced | What happened | What it cost, and the fix |
+|---|---|---|
+| `SIGKILL` during 60 concurrent transfers | Money correct, every uncommitted transaction rolled back. Four idempotency claims left `IN_PROGRESS` forever. | Those commands had not happened and could never be retried; the cleanup job only deletes terminal rows. Recovery meant editing the database by hand. Claims now carry a lease a retry can take over. |
+| 14 requests sharing one idempotency key, against a cold instance | 32 seconds of outage, ten `500`s, and still exactly one journal posted. | Connection starvation, not lock contention: a money command holds two connections at once, so at pool size every command waits for one nobody can release. The identical burst at pool 40 took one second with no errors. Pool now sized explicitly, with the arithmetic written next to the number. |
+| Concurrent duplicates of one command | Exactly one journal, but one caller got a `500`. | A unique violation was caught and the row read back inside the same transaction, which PostgreSQL had already aborted. A client retrying on `5xx` would have kept hammering. The claim is now an `ON CONFLICT` whose row count decides the winner. |
+| Running the outbox as deployed | It had never run. | `@EnableScheduling` was absent, so the only `@Scheduled` method was inert. Every test passed because each one called it directly. The headline reliability claim was not true outside tests. |
+| Probing the health endpoints anonymously | `401` on liveness and readiness. | A kubelet sends no credentials, so this would have restart-looped every replica and kept them all out of the Service. Found by calling the endpoints, not by reading the config. |
+| Scanning the container image | Eight fixable `CRITICAL` CVEs, six of them authentication or authorization bypasses in embedded Tomcat. | The image was never published: the pipeline builds, scans, and only then pushes. Dependencies upgraded, one version pinned past what the framework manages. |
 
-| Role | Username | Password |
-|------|----------|----------|
-| Admin | `demo_admin` | `demo_admin` |
-| Operator | `demo_ops` | `demo_ops` |
-| User | `demo_user` | `demo_user` |
+The invariant checked after every scenario is the one that matters in a bank: total
+money unchanged, no unbalanced journal, no negative balance. **It held in all of them,
+including the two that returned `500`s.** What failed was availability and
+recoverability, never correctness.
 
-## 3-Minute Walkthrough
+Method, measurements, the scenario that found nothing, and the rough edge still open:
+[docs/19-runtime-failure-modes.md](docs/19-runtime-failure-modes.md).
 
-1. Open the [live dashboard](https://corebank-api-acv7.onrender.com/dashboard/index.html)
-2. Login as `demo_admin` / `demo_admin`
-3. Click **Initialize Demo Data** (idempotent — safe to run repeatedly)
-4. Run **Authorize Hold** → funds reserved, double-entry posted
-5. Run **Capture Hold** → payment settled, journal updated
-6. Run **Internal Transfer** with an `Idempotency-Key` header
-7. Replay the same transfer with the same key → returns the **original** response (exactly-once)
-8. Trigger a reconciliation run over the ops API and read the breaks it reports:
-   `POST /api/ops/reconciliation/runs` then `GET /api/ops/reconciliation/breaks`
-   (the dashboard itself has four tabs — payment, transfer, deposit, lending)
+## The rules that follow
 
-For depth: [28-demo-script.md](docs/28-demo-script.md) | [29-interview-prep.md](docs/29-interview-prep.md)
+- **PostgreSQL decides money.** Accounts, ledger, idempotency, approvals and audit live
+  there. A cache can be empty and a broker can be down without changing what is true.
+- **Posted and available are different questions.** One asks what has settled, the other
+  what can be spent now. A hold moves the second without touching the first, and
+  blurring them is how a system lets the same money leave twice.
+- **An idempotency key is a claim with a lease, not a flag.** Claims are taken in the
+  database, and one whose owner stopped can be taken over rather than blocking the
+  operation forever.
+- **Events are written with the money, published after it.** The outbox row commits in
+  the same transaction as the balance change, so a broker outage delays delivery
+  instead of losing it.
+- **Liveness must not consult anything shared.** A probe that checks the database turns
+  one slow query into every replica restarting at once.
+- **Instrumentation and export are separate switches.** Traces and metrics are always
+  recorded; where they are sent is a deployment decision.
 
-## What This Proves
+## What it does
 
-| Capability | Why It Matters |
-|-----------|---------------|
-| **Payment hold/capture/void** | Same lifecycle as Stripe/Adyen — authorize, settle, or release funds with full audit trail |
-| **Idempotent transfers** | Send the same request twice, get the same result — PostgreSQL idempotency keys, not app memory |
-| **Outbox pattern** | Events are written atomically with business data in the same PostgreSQL transaction — no lost messages |
-| **Approval governance** | Maker/checker workflows for sensitive operations (loan defaults, dead-letter requeue) |
-| **Reconciliation** | Automated internal and external reconciliation with break detection |
-| **Rate limiting** | Redis-backed rate limiting on money-mutation endpoints — degrades gracefully without Redis |
-| **System mode guards** | Runtime read-only/maintenance modes enforced at the API layer |
-| **PostgreSQL truth** | Accounts, ledger, idempotency, approvals, and audit all live in PostgreSQL — never in cache or message queue |
+Payments with hold, capture, void and refund. Concurrency-safe internal transfers.
+Deposits through open, accrual and maturity. Lending through disbursement, repayment,
+overdue and default. Around those: double-entry ledger, idempotency, audit trail,
+maker/checker approvals, reconciliation with break detection, outbox with dead-letter
+handling, runtime mode guards, and rate limiting that degrades open rather than
+blocking money.
 
-## Architecture
-
-```mermaid
-flowchart LR
-    Client[Client / Operator] --> API[Spring Boot Modular Monolith]
-    API --> PG[(PostgreSQL Truth Layer)]
-    API --> Kafka[(Kafka Async Bus)]
-    API --> Redis[(Redis Acceleration)]
-    PG --> Money[Accounts / Ledger / Idempotency / Approvals / Audit]
-    Kafka --> Proj[Projectors / Notifications / Read Models]
-```
-
-**Source-of-truth decisions:**
-- **PostgreSQL** is authoritative for money state, idempotency, and approvals
-- **Kafka** is async transport/projection — not the source of truth
-- **Redis** is non-authoritative acceleration (rate limiting + idempotency replay cache)
-- **Read models** are query convenience only — never authorize money movement
-
-In public showcase, Kafka and Redis are **optional** — the app runs with PostgreSQL alone. Money operations still write outbox rows to PostgreSQL; only async publishing and projection are paused.
-
-## Run Locally
+## Seeing it work
 
 ```bash
-# PostgreSQL only — Kafka and Redis are optional and the app degrades without them
 docker compose up -d postgres
 ./mvnw spring-boot:run
-# open http://localhost:9090/
+# http://localhost:9090/
 ```
 
+Redis and Kafka are optional; the application degrades rather than failing without
+them. A hosted instance runs at
+[corebank-api-acv7.onrender.com](https://corebank-api-acv7.onrender.com) and may take up
+to ninety seconds to wake. Sign in as `demo_admin` / `demo_admin` (also `demo_ops` and
+`demo_user`, password the same as the username), initialise the demo data, then
+authorize a hold, capture it, run a transfer, and replay that transfer with the same
+idempotency key to get the original response back rather than a second transfer.
+
+Walkthrough with expected output: [docs/28-demo-script.md](docs/28-demo-script.md).
+
+## Checking it
+
 ```bash
-# With Redis enabled, plus the PowerShell showcase runner
-docker compose up -d postgres redis
-./mvnw spring-boot:run -Dspring-boot.run.profiles=showcase
-pwsh docs/30-showcase-runner.ps1
+./mvnw verify                 # everything; needs Docker for Testcontainers
+./mvnw -Dgroups=fast test     # the container-free subset, seconds
 ```
 
-## Tests
+Money paths are covered against a real PostgreSQL rather than mocks, because the
+behaviour being tested is the database's. CI runs the fast subset for a signal in about
+a minute, the full suite for the truth, validates the Kubernetes manifests, then builds
+the image, scans it, and publishes only if the scan passes.
+
+## Operating it
 
 ```bash
-# Everything. Needs a running Docker daemon: the money paths are covered by
-# integration tests that talk to a real PostgreSQL through Testcontainers.
-./mvnw verify
-
-# The container-free subset — 29 tests, a few seconds, no Docker.
-./mvnw -Dgroups=fast test
-```
-
-The `fast` tag exists so CI can fail a broken build in about a minute instead of
-twenty. It only adds a quicker signal: the full job runs the whole suite with no tag
-filter, so an untagged test still runs.
-
-Every push and pull request runs both, then builds the container image and scans it.
-See [.github/workflows/ci.yml](.github/workflows/ci.yml).
-
-## Observability
-
-```bash
+# Metrics, traces and logs
 docker compose -f deploy/observability/docker-compose.yml up -d
 COREBANK_OTLP_ENABLED=true COREBANK_LOG_FORMAT=ecs ./mvnw spring-boot:run
-# Grafana http://localhost:3000
-```
 
-Metrics, traces and structured logs, emitted over OpenTelemetry's wire protocol and
-nothing else, so the backend is a deployment decision: the same build feeds Prometheus
-and Tempo locally, or Dynatrace, Datadog or Splunk by changing an endpoint.
-
-Alongside the usual request rate, latency and heap, five metrics describe the system as
-a bank rather than as a web server: outbox backlog, dead letters, open reconciliation
-breaks, in-flight idempotency keys, and journals posted. Each answers a question a 200
-response cannot — a growing outbox backlog means downstream systems are drifting out of
-date while every API call still succeeds.
-
-Every log line carries the trace id, span id and a correlation id taken from the
-request, so a slow transfer pivots from a latency graph to the exact span and then to
-the log lines that span produced.
-
-[deploy/observability/README.md](deploy/observability/README.md) covers the metric
-catalogue, the alert rules and their runbooks, why the metrics endpoint stays behind
-authentication, and what is deliberately absent.
-
-## Run on Kubernetes
-
-```bash
+# Three replicas with probes, rollout and rollback
 kind create cluster --name corebank --config deploy/kubernetes/kind-cluster.yaml
 cp deploy/kubernetes/secret.example.yaml deploy/kubernetes/secret.yaml   # then edit it
 kubectl apply -f deploy/kubernetes/namespace.yaml -f deploy/kubernetes/secret.yaml
 kubectl apply -k deploy/kubernetes
-kubectl -n corebank rollout status deployment/corebank-api
 ```
 
-Three replicas behind a Service and an Ingress, with a startup probe that covers
-Flyway, a readiness probe that gates on PostgreSQL, and a liveness probe that
-deliberately consults nothing shared — so a database blip degrades the system instead
-of restarting every pod at once. Rollouts add a pod before retiring one, and graceful
-shutdown lets in-flight money commands finish rather than dying while holding row
-locks.
+Six gauges describe the system as a bank rather than as a web server: outbox backlog,
+dead letters, open reconciliation breaks, idempotency claims in flight, idempotency
+claims past their lease, and journals posted. Each answers something a `200` cannot. A growing outbox backlog means every downstream
+system is drifting out of date while the API still reports success.
 
-[deploy/kubernetes/README.md](deploy/kubernetes/README.md) has the full walkthrough,
-including self-healing, zero-downtime rollout, rollback, scaling, and what is
-deliberately left out.
+Telemetry leaves over OpenTelemetry's wire protocol and nothing else, so the backend is
+an endpoint change rather than a code change.
 
-## Deploy (Render)
+[deploy/observability/README.md](deploy/observability/README.md) ·
+[deploy/kubernetes/README.md](deploy/kubernetes/README.md) ·
+[DEPLOY.md](DEPLOY.md)
 
-See [DEPLOY.md](DEPLOY.md) for step-by-step instructions. One-click deploy via `render.yaml` blueprint.
+## Built with
 
-Key env vars:
-- `SPRING_PROFILES_ACTIVE=showcase`
-- `SPRING_DATASOURCE_URL=<JDBC URL>` (convert from Render's `postgres://` format)
-- `COREBANK_KAFKA_ENABLED=false`
+Java 17, Spring Boot, PostgreSQL with Flyway, Testcontainers. Redis for rate limiting
+and an idempotency replay cache, Kafka for asynchronous projection, neither of them
+authoritative. Micrometer and OpenTelemetry for telemetry, Prometheus, Tempo and Grafana
+for the local stack. Packaged as a modular monolith because the hard part here is
+transactional correctness, and splitting services early makes that harder rather than
+easier.
 
----
+Technology is last in this list on purpose.
 
-## Technical Deep Dive
+## Scope
 
-<details>
-<summary>Click to expand — full technical documentation</summary>
+This is a personal project, not a running bank. It models the parts where money
+correctness is decided and stops before the parts that are mostly integration work:
+there is no card scheme, no clearing or settlement network, no KYC provider, no
+customer-facing product.
 
-### What This Is
-CoreBank is a production-like fintech backend portfolio project built as a modular monolith.
+Deliberately absent, each for a stated reason in the relevant document: database high
+availability, TLS termination, log shipping, alert routing, and a production secret
+manager. The demo credentials are published because the deployment is a demonstration;
+that is a decision, not an oversight.
 
-It is intentionally focused on one goal: prove money correctness and operational control in a realistic backend, without pretending to be a full digital bank platform.
+One known rough edge, unfixed: a duplicate arriving while the original is still running
+is answered `400` where `409` is correct. Fixing it properly means giving the API typed
+errors rather than patching one branch.
 
-### Production-Like Signals
-- Explicit posted vs available balance semantics across payment, transfer, deposit, and lending flows.
-- PostgreSQL-led correctness model for ledger/account/idempotency/approval state.
-- Idempotency, audit trail, outbox, approvals, runtime-mode guards, and reconciliation included as first-class controls.
-- Bounded transient retry and deterministic lock-order hardening on contention-prone money paths.
-- Dead-letter handling and ops/reporting endpoints for operational recovery workflows.
-- Redis used selectively for performance/coordination, not as financial truth.
+## Documents
 
-### Core Capabilities
-- Payments: hold, capture, void with idempotent behavior.
-- Transfers: concurrency-safe and idempotent internal transfer flow.
-- Deposits: open, accrue, maturity lifecycle.
-- Lending: disburse, repay, overdue, default transitions.
-- Ops controls: approvals, runtime mode guards, reconciliation, outbox dead-letter operations.
-- Reliability layers: outbox pattern, saga/read-model baseline, targeted hardening on transient failures.
+Start here: [financial invariants](docs/07-financial-invariants.md) ·
+[source-of-truth map](docs/14-source-of-truth-map.md) ·
+[runtime failure modes](docs/19-runtime-failure-modes.md)
 
-### Quick Credibility Evidence
-- [28-demo-script.md](docs/28-demo-script.md)
-- [29-interview-prep.md](docs/29-interview-prep.md)
-- [30-showcase-runner.md](docs/30-showcase-runner.md)
-- `showcase-output/latest-showcase-report.md` (generated locally by the showcase runner; not committed)
-
-### Intentional Stop Line
-Feature work on the banking domain is intentionally finished; the roadmap in
-[docs/12-roadmap.md](docs/12-roadmap.md) runs to Phase 5 and the repo has completed it.
-
-Reason:
-- The project already demonstrates realistic fintech backend signals for interview evaluation.
-- Additional infra-heavy slices from this point have lower explanation ROI than value gained.
-- The narrative is now clear and defensible: PostgreSQL truth first, Redis/Kafka supportive only.
-
-### Doc Map
-1. [01-project-overview.md](docs/01-project-overview.md)
-2. [04-system-architecture.md](docs/04-system-architecture.md)
-3. [07-financial-invariants.md](docs/07-financial-invariants.md)
-4. [14-source-of-truth-map.md](docs/14-source-of-truth-map.md)
-5. [16-sequence-diagrams.md](docs/16-sequence-diagrams.md)
-6. [18-testing-strategy.md](docs/18-testing-strategy.md)
-7. [19-runtime-failure-modes.md](docs/19-runtime-failure-modes.md)
-8. [20-acceptance-criteria.md](docs/20-acceptance-criteria.md)
-9. [28-demo-script.md](docs/28-demo-script.md)
-10. [29-interview-prep.md](docs/29-interview-prep.md)
-
-</details>
+Then: [system architecture](docs/04-system-architecture.md) ·
+[sequence diagrams](docs/16-sequence-diagrams.md) ·
+[testing strategy](docs/18-testing-strategy.md) ·
+[acceptance criteria](docs/20-acceptance-criteria.md) ·
+[project overview](docs/01-project-overview.md)
