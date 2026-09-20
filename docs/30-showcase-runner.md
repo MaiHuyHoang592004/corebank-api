@@ -52,7 +52,7 @@ Optional custom output path:
   - `IdempotencyRedisReplayCacheIntegrationTest`
 
 ## How To Use In An Interview
-1. Open [README.md](README.md) for the high-level framing.
+1. Open [README.md](../README.md) for the high-level framing.
 2. Open [28-demo-script.md](28-demo-script.md) for the spoken walkthrough.
 3. Run `./30-showcase-runner.ps1` to generate current evidence.
 4. Open `showcase-output/latest-showcase-report.md` as proof that the claims map to executable tests.

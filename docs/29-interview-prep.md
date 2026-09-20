@@ -4,7 +4,7 @@
 "CoreBank is a production-like fintech backend portfolio project built as a modular monolith. I focused on the hard parts that make money systems believable: double-entry thinking, posted vs available balance semantics, payment hold/capture/void, deposit and lending lifecycle flows, idempotency, audit, approvals, reconciliation, outbox, and runtime hardening. The key architectural rule is that PostgreSQL remains the source of truth for money and idempotency, while Kafka and Redis are used only for async transport and short-term acceleration."
 
 ## Live Demo Entry (Browser)
-- Run `docker compose up -d postgres redis`, then `mvn spring-boot:run`, and open `http://localhost:9090/dashboard/`.
+- Run `docker compose up -d postgres redis`, then `./mvnw spring-boot:run`, and open `http://localhost:9090/dashboard/`. The authoritative procedure, with the dependency order and the environment variables, is [31-operations-runbook.md](31-operations-runbook.md).
 - Login with `demo_admin / demo_admin` (or `demo_user` for least privilege).
 - Click `Initialize Demo Data` once.
 - Execute one flow per tab: Payment, Transfer, Deposit, Lending.

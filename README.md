@@ -166,3 +166,7 @@ Then: [system architecture](docs/04-system-architecture.md) ·
 [testing strategy](docs/18-testing-strategy.md) ·
 [acceptance criteria](docs/20-acceptance-criteria.md) ·
 [project overview](docs/01-project-overview.md)
+
+To operate it: [operations runbook](docs/31-operations-runbook.md) ·
+[service levels](docs/32-service-levels.md) ·
+[cloud onboarding guide](docs/33-cloud-onboarding-guide.md)

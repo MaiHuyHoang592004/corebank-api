@@ -18,7 +18,7 @@ Before the walkthrough, regenerate the current evidence pack:
 ```
 
 Then keep these three files open during the demo:
-- [README.md](README.md)
+- [README.md](../README.md)
 - [30-showcase-runner.md](30-showcase-runner.md)
 - `showcase-output/latest-showcase-report.md`
 
@@ -27,7 +27,7 @@ Start the app and open the browser dashboard:
 
 ```powershell
 docker compose up -d postgres redis
-mvn spring-boot:run
+./mvnw spring-boot:run
 ```
 
 Open `http://localhost:9090/dashboard/` and use demo credentials:
@@ -54,7 +54,7 @@ Say:
 "This is a production-like fintech backend portfolio project. I focused on making money flows correct first, then layering in the controls you expect in real systems: idempotency, approvals, outbox, audit, reconciliation, runtime mode, and selective Redis/Kafka usage without letting them become the source of truth."
 
 Proof points:
-- [README.md](README.md)
+- [README.md](../README.md)
 - [14-source-of-truth-map.md](14-source-of-truth-map.md)
 - [07-financial-invariants.md](07-financial-invariants.md)
 

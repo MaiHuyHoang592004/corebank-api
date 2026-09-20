@@ -59,7 +59,10 @@ Post-restore startup:
 ## Post-restore verification checklist
 Minimum verification after restore:
 - Flyway version check:
-  - expected latest migration matches repository baseline (currently `v24`)
+  - expected latest migration matches repository baseline (currently `V28`; check
+    `src/main/resources/db/migration/` rather than trusting this line, which was four
+    versions stale before 2026-09-20 — a restore verified against a stale baseline passes
+    while the schema is actually behind)
 - Core table row-count sanity:
   - `customers`
   - `customer_accounts`
