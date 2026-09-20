@@ -30,7 +30,14 @@ deploy/openshift/            overlay for OpenShift — see "OpenShift" below
 kind create cluster --name corebank --config kind-cluster.yaml
 
 # Ingress controller. Skip if you only want port-forward.
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+# Pinned to the last upstream release: kubernetes/ingress-nginx was archived in
+# March 2026 and `main` no longer moves, so a tag is the reproducible spelling.
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
+# That manifest no longer selects the ingress-ready label, so the scheduler may put the
+# controller on a worker. Only the control-plane container has ports 80 and 443 mapped to
+# the host, so a controller anywhere else accepts nothing from localhost.
+kubectl -n ingress-nginx patch deployment ingress-nginx-controller --type merge \
+  -p '{"spec":{"template":{"spec":{"nodeSelector":{"ingress-ready":"true"}}}}}'
 kubectl -n ingress-nginx wait --for=condition=ready pod \
   --selector=app.kubernetes.io/component=controller --timeout=180s
 
