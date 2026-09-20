@@ -17,14 +17,10 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * Serves the handful of project documents the dashboard links to.
+ * Serves the small public document set linked from the demo dashboard.
  *
- * <p>These are read from the classpath. The previous version resolved them against the process
- * working directory, which works when the jar is launched from a checkout but not inside the
- * container image, whose working directory holds only {@code app.jar} — every one of these links
- * returned 404 on the deployed demo. The build copies the referenced files into {@code docs/} on
- * the classpath (see the {@code <resources>} block in {@code pom.xml}), so the repository stays the
- * single source of truth and the links work in both places.
+ * <p>The files are packaged on the classpath so the links work both from a source checkout and
+ * from the container image, whose working directory contains only the application jar.
  */
 @RestController
 @RequestMapping("/dashboard/docs")
@@ -35,11 +31,12 @@ public class DashboardDocsController {
 	private static final Map<String, String> DOCS = Map.of(
 			"readme", "README.md",
 			"demo-script", "28-demo-script.md",
-			"interview-prep", "29-interview-prep.md",
 			"source-of-truth-map", "14-source-of-truth-map.md",
 			"runtime-failure-modes", "19-runtime-failure-modes.md",
 			"acceptance-criteria", "20-acceptance-criteria.md",
-			"sequence-diagrams", "16-sequence-diagrams.md");
+			"sequence-diagrams", "16-sequence-diagrams.md",
+			"operations-runbook", "31-operations-runbook.md",
+			"service-levels", "32-service-levels.md");
 
 	@GetMapping("/{docKey}")
 	public ResponseEntity<Resource> open(@PathVariable String docKey) {
@@ -65,7 +62,6 @@ public class DashboardDocsController {
 			return packaged;
 		}
 
-		// Fallback for a developer running from a checkout without rebuilding resources.
 		for (Path candidate : new Path[] {Path.of("docs", fileName), Path.of(fileName)}) {
 			Path absolute = candidate.toAbsolutePath().normalize();
 			if (Files.isRegularFile(absolute)) {

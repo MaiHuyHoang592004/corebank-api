@@ -223,7 +223,8 @@
 					<include>19-runtime-failure-modes.md</include>
 					<include>20-acceptance-criteria.md</include>
 					<include>28-demo-script.md</include>
-					<include>29-interview-prep.md</include>
+					<include>31-operations-runbook.md</include>
+					<include>32-service-levels.md</include>
 				</includes>
 			</resource>
 		</resources>

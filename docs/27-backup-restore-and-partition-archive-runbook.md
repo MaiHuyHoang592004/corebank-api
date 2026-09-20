@@ -99,4 +99,4 @@ Safety gate before any archive execution:
 
 ## Operational notes
 - Keep this runbook versioned with code and update after any schema or ops job changes.
-- Prefer rehearsals in predictable windows and record outcomes in `PROGRESS.log`.
+- Prefer rehearsals in predictable windows and record outcomes in the change record or operator log used for that environment.
