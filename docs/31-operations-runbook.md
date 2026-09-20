@@ -1333,29 +1333,25 @@ the absence of a runtime-mode control in
 ## Operational notes
 
 - Keep this runbook versioned with the code. Update it after any change to an ops
-  endpoint, an alert rule, a probe timing or a threshold in
-  [Operating thresholds and capacity](#operating-thresholds-and-capacity).
+  endpoint, alert rule, probe timing or operating threshold.
 - The alert subsection headings in [Alert response](#alert-response) are load-bearing:
-  the `runbook:` annotations in `deploy/observability/alerts.yml` link to them by
-  anchor. Renaming a heading breaks the link from the alert an operator is holding.
-- Record rehearsals and their outcomes in `PROGRESS.log`, the way the backup and restore
-  rehearsals are recorded.
-- Corrections this document identified and did not make, each needing a change in
-  another file:
-  1. `alerts.yml` — the `ReconciliationBreaksOpen` annotation names
-     `GET /api/ops/reconciliation/breaks`, which does not exist. The path is
-     `GET /api/reporting/reconciliation/breaks`.
-  2. `docs/28-demo-script.md` and `docs/29-interview-prep.md` — both say
-     `docker compose up -d postgres redis` and `mvn spring-boot:run`. See
-     [Starting the service](#starting-the-service) for the resolved procedure.
-  3. `docs/27-backup-restore-and-partition-archive-runbook.md` — its post-restore
-     Flyway check expects `v24`. The migration set now ends at `V28`.
-  4. `DemoSecurityConfig` — the `showcase` gate denies `/api/ops/security/**`, which
-     matches no controller, and leaves `/api/ops/customers/**` ungated.
-- Open questions this document could not resolve by reading:
-  1. What `ReconciliationService` reports when `account_balance_snapshots` is empty,
-     given that `SnapshotService` has no caller.
-  2. Whether the write path was intended to move to the partitioned `_p` tables, and if
-     so, under which migration.
-  3. Whether the ECS field set verified from the formatter class matches what this
-     application actually emits at runtime, which one log line would settle.
+  the `runbook:` annotations in `deploy/observability/alerts.yml` link to those
+  anchors. Rename the alert and runbook heading together.
+- Rehearse destructive or recovery procedures in a scratch environment and record the
+  observed result in that environment's change/operations record.
+- Alert evaluation exists, but human routing does not: there is no Alertmanager/paging
+  integration in this repository. A deployment adopting these rules must provide the
+  notification and escalation path.
+- Runtime-mode quiescing is still an application control gap. Do not substitute ad-hoc
+  database edits for a supported drain/read-only mechanism.
+
+### Open operational questions
+
+1. What should `ReconciliationService` report when
+   `account_balance_snapshots` is empty, given that `SnapshotService` currently has
+   no automatic caller?
+2. Whether the write path should move to the partitioned `_p` tables, and if so, under
+   which migration strategy.
+3. The exact ECS log document emitted by the packaged application should be confirmed
+   from a runtime sample before building vendor-specific parsing or routing rules around
+   individual fields.
