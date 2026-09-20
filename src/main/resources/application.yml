@@ -100,6 +100,26 @@ management:
       # several deployments without the queries becoming ambiguous.
       application: ${spring.application.name}
       environment: ${COREBANK_ENVIRONMENT:local}
+
+    distribution:
+      # Without this there are no `_bucket` series at all — a Timer exports only _count,
+      # _sum and _max. That mattered more than it sounds. MoneyEndpointLatency in
+      # deploy/observability/alerts.yml and the latency panel on the Grafana dashboard
+      # are both histogram_quantile() over http_server_requests_seconds_bucket, so from
+      # the day they were written until this line existed neither could produce a value.
+      # They did not alert falsely; they could not alert at all, which is worse — a
+      # latency alert that is silent because its input is empty looks exactly like one
+      # that is silent because the service is healthy.
+      percentiles-histogram:
+        http.server.requests: true
+      # Buckets are what percentiles cost, so bound them. The default range spans
+      # nanoseconds to minutes and emits dozens of buckets per URI per status per
+      # replica. Nothing here is interesting below 10ms, and the OpenShift router cuts a
+      # request off at 60s, so a bucket past that measures nothing that can happen.
+      minimum-expected-value:
+        http.server.requests: 10ms
+      maximum-expected-value:
+        http.server.requests: 60s
   prometheus:
     metrics:
       export:

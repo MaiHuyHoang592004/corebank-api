@@ -48,3 +48,4 @@ Thumbs.db
 
 ### Kubernetes local secrets ###
 deploy/kubernetes/secret.yaml
+deploy/observability/kubernetes/secret.yaml

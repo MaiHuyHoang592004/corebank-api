@@ -18,9 +18,19 @@ groups:
             every downstream consumer is drifting out of date while the API still
             returns 200. The usual cause is the publisher not running or the broker
             being unreachable.
+
+            Known caveat: any deployment with COREBANK_KAFKA_ENABLED=false has no
+            publisher bean at all, so the backlog grows without bound and this rule
+            fires permanently. That is a deliberate configuration, not an incident, and
+            an alert that always fires is worse than no alert — so either enable
+            publication or silence this rule for that environment.
           runbook: >-
-            docs/31-operations-runbook.md#outboxbackloggrowing — check that the
-            publisher thread is alive, then broker connectivity. GET
+            docs/31-operations-runbook.md#outboxbackloggrowing — FIRST check whether
+            publication is switched off for this deployment. OutboxEventPublisher is
+            @ConditionalOnProperty(corebank.kafka.enabled), and the Kubernetes ConfigMap
+            sets COREBANK_KAFKA_ENABLED=false, so the bean does not exist and this alert
+            is expected rather than actionable there. If publication is meant to be on,
+            check the publisher thread, then broker connectivity. GET
             /api/reporting/outbox/summary shows the breakdown by status.
 
       - alert: OutboxDeadLetters
@@ -50,7 +60,9 @@ groups:
             books cannot be certified.
           runbook: >-
             docs/31-operations-runbook.md#reconciliationbreaksopen — GET
-            /api/ops/reconciliation/breaks for the break taxonomy.
+            /api/reporting/reconciliation/breaks for the break taxonomy.
+            (/api/ops/reconciliation only exposes POST /runs and POST /external/runs;
+            this annotation named a path that does not exist until 2026-09-20.)
 
       # Watches stale, not in_flight, and the difference is the whole point.
       #

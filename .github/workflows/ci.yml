@@ -89,14 +89,25 @@ jobs:
             -schema-location 'deploy/openshift/schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             /tmp/rendered-openshift.yaml
 
+      # The OpenTelemetry Collector is a separate kustomize root under
+      # deploy/observability/kubernetes, so neither render above reaches it. Its
+      # ConfigMap is generated, which means a mistake in the collector's config file
+      # surfaces here as a render failure rather than as a pod that starts and quietly
+      # forwards nothing.
+      - name: Render and validate the collector
+        run: |
+          kubectl kustomize deploy/observability/kubernetes > /tmp/rendered-collector.yaml
+          kubeconform -strict -summary -kubernetes-version 1.31.0 \
+            /tmp/rendered-collector.yaml deploy/observability/kubernetes/secret.example.yaml
+
       # A floating tag cannot answer "what is running right now", which is the first
       # question an incident timeline asks. It also makes `kubectl rollout undo` roll
-      # back to the same name it just left. Both renders must name an immutable tag.
+      # back to the same name it just left. All three renders must name an immutable tag.
       - name: Reject floating image tags
         run: |
           if grep -nE '^\s*image: .*:(latest|main|master)$' \
-              /tmp/rendered.yaml /tmp/rendered-openshift.yaml; then
-            echo "::error::a rendered manifest deploys a floating tag; pin sha-<commit> in deploy/kubernetes/kustomization.yaml"
+              /tmp/rendered.yaml /tmp/rendered-openshift.yaml /tmp/rendered-collector.yaml; then
+            echo "::error::a rendered manifest deploys a floating tag; pin sha-<commit> in deploy/kubernetes/kustomization.yaml, or an explicit version in deploy/observability/kubernetes/deployment.yaml"
             exit 1
           fi
 

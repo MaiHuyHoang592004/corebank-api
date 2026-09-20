@@ -2,7 +2,12 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Recording rules are listed first so the SLI series they define exist before the
+# alerting rules in the same evaluation cycle. Prometheus does not order groups across
+# files, so this is a readability convention rather than a guarantee; no alert in
+# alerts.yml currently depends on a recorded series.
 rule_files:
+  - /etc/prometheus/recording-rules.yml
   - /etc/prometheus/alerts.yml
 
 scrape_configs:

@@ -290,11 +290,14 @@ absent on purpose.
    replicas request 750m CPU and 1.5Gi and cap at 3 CPU and 3Gi, and the PDB wants 2
    of 3 available. Whether that fits the Sandbox's limits is untested; the overlay
    patches neither the replica count nor the HPA's `minReplicas: 3`.
-5. **No telemetry leaves the cluster.** `COREBANK_OTLP_ENABLED` is `"false"` and no
-   collector is deployed. `deploy/observability/` brings the collector, Prometheus,
-   Tempo and Grafana up under docker compose only — none of it has a Kubernetes
-   manifest. This is the largest gap between what the application can emit and what
-   the deployment actually collects.
+5. **No telemetry leaves the cluster yet.** `COREBANK_OTLP_ENABLED` is still
+   `"false"`. `deploy/observability/kubernetes/` now carries manifests for an
+   OpenTelemetry Collector that forwards to Dynatrace over OTLP, but they have never
+   been applied to a cluster and the switch is left off until they have — turning
+   export on with nothing answering produces a stream of export failures and no
+   telemetry. Prometheus, Tempo and Grafana stay docker-compose-only, deliberately.
+   Until that cutover this is still the largest gap between what the application can
+   emit and what the deployment actually collects.
 6. **Nothing scrapes the metrics endpoint.** The pods carry `prometheus.io/*`
    annotations, but the overlay creates no `ServiceMonitor` and no credentials
    Secret, and the endpoint requires authentication.

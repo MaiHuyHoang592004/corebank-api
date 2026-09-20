@@ -1,0 +1,209 @@
+# SLI recording rules.
+#
+# These pre-compute the numerators, denominators and ratios behind the service level
+# objectives in docs/32-service-levels.md. Nothing here alerts; these rules exist so an
+# SLO query is a lookup rather than a 30-day range evaluation over raw series, and so
+# the definition of "an error" lives in exactly one place instead of being retyped into
+# every dashboard panel.
+#
+# Naming follows level:metric:operations. The level is the aggregation the series is
+# already reduced to (`money` = summed across all money endpoints and replicas,
+# `readmodel` = the projection freshness gauge), never the job or instance, because
+# every rule here has aggregated those labels away.
+#
+# The targets these feed are PROPOSED. No window of production traffic exists to
+# measure them against.
+groups:
+  # ---------------------------------------------------------------------------
+  # Money command availability
+  #
+  # The scope matches deploy/observability/alerts.yml and the Grafana dashboard on
+  # purpose: an availability figure averaged over every route lets a broken transfer
+  # path hide behind healthy dashboard and reporting traffic.
+  #
+  # Only 5xx counts as an error. A 4xx on these endpoints is usually the system
+  # refusing correctly — a duplicate idempotency claim, a failed validation, an
+  # unapproved maker/checker action — and counting a correct refusal against an
+  # availability budget would penalise the controls that make the system safe.
+  # ---------------------------------------------------------------------------
+  - name: corebank-sli-availability
+    interval: 30s
+    rules:
+      - record: money:http_requests:rate5m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{uri=~"/api/(payments|transfers|deposits|lending).*"}[5m]))
+
+      - record: money:http_requests_errors:rate5m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{uri=~"/api/(payments|transfers|deposits|lending).*",status=~"5.."}[5m]))
+
+      # Recorded but deliberately NOT part of the availability numerator. This is the
+      # refusal rate, and it is tracked so that a rise in correct rejections is visible
+      # without being mistaken for unavailability.
+      - record: money:http_requests_refused:rate5m
+        expr: |
+          sum(rate(http_server_requests_seconds_count{uri=~"/api/(payments|transfers|deposits|lending).*",status=~"4.."}[5m]))
+
+      # The SLI itself: successful fraction. Absent rather than 1 when there is no
+      # traffic, which is correct — no requests is no evidence of availability.
+      - record: money:http_requests_availability:ratio_rate5m
+        expr: |
+          1 - (
+            money:http_requests_errors:rate5m
+              /
+            money:http_requests:rate5m
+          )
+
+  # ---------------------------------------------------------------------------
+  # Money command latency
+  #
+  # WARNING — the two p95/p99 rules below record NOTHING as the application is
+  # currently configured, and this was verified rather than assumed.
+  #
+  # `http_server_requests_seconds_bucket` does not exist. Micrometer publishes a
+  # Prometheus `summary` for a Timer unless a distribution histogram is explicitly
+  # enabled, so the only series present are `_count`, `_sum` and `_max`. There is no
+  # `management.metrics.distribution.percentiles-histogram` key anywhere in
+  # src/main/resources/application.yml, so no bucket series is ever emitted and every
+  # histogram_quantile() over it returns an empty result.
+  #
+  # This is not a decision, it is a gap. The existing MoneyEndpointLatency alert and
+  # the "Money endpoint latency" dashboard panel read the same non-existent series, so
+  # neither has ever been able to fire or plot. The rules are written out here anyway so
+  # that enabling the config key is the only change needed; until then, use the mean
+  # below, which is computed from series that do exist.
+  # ---------------------------------------------------------------------------
+  - name: corebank-sli-latency
+    interval: 30s
+    rules:
+      # Works today. A mean hides the tail — it is a weaker signal than p95, not an
+      # equivalent one — but it is measured from `_sum` and `_count`, which are real.
+      - record: money:http_request_duration_seconds:mean5m
+        expr: |
+          sum(rate(http_server_requests_seconds_sum{uri=~"/api/(payments|transfers).*"}[5m]))
+            /
+          sum(rate(http_server_requests_seconds_count{uri=~"/api/(payments|transfers).*"}[5m]))
+
+      # Records nothing until histogram buckets are enabled. See the warning above.
+      - record: money:http_request_duration_seconds:p95rate5m
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_server_requests_seconds_bucket{uri=~"/api/(payments|transfers).*"}[5m]))
+          )
+
+      # Records nothing until histogram buckets are enabled. See the warning above.
+      - record: money:http_request_duration_seconds:p99rate5m
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(http_server_requests_seconds_bucket{uri=~"/api/(payments|transfers).*"}[5m]))
+          )
+
+  # ---------------------------------------------------------------------------
+  # Read-model freshness
+  #
+  # corebank_read_model_projection_lag_seconds carries NaN samples by design, in two
+  # distinct situations: before the first scheduled snapshot exists, and whenever the
+  # projector has produced nothing at all (ReadModelMetricsBinder maps the
+  # Long.MAX_VALUE sentinel to Double.NaN). Both are "no measurement", not "lag of
+  # zero" and not "lag of 9.2e18".
+  #
+  # Every rule below therefore has to tolerate NaN. The idiom is the `< inf` filter:
+  # any comparison against NaN is false, so NaN samples are dropped from the result
+  # instead of poisoning it.
+  #
+  # Which functions survive NaN is not intuitive, so it was measured with
+  # `promtool test rules` rather than assumed. Over a window containing NaN samples:
+  # `avg_over_time()` returns NaN, `max_over_time()` returns the largest real value,
+  # and `max()` across replicas returns NaN when every replica's current sample is
+  # NaN. An unfiltered average is therefore the trap, and it is the shape most
+  # freshness SLIs are written in.
+  # ---------------------------------------------------------------------------
+  - name: corebank-sli-freshness
+    interval: 30s
+    rules:
+      # Worst lag across replicas, NaN samples excluded. Absent when nothing has been
+      # projected, which is the honest answer rather than a fabricated zero.
+      - record: readmodel:projection_lag_seconds:max
+        expr: |
+          max(corebank_read_model_projection_lag_seconds < inf)
+
+      # Scrapes carrying a real measurement. This is the denominator, and it is a count
+      # of valid samples rather than of elapsed time, so a gap in the series shrinks the
+      # window instead of silently scoring as a failure.
+      - record: readmodel:projection_freshness_valid:count5m
+        expr: |
+          count_over_time((corebank_read_model_projection_lag_seconds < inf)[5m:])
+
+      # Scrapes where lag was within the proposed 60s freshness threshold. NaN is
+      # excluded here too: `NaN <= 60` is false, so unmeasured scrapes drop out of the
+      # numerator and the denominator alike rather than counting as breaches.
+      - record: readmodel:projection_freshness_good:count5m
+        expr: |
+          count_over_time((corebank_read_model_projection_lag_seconds <= 60)[5m:])
+
+      - record: readmodel:projection_freshness:ratio_rate5m
+        expr: |
+          sum(readmodel:projection_freshness_good:count5m)
+            /
+          sum(readmodel:projection_freshness_valid:count5m)
+
+  # ---------------------------------------------------------------------------
+  # Compliance-window SLIs
+  #
+  # Separated from the groups above solely because of evaluation cost, and the
+  # separation is not cosmetic. A `[30d]` range and a `[30d:5m]` subquery each read
+  # tens of thousands of points per evaluation; at the 30s interval the other groups
+  # use, Prometheus would re-read a month of history 2,880 times a day to answer a
+  # question whose value cannot meaningfully change between one evaluation and the
+  # next. 5m is still far more often than anyone reads an SLO.
+  # ---------------------------------------------------------------------------
+  - name: corebank-sli-compliance-window
+    interval: 5m
+    rules:
+      # Evaluated from raw counters rather than by averaging the 5m ratio, because
+      # averaging an already-averaged ratio weights quiet minutes the same as busy ones
+      # and a money system's quiet minutes are most of the month.
+      - record: money:http_requests_availability:ratio_rate30d
+        expr: |
+          1 - (
+            sum(rate(http_server_requests_seconds_count{uri=~"/api/(payments|transfers|deposits|lending).*",status=~"5.."}[30d]))
+              /
+            sum(rate(http_server_requests_seconds_count{uri=~"/api/(payments|transfers|deposits|lending).*"}[30d]))
+          )
+
+      # Error budget remaining, as a fraction of the 0.1% allowance. 1 means untouched,
+      # 0 means exhausted, negative means the objective is already missed for this
+      # window. See docs/32-service-levels.md for the arithmetic, and for why a request
+      # ratio is not a clock.
+      - record: money:http_requests_error_budget:ratio_remaining30d
+        expr: |
+          1 - (
+            (1 - money:http_requests_availability:ratio_rate30d) / 0.001
+          )
+
+      # Counts valid samples, not elapsed time, so a NaN gap shortens the window rather
+      # than scoring as a month of staleness.
+      - record: readmodel:projection_freshness:ratio_rate30d
+        expr: |
+          sum(count_over_time((corebank_read_model_projection_lag_seconds <= 60)[30d:5m]))
+            /
+          sum(count_over_time((corebank_read_model_projection_lag_seconds < inf)[30d:5m]))
+
+  # ---------------------------------------------------------------------------
+  # Throughput context
+  #
+  # Not an SLI and not something a human should be paged on. It is the denominator that
+  # makes the others readable: an availability ratio computed over four requests a day
+  # means nothing, and a flat error rate during an outage looks identical to a flat
+  # error rate during silence until you can see whether money was moving at all.
+  # ---------------------------------------------------------------------------
+  - name: corebank-sli-context
+    interval: 30s
+    rules:
+      # Safe to sum across replicas: corebank.ledger.journals.posted is a per-process
+      # Counter incremented from an afterCommit synchronization, so each instance counts
+      # only journals it committed itself. corebank_ledger_journals, the gauge, is a
+      # global COUNT(*) every replica reports identically and must never be rated.
+      - record: money:ledger_journals_posted:rate5m
+        expr: |
+          sum(rate(corebank_ledger_journals_posted_total[5m]))

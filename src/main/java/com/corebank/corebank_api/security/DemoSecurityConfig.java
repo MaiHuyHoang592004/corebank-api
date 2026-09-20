@@ -62,7 +62,15 @@ public class DemoSecurityConfig {
 							.requestMatchers(
 								"/api/ops/maintenance/**",
 								"/api/ops/executions/**",
-								"/api/ops/security/**")
+								// Was "/api/ops/security/**", which matched no controller at all.
+								// The customer-secret endpoints it was written to protect are
+								// mapped at /api/ops/customers by OpsCustomerSecretController, so
+								// the rule denied a path nobody could reach while the endpoints
+								// that read and write encrypted national ids, tax ids and KYC
+								// payloads fell through to anyRequest().authenticated() — reachable
+								// by demo_user in any showcase deployment. A deny rule aimed at the
+								// wrong path is worse than no rule, because the gate looks present.
+								"/api/ops/customers/**")
 							.denyAll();
 					}
 

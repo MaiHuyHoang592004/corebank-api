@@ -128,6 +128,12 @@ and API token, and add it to the pipelines. Nothing in the application changes â
 dependency, not a line of configuration. That is the property OTLP buys, and it is the
 reason to instrument with it rather than with a vendor SDK.
 
+In a cluster that is a separate set of manifests rather than an edit to the compose
+file: `kubernetes/` holds a collector Deployment, Service and generated ConfigMap that
+forward to Dynatrace and nothing else â€” no Tempo, no Prometheus, no Grafana, because a
+self-hosted stack is a second system to operate. Those manifests have never been
+applied to a cluster; `kubernetes/README.md` says exactly what was and was not checked.
+
 ## Deliberately not here
 
 - **Log shipping.** Logs go to stdout in ECS JSON, which is where a container runtime

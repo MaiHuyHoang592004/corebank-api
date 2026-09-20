@@ -1,0 +1,160 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+spec:
+  # One replica, and that is a decision rather than a quota concession.
+  #
+  # The collector is stateless in this configuration: the application exports metrics
+  # with delta aggregation temporality (management.otlp.metrics.export.aggregation-
+  # temporality in application.yml), so no processor here has to remember a previous
+  # value per series, and no pod is a special pod. Raising this to 2 is safe whenever
+  # telemetry loss during a collector rollout starts to matter. It is 1 because a
+  # Developer Sandbox quota is small and because losing telemetry for the length of a
+  # rollout costs nothing that money depends on.
+  replicas: 1
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-collector
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # With one replica, maxUnavailable: 0 means the new pod must become ready before
+      # the old one goes away. Telemetry keeps flowing across a config change instead
+      # of hitting a gap in the middle of it.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-collector
+    spec:
+      # The collector has no in-flight work worth 45 seconds of grace: its queues are
+      # in memory and the exporter drops them on shutdown either way.
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        # Note what is NOT here: no fsGroup, no runAsUser, no runAsGroup.
+        #
+        # OpenShift's restricted-v2 SCC assigns each namespace a UID range and runs
+        # every container as a UID drawn from it. A pod that names any of those three
+        # fields is rejected at admission — this is the exact failure that stops
+        # deploy/kubernetes/postgres.yaml applying on OpenShift, and the reason
+        # deploy/openshift/ deletes it rather than patching it.
+        #
+        # fsGroup is the one that looks necessary and is not. It exists to make a
+        # mounted volume group-readable; the only volumes here are a ConfigMap
+        # projection, which is world-readable by default (0644 under a 0755 directory),
+        # and an emptyDir. There is nothing for an fsGroup to fix.
+        #
+        # runAsNonRoot without a UID is the part that must be stated: it is a
+        # constraint the platform satisfies however it likes, so it is valid both on a
+        # vanilla cluster and under restricted-v2. deploy/kubernetes/deployment.yaml
+        # uses the same two lines and needs no OpenShift patch because of it.
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: otel-collector
+          # Pinned to an explicit version, matching the collector in
+          # deploy/observability/docker-compose.yml so the local lab and the cluster
+          # run the same build. CI rejects a rendered manifest whose image ends in
+          # :latest, :main or :master, and its "Reject floating image tags" step
+          # covers this directory's render alongside deploy/kubernetes and
+          # deploy/openshift.
+          image: otel/opentelemetry-collector-contrib:0.115.1
+          imagePullPolicy: IfNotPresent
+          args: ["--config=/etc/otel/config.yaml"]
+          ports:
+            - name: otlp-http
+              containerPort: 4318
+            - name: otlp-grpc
+              containerPort: 4317
+            # Probed by the kubelet directly on the pod IP. The Service does not
+            # publish it, for the same reason the application's Service does not
+            # publish its actuator port.
+            - name: health
+              containerPort: 13133
+          env:
+            # The endpoint is not a secret, so it lives in the generated ConfigMap
+            # next to the collector config and changes roll the pod with it.
+            - name: DYNATRACE_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: otel-collector-config
+                  key: DYNATRACE_OTLP_ENDPOINT
+            # The token is. It reaches the collector as an environment variable and is
+            # read back by ${env:DYNATRACE_API_TOKEN} in the config file, so no token
+            # is ever written into a ConfigMap or into this directory.
+            - name: DYNATRACE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: otel-collector-secrets
+                  key: DYNATRACE_API_TOKEN
+          readinessProbe:
+            httpGet:
+              path: /
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Answers "is this process wedged?" and nothing more. A backend rejecting
+          # every batch still passes this, by design: restarting the collector would
+          # not fix a bad token, and it would throw away whatever is queued.
+          livenessProbe:
+            httpGet:
+              path: /
+              port: health
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              # This limit is mandatory, not a tidiness habit. memory_limiter is
+              # configured with limit_percentage, and that percentage is read against
+              # the container's cgroup memory limit. With no limit set, the collector
+              # resolves the percentage against the node's total memory, computes a
+              # ceiling it can never reach, never refuses anything, and gets
+              # OOM-killed by the kubelet instead — which loses the whole batch rather
+              # than shedding the tail of it.
+              #
+              # 75% of 512Mi is roughly 384Mi soft limit with a 15% spike allowance.
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+              readOnly: true
+            # No exporter or extension configured here writes to disk, so this is
+            # insurance rather than a known requirement: with readOnlyRootFilesystem
+            # set, anything that did want a scratch file would fail at startup, and
+            # this directory has never been applied to a cluster where that could be
+            # observed. Adding a file_storage extension later would need a real
+            # volume, not this one.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            # kustomize rewrites this to the hashed name the configMapGenerator
+            # produces. See kustomization.yaml for why the hash is load-bearing.
+            name: otel-collector-config
+            items:
+              # Only the config file is projected. The ConfigMap also carries
+              # DYNATRACE_OTLP_ENDPOINT, which is consumed as an env var above and has
+              # no business appearing as a file in the collector's config directory.
+              - key: config.yaml
+                path: config.yaml
+        - name: tmp
+          emptyDir: {}
