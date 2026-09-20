@@ -18,7 +18,7 @@ deploy/kubernetes/
 ├── pdb.yaml
 └── kustomization.yaml
 
-deploy/openshift/            overlay — see "Notes on OpenShift" below
+deploy/openshift/            overlay for OpenShift — see "OpenShift" below
 ├── kustomization.yaml
 ├── route.yaml
 └── schemas/                 vendored Route schema, for kubeconform in CI
@@ -68,8 +68,14 @@ floating tag.
 not exist yet and deploying it gives `ImagePullBackOff`. Every build is also tagged
 with a sanitised branch name if you want to track a branch instead of a commit.
 
-The package is private by default, so the cluster needs a pull secret unless the
-package visibility is set to public in the repository's package settings:
+The package is public, so no pull secret is needed. Verified by fetching the pinned
+tag's manifest from `ghcr.io` with an anonymous token and no credentials available:
+it returns the same digest CI's push log recorded, while the same request without a
+token returns 401.
+
+GHCR packages are private when first published. If you fork this and see
+`ImagePullBackOff` with an authentication error, either make your own package public
+under the repository's package settings, or give the namespace a pull secret:
 
 ```bash
 kubectl -n corebank create secret docker-registry ghcr \
@@ -181,61 +187,125 @@ kubectl -n corebank get hpa corebank-api -w
 The HPA needs metrics-server, which kind does not ship — `hpa.yaml` has the install
 command. Without it the HPA reports `<unknown>` and simply never acts.
 
-## Notes on OpenShift
+## OpenShift
 
 The base does not apply on OpenShift. `deploy/openshift/` is an overlay on top of it
 that fixes the two things that stop it, and nothing else.
 
-**Arbitrary UIDs.** The `restricted-v2` SCC assigns each namespace a UID range and
-runs every container as a UID from it, rejecting any pod that asks for a specific
-`runAsUser` or `fsGroup`. The application is fine as it stands: the image runs as a
-non-root user, gives group 0 the same rights as the owner, and the Deployment sets
-`runAsNonRoot` without naming a UID — so the platform picks one. It also drops all
-capabilities, disables privilege escalation and runs read-only with a writable
-`emptyDir` at `/tmp`.
+### Why the base fails there
 
-`postgres.yaml` is not fine: it pins `runAsUser: 999` and `fsGroup: 999`, because
+**Arbitrary UIDs.** The `restricted-v2` SCC gives each namespace a UID range and runs
+every container as a UID from it. Any pod that names a specific `runAsUser` or
+`fsGroup` is rejected.
+
+The application already complies: its image runs as a non-root user, gives group 0
+the same rights as the owner, and `deployment.yaml` asks for `runAsNonRoot` without
+naming a UID, so the platform picks one. That was checked rather than assumed, and it
+is why the overlay contains no patch for the Deployment.
+
+`postgres.yaml` does not comply: it pins `runAsUser: 999` and `fsGroup: 999`, because
 `postgres:16-alpine` needs its data directory owned by the postgres user and cannot
-run as an unknown UID. Relaxing the security context would not help — the image is
-the problem. So the overlay removes the StatefulSet and its Service and expects the
-database to come from the Developer Catalog (whose PostgreSQL template uses a Red Hat
-image built for arbitrary UIDs) or from a managed instance. That is closer to how
-this would really run anyway; `postgres.yaml` says as much about itself.
+start as an unknown UID. Loosening the security context does not help — the image is
+what cannot run, not the policy. So the overlay stops running that image here.
 
-**Routing.** OpenShift admits traffic with `Route`, not `Ingress`. The overlay
-deletes the Ingress and adds a Route with edge TLS, an HTTP redirect, and the router
-timeout raised from its 30s default to the 60s the base Ingress uses — a money
-command that waits on a row lock must not be cut off by the router while the
-transaction it started is still running.
+**Routing.** OpenShift admits external traffic with `Route`. The base's `Ingress`
+names an nginx ingressClass that does not exist on OpenShift.
+
+### What the overlay changes
+
+| Object | Change | Why |
+|---|---|---|
+| StatefulSet `corebank-postgres` | deleted | cannot run under an arbitrary UID |
+| Service `corebank-postgres` | deleted | nothing left to select |
+| ConfigMap `corebank-config` | `SPRING_DATASOURCE_URL` → `postgresql:5432`, `COREBANK_ENVIRONMENT` → `openshift` | point at a database provisioned outside the overlay |
+| Ingress `corebank-api` | deleted | wrong object for this platform |
+| Route `corebank-api` | added | edge TLS, HTTP redirected, router timeout 60s |
+| Deployment, Service, HPA, PDB, Namespace | unchanged | already valid under `restricted-v2` |
+
+The router timeout is the one number worth explaining. OpenShift's default is 30s,
+where the base Ingress allows 60s. A money command can wait on a row lock; if the
+router cuts the connection at 30s, the caller sees a failure for a transaction that
+is still running and may yet commit. The Route raises it back to 60s so the two
+paths behave the same.
+
+Deleting the database is not a workaround dressed up as a decision — but it is also
+not a loss. A ledger does not belong in a hand-rolled single-replica StatefulSet with
+no failover, no backups and no point-in-time recovery, and `postgres.yaml` says so
+about itself. On OpenShift the database comes from the Developer Catalog, whose
+PostgreSQL template uses a Red Hat image built for arbitrary UIDs, or from a managed
+instance.
+
+### Deploying it
 
 ```bash
 oc new-project corebank
-oc apply -f deploy/kubernetes/secret.yaml
 
-# Provision a database, then point the overlay at it. The overlay defaults to a
-# Service named `postgresql`, which is what the catalog template creates.
+# The password below and the one in the Secret must match. Nothing checks this for
+# you; a mismatch shows up as pods that never pass readiness.
+oc apply -f deploy/kubernetes/secret.yaml
 oc new-app postgresql-persistent \
   -p POSTGRESQL_DATABASE=corebank \
   -p POSTGRESQL_USER=corebank \
-  -p POSTGRESQL_PASSWORD=<same as the Secret>
+  -p POSTGRESQL_PASSWORD=<same value as SPRING_DATASOURCE_PASSWORD>
 
 oc apply -k deploy/openshift
 oc -n corebank rollout status deployment/corebank-api
 oc get route corebank-api
 ```
 
-If the database host differs, change `SPRING_DATASOURCE_URL` in the overlay's
-ConfigMap patch before applying. Getting it wrong fails safe rather than quietly:
-readiness gates on the database, so the pods stay out of the Service instead of
-accepting money commands they cannot complete.
+If your database is not the Service named `postgresql`, edit `SPRING_DATASOURCE_URL`
+in the overlay's ConfigMap patch first. Getting it wrong fails safe: readiness gates
+on the database, so the pods stay out of the Service rather than accepting money
+commands they cannot finish.
 
-CI renders and validates this overlay alongside the base. `Route` is not in any
-schema catalogue `kubeconform` knows about, so its schema is vendored under
-`deploy/openshift/schemas/` — validating every resource except the one that is
-specific to the platform would be a check that cannot fail.
+### What is checked, and what is not
 
-This overlay is validated, not yet deployed: it renders and passes strict schema
-validation, but it has not been applied to a live OpenShift cluster.
+CI renders the overlay and validates it strictly on every push. `Route` is in no
+schema catalogue `kubeconform` ships with, so its schema is vendored under
+`deploy/openshift/schemas/` — validating every object except the one that is specific
+to the platform would be a check that cannot fail. That schema was tested against a
+deliberately misspelled enum and rejected it.
+
+That is the whole of the evidence. **The overlay has never been applied to a live
+OpenShift cluster.** Rendering and schema validation catch a malformed manifest; they
+say nothing about whether the SCC admits the pods, whether the router behaves as
+described, or whether the catalog database works as assumed.
+
+### Not done yet
+
+These are gaps, not decisions. The section below this one lists the things that are
+absent on purpose.
+
+1. **Never run on a real cluster.** As above — rendered and validated only. Every
+   claim here about SCC admission and router behaviour is reasoning from the docs,
+   not an observation.
+2. **No database manifest on this path.** The overlay deletes PostgreSQL and expects
+   one to exist; nothing in the repository provisions it. The password has to be kept
+   in sync by hand between `oc new-app` and `secret.yaml`, and `secret.example.yaml`
+   still carries a `POSTGRES_PASSWORD` key that nothing on this path reads.
+3. **The Route has no host and no certificate of its own.** OpenShift generates the
+   hostname and the router serves its default wildcard certificate. Workable for a
+   lab, not for a named domain.
+4. **Resource footprint never checked against a Developer Sandbox quota.** Three
+   replicas request 750m CPU and 1.5Gi and cap at 3 CPU and 3Gi, and the PDB wants 2
+   of 3 available. Whether that fits the Sandbox's limits is untested; the overlay
+   patches neither the replica count nor the HPA's `minReplicas: 3`.
+5. **No telemetry leaves the cluster.** `COREBANK_OTLP_ENABLED` is `"false"` and no
+   collector is deployed. `deploy/observability/` brings the collector, Prometheus,
+   Tempo and Grafana up under docker compose only — none of it has a Kubernetes
+   manifest. This is the largest gap between what the application can emit and what
+   the deployment actually collects.
+6. **Nothing scrapes the metrics endpoint.** The pods carry `prometheus.io/*`
+   annotations, but the overlay creates no `ServiceMonitor` and no credentials
+   Secret, and the endpoint requires authentication.
+7. **Customer-secret endpoints return 503.** `corebank.security.master-key-b64` is
+   unset everywhere under `deploy/`, and `CustomerSecretCryptoService` answers
+   `SERVICE_UNAVAILABLE` without it. This applies to every deployment path, not just
+   this one.
+8. **No service mesh, and no progressive delivery.** Traffic goes Route → Service →
+   pods. There is no mTLS between workloads, no canary or blue/green split, and no
+   per-request routing. The rollout safety here comes from `maxUnavailable: 0` and
+   the probes, which is a different and weaker guarantee.
 
 ## Deliberately not here
 
