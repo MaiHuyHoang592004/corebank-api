@@ -48,6 +48,16 @@ spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
+          # Sized for the largest pod count the cluster can reach, not for three replicas.
+          # Every application pod holds a full Hikari pool and Hikari keeps it open at idle,
+          # so scaling out takes connections whether or not there is traffic. The HPA allows
+          # 6 replicas, a rolling update surges 1 more, and a terminating pod keeps its
+          # connections while it drains: 8 pods x 20 = 160, plus 10 held back for an
+          # operator and monitoring. PostgreSQL's default of 100 was exhausted in a load test
+          # once the HPA reached 6 replicas; `FATAL: sorry, too many clients already`, and
+          # even psql could not get in. deploy/kubernetes/check-connection-budget.sh fails CI
+          # if this number and the replica, surge or pool settings stop adding up.
+          args: ["-c", "max_connections=200"]
           ports:
             - name: postgres
               containerPort: 5432

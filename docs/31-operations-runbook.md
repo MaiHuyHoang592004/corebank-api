@@ -1240,12 +1240,34 @@ for a second that nobody can release.
 
 ```text
 pool 20 ÷ 2 connections per command   = ~10 concurrent money commands per instance
-3 replicas × 20                       = 60 connections
-PostgreSQL default max_connections    = 100
+HPA maxReplicas                       = 6
++ rolling-update maxSurge             = 1
++ one terminating pod, still draining = 1
+worst-case pods                       = 8
+8 pods × 20                           = 160 connections
++ held back for an operator/monitoring = 10
+required max_connections              = 170  (deploy/kubernetes/postgres.yaml sets 200)
+PostgreSQL default max_connections    = 100  (NOT enough)
 ```
 
-60 of 100 is why `20` is a deliberate number rather than a large one. Raising
-`COREBANK_DB_POOL_SIZE` without raising `max_connections` on the database moves the
+Hikari keeps its whole pool open at idle (its minimum-idle defaults to its maximum), so
+scaling out consumes connections whether or not there is traffic. An earlier version of
+this section counted three replicas (60 of 100). In a load test the HPA scaled to six
+replicas, the pools held exactly 100 connections between them, PostgreSQL began answering
+`FATAL: sorry, too many clients already`, money requests waited the full 30 s connection
+timeout and returned HTTP 500, and even `psql` could not connect. The current figure is
+enforced rather than remembered: `deploy/kubernetes/check-connection-budget.sh` runs in CI
+and fails when replicas, surge, pool size and `max_connections` stop adding up. The
+OpenShift overlay expects an external database, so the script cannot check it, but it
+prints the number that database has to accept (170).
+
+Connections are not free. In the same test, with the budget fixed and six replicas holding
+121 connections, PostgreSQL's working set reached 436 Mi against its 512 Mi limit. The
+worst case the budget allows (160 pooled connections) was not exercised, so the memory
+limit and `max_connections` have to be raised together, and that combination needs its own
+measurement before it is trusted.
+
+Raising `COREBANK_DB_POOL_SIZE` without raising `max_connections` on the database moves the
 failure rather than removing it.
 
 The real fix is to stop holding two connections per command. Until that refactor, this

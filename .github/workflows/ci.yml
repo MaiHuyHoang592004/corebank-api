@@ -111,6 +111,17 @@ jobs:
             exit 1
           fi
 
+      # Every pod holds a full Hikari pool at idle, so the HPA's maximum, the rolling-update
+      # surge and the pool size all draw on one PostgreSQL max_connections. With the default
+      # of 100, six replicas exhausted the server in a load test: pods could not fill their
+      # pools, money requests returned 500 after the 30 s connection timeout, and psql could
+      # not connect. The OpenShift overlay expects an external database, so for that render
+      # the script prints the figure the database must accept instead of comparing.
+      - name: Check the PostgreSQL connection budget
+        run: |
+          bash deploy/kubernetes/check-connection-budget.sh /tmp/rendered.yaml
+          bash deploy/kubernetes/check-connection-budget.sh /tmp/rendered-openshift.yaml
+
   # ---------------------------------------------------------------- full suite
   verify:
     name: Full test suite (Testcontainers)
