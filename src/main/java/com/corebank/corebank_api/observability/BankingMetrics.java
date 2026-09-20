@@ -77,8 +77,21 @@ public class BankingMetrics {
 						+ "stopped mid-flight: the money was rolled back, but the customer's "
 						+ "operation did not happen and nobody has retried it. This is the number "
 						+ "worth alerting on; in_flight on its own is just traffic.");
+		// Deliberately a gauge of total rows, and deliberately NOT the throughput signal.
+		//
+		// This used to describe itself as "the rate of change is the throughput", which invited
+		// rate() over it. Two things make that wrong. It is a global COUNT(*), so every replica
+		// reports the same number and sum(rate(...)) over three of them triples the answer. And a
+		// gauge that starts at 0 for the five seconds before the first refresh produces a spike the
+		// size of the whole ledger on the first scrape after a pod starts.
+		//
+		// corebank.ledger.journals.posted, a real per-process counter in LedgerCommandService
+		// incremented after commit, is the throughput signal. This one answers a different and
+		// still useful question: how large the ledger has grown, for retention and capacity.
 		gauge(registry, "corebank.ledger.journals", ledgerJournals,
-				"Journals posted. The rate of change is the throughput of money actually moving.");
+				"Total journal rows in the ledger, for growth and retention. This is a size, not a "
+						+ "rate: it is a global count every replica reports identically. Use "
+						+ "corebank.ledger.journals.posted for throughput.");
 	}
 
 	private static void gauge(MeterRegistry registry, String name, AtomicLong source, String description) {

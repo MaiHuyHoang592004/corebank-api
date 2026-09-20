@@ -19,8 +19,8 @@ groups:
             returns 200. The usual cause is the publisher not running or the broker
             being unreachable.
           runbook: >-
-            Check that the application has @EnableScheduling and that the publisher
-            thread is alive, then check broker connectivity. GET
+            docs/31-operations-runbook.md#outboxbackloggrowing — check that the
+            publisher thread is alive, then broker connectivity. GET
             /api/reporting/outbox/summary shows the breakdown by status.
 
       - alert: OutboxDeadLetters
@@ -34,8 +34,9 @@ groups:
             These events will never be published without intervention. Each one is a
             downstream system that has permanently missed a money event.
           runbook: >-
-            GET /api/reporting/outbox/dead-letters to inspect, fix the cause, then
-            requeue. Requeue is behind maker/checker approval.
+            docs/31-operations-runbook.md#outboxdeadletters — GET
+            /api/reporting/outbox/dead-letters to inspect, fix the cause, then requeue.
+            Requeue is behind maker/checker approval.
 
       - alert: ReconciliationBreaksOpen
         expr: corebank_reconciliation_open_breaks > 0
@@ -47,23 +48,33 @@ groups:
           description: >-
             The ledger and an external statement disagree. Until this is resolved the
             books cannot be certified.
-          runbook: "GET /api/ops/reconciliation/breaks for the break taxonomy."
+          runbook: >-
+            docs/31-operations-runbook.md#reconciliationbreaksopen — GET
+            /api/ops/reconciliation/breaks for the break taxonomy.
 
+      # Watches stale, not in_flight, and the difference is the whole point.
+      #
+      # This rule used to fire on `corebank_idempotency_in_flight > 10`. That is a
+      # traffic measure: ten money commands in flight at once is a busy instance, not a
+      # fault, so the rule paged on load and stayed silent on the fault it was written
+      # for. A claim older than the takeover lease is unambiguous — its owner is gone.
+      # Any non-zero value is worth a human, so the threshold is 0 rather than a number
+      # chosen to suppress noise that was never signal.
       - alert: IdempotencyKeysStranded
-        expr: corebank_idempotency_in_flight > 10
-        for: 15m
+        expr: corebank_idempotency_stale > 0
+        for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "{{ $value }} money commands stuck IN_PROGRESS"
+          summary: "{{ $value }} money commands stranded past the takeover lease"
           description: >-
             A command claims its idempotency key before executing and resolves it
-            afterwards. A count that stays high means commands were interrupted
-            between those two points, so their outcome is unknown and a retry with the
-            same key will be refused.
+            afterwards. A claim older than the lease belongs to an instance that stopped
+            between those two points: the money was rolled back, but the customer's
+            operation did not happen and nobody has retried it.
           runbook: >-
-            Cross-check against ledger_journals to establish what actually committed
-            before clearing the keys.
+            docs/31-operations-runbook.md#idempotencykeysstranded — cross-check against
+            ledger_journals to establish what actually committed before clearing keys.
 
   - name: corebank-platform
     rules:
@@ -81,6 +92,9 @@ groups:
           description: >-
             Scoped to money endpoints on purpose: an error rate averaged over every
             route lets a broken transfer path hide behind healthy dashboard traffic.
+          runbook: >-
+            docs/31-operations-runbook.md#moneyendpointerrorrate — separate "failing" from
+            "refusing": a duplicate-claim rejection is a 4xx and is correct behaviour.
 
       - alert: MoneyEndpointLatency
         expr: |
@@ -96,3 +110,7 @@ groups:
             These paths take row locks. Latency here usually means lock contention or a
             slow database, and it turns into queued requests rather than errors, so it
             will not show up as a failure rate.
+          runbook: >-
+            docs/31-operations-runbook.md#moneyendpointlatency — check
+            hikaricp_connections_pending first. A money command holds two connections,
+            so pool exhaustion presents as latency long before it presents as errors.

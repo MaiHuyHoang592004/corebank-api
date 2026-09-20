@@ -51,15 +51,25 @@ server:
 | `corebank_reconciliation_open_breaks` | The ledger and an external statement disagree. |
 | `corebank_idempotency_in_flight` | Commands claimed but not yet resolved. Normal and short-lived under load. |
 | `corebank_idempotency_stale` | Claims past the takeover lease: commands whose instance stopped mid-flight. This is the one worth alerting on; in-flight on its own is just traffic. |
-| `corebank_ledger_journals` | Rate of change is the throughput of money actually moving, as opposed to request volume. |
+| `corebank_ledger_journals` | Total journal rows. A size, for growth and retention — not a rate. It is a global `COUNT(*)`, so every replica reports it identically. |
+| `corebank_ledger_journals_posted_total` | Journals **committed** by that instance, counted after commit rather than after insert. This is the throughput signal, and the one that is safe to `sum(rate(...))` across replicas. |
 
 These are refreshed on a schedule and served from memory. A gauge that runs SQL per
 scrape hands anyone who can reach the metrics endpoint a way to load the database, and
 the cost multiplies with every scraper.
 
-**Traces.** Every HTTP request, every JDBC statement. A slow transfer shows which of
-the two it was spending its time in, which is the difference between "the API is slow"
-and "this query is slow".
+**Traces.** Every HTTP request, and — since `datasource-micrometer` was added — every
+JDBC connection acquisition and query. Until then this sentence was false: Spring's JDBC
+support carries no Observation instrumentation, so a transfer produced one server span
+with the entire database portion inside it as unattributed time. That was the opposite of
+useful here, because the failure this system actually suffered was connection starvation.
+A money command holds two connections at once, so under a retry storm each one holds one
+while waiting for a second nobody can release. With `CONNECTION` spans that shows up as
+time spent acquiring, which is the difference between "the API is slow", "this query is
+slow", and "we ran out of connections".
+
+Bind parameters are deliberately excluded from spans — in this application they are
+account identifiers, amounts and customer references.
 
 **Logs.** `COREBANK_LOG_FORMAT=ecs` switches the console to one JSON document per line
 in Elastic Common Schema. Trace id, span id and correlation id are fields, so a log

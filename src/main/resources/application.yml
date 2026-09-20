@@ -129,6 +129,20 @@ management:
     resource-attributes:
       deployment.environment: ${COREBANK_ENVIRONMENT:local}
       service.namespace: corebank
+      # Which build is emitting this telemetry. An APM tool groups a latency regression by
+      # release; without this every deploy looks like the same service, and "it got slow on
+      # Tuesday" cannot be tied to what shipped on Tuesday.
+      #
+      # Spring Boot derives spring.application.version from the jar manifest, so it is unset
+      # when running from an IDE or `mvn spring-boot:run`, where there is no manifest on the
+      # application package. The :unknown default is required, not decorative — an
+      # unresolvable placeholder fails context startup outright.
+      #
+      # Deliberately NOT added to management.metrics.tags. Those are common tags on every
+      # meter, so the version there would change the label set of every series on every
+      # deploy, break rate() continuity application-wide, and double the active series for
+      # the length of each rollout. Release identity belongs on the resource.
+      service.version: ${spring.application.version:unknown}
     tracing:
       export:
         otlp:
@@ -138,3 +152,33 @@ management:
       export:
         enabled: ${COREBANK_OTLP_ENABLED:false}
         url: ${COREBANK_OTLP_METRICS_ENDPOINT:http://localhost:4318/v1/metrics}
+        # Dynatrace ingests OTLP metrics as deltas; Spring Boot defaults to cumulative.
+        # Setting it in the application is the better of the two fixes: this process knows
+        # its own cumulative baseline, so the deltas are correct by construction. The
+        # collector's cumulativetodelta processor also works, but it makes the collector
+        # stateful — it must remember the previous value per series — and a stateful
+        # collector cannot safely run more than one replica.
+        aggregation-temporality: ${COREBANK_OTLP_TEMPORALITY:delta}
+
+# JDBC observations (net.ttddyy.observation:datasource-micrometer-spring-boot).
+#
+# The auto-configuration wraps every DataSource and emits spans on the same
+# ObservationRegistry that Micrometer Tracing already bridges to OpenTelemetry, so these
+# land inside the existing HTTP trace with no extra wiring.
+jdbc:
+  # CONNECTION is the one that earns its place here, and it is listed first deliberately.
+  # This system's real outage was connection starvation, not slow SQL: a money command holds
+  # two connections at once — the business transaction plus the REQUIRES_NEW transaction that
+  # records the idempotency outcome inside it — so once concurrent commands reach the pool
+  # size, each holds one while waiting for a second nobody can release. A CONNECTION span
+  # makes that visible as time spent acquiring, instead of as unexplained latency.
+  #
+  # FETCH and KEYS are omitted: result-set and generated-key spans multiply span count on
+  # every query and answer questions this system has never needed to ask.
+  includes: CONNECTION,QUERY
+  datasource-proxy:
+    # Bind parameters stay out of spans. In this application they are account identifiers,
+    # amounts and customer references; capturing them would ship customer financial data to
+    # whatever APM backend is configured and retain it there. This is the library default —
+    # it is set explicitly because it is the setting most dangerous to flip by accident.
+    include-parameter-values: false

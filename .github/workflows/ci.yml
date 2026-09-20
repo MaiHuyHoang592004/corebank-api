@@ -189,6 +189,13 @@ jobs:
           load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Bakes the commit into the jar manifest, which Spring Boot surfaces as
+          # spring.application.version. That single value becomes both /actuator/info's
+          # build version and the service.version attribute on exported telemetry, so a
+          # running pod and an APM trace agree on which build they came from — and both
+          # agree with the sha-<commit> image tag the manifests pin.
+          build-args: |
+            APP_VERSION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

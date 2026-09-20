@@ -17,7 +17,11 @@ COPY src/ src/
 COPY README.md README.md
 COPY docs/ docs/
 
-RUN mvn -B -ntp package -DskipTests
+# Declared here, after dependency resolution, on purpose: an ARG invalidates every layer
+# below it, so putting this above dependency:go-offline would re-download the world on every
+# version bump. CI passes the commit sha; the default keeps a plain `docker build` working.
+ARG APP_VERSION=0.0.1-SNAPSHOT
+RUN mvn -B -ntp package -DskipTests -Drevision=${APP_VERSION}
 
 # ---------------------------------------------------------------- runtime
 FROM eclipse-temurin:17-jre
