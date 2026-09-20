@@ -1,151 +1,417 @@
 # CoreBank
 
-A core banking backend built around one question: **when this system fails, what happens
-to the money?**
+**A core-banking workload built for financial correctness under failure — then packaged,
+observed and operated like a platform workload.**
 
 [![CI](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml/badge.svg)](https://github.com/MaiHuyHoang592004/corebank-api/actions/workflows/ci.yml)
 
-## The problem
+**Application:** Java 17 · Spring Boot · PostgreSQL · Redis · Kafka  
+**Platform:** Docker · Kubernetes · OpenShift overlay · Kustomize · GitHub Actions  
+**Observability:** Micrometer · OpenTelemetry · Prometheus · Tempo · Grafana · Dynatrace OTLP path  
+**Operations:** probes · rolling updates · HPA/PDB · SLOs · alerts · incident runbooks
 
-An API that returns `200` has said very little about a money system. The cases that
-decide whether it can be trusted are the ones where it cannot answer at all:
+[Live demo](https://corebank-api-acv7.onrender.com) ·
+[Failure evidence](docs/19-runtime-failure-modes.md) ·
+[Operations runbook](docs/31-operations-runbook.md) ·
+[Platform & APM guide](docs/33-platform-deployment-and-apm-guide.md)
 
-- the process dies between reserving funds and recording that it did
-- a client retries a transfer it never got a response for
-- a broker is unreachable while the ledger is perfectly available
-- a balance is high enough to spend and also already committed elsewhere
-- two operators act on the same loan at the same moment
+---
 
-In each of those the request either has no answer or gets a misleading one, and the
-truth has to live somewhere the request cannot reach. That is what this repository is
-about: deciding where money truth lives, what is allowed to move it, and what is
-supposed to happen when a part of the system stops.
+## Why this system exists
+
+The project is built around one question:
+
+> **When this system fails, what happens to the money?**
+
+A successful HTTP response says very little about whether a banking system is safe.
+The interesting cases are the ones where the application cannot give a clean answer:
+
+- the process dies while a transfer is in flight;
+- a client retries because it never received the response;
+- concurrent requests race for the same balance;
+- the broker is unavailable while the ledger is healthy;
+- an instance owns an idempotency claim and disappears;
+- database connection pressure makes the API unavailable without corrupting money.
+
+CoreBank treats those as design inputs rather than exceptional cases.
+
+PostgreSQL remains authoritative for financial state. Redis and Kafka can improve
+availability, throughput or integration behaviour, but neither is allowed to decide
+whether money moved.
+
+---
+
+## System shape
+
+```mermaid
+flowchart TB
+    Client[Client] --> Edge[Ingress / OpenShift Route]
+    Edge --> Service[Kubernetes Service]
+    Service --> A[CoreBank pod]
+    Service --> B[CoreBank pod]
+    Service --> C[CoreBank pod]
+
+    A --> PG[(PostgreSQL)]
+    B --> PG
+    C --> PG
+
+    A -. optional .-> Redis[(Redis)]
+    B -. optional .-> Redis
+    C -. optional .-> Redis
+
+    A -. async .-> Kafka[(Kafka)]
+    B -. async .-> Kafka
+    C -. async .-> Kafka
+
+    A --> OTEL[OpenTelemetry Collector]
+    B --> OTEL
+    C --> OTEL
+
+    OTEL --> Dynatrace[Dynatrace OTLP]
+    OTEL --> Tempo[Tempo]
+    OTEL --> Prom[Prometheus / Grafana]
+```
+
+The application remains a **modular monolith**. Transactional correctness is the hard
+problem here; service extraction is deferred until a real scaling, ownership or
+deployment boundary justifies the additional distributed-systems cost.
+
+---
+
+## Engineering guarantees
+
+### Financial correctness
+
+- **Double-entry ledger** — every journal must balance before it can be posted.
+- **Posted and available balances are different states** — a hold reserves spendable
+  money without pretending that settlement already occurred.
+- **Idempotent money commands** — retries cannot silently double-post transfers or
+  payment operations.
+- **Deterministic locking** — affected financial rows are locked in a stable order to
+  reduce avoidable deadlock patterns.
+- **Transactional outbox** — the event commits with the financial transaction; broker
+  availability does not decide whether the money movement is true.
+- **Maker/checker and reconciliation controls** — sensitive operations and external
+  disagreements have explicit operational paths.
+
+### Failure recovery
+
+- an abandoned idempotency claim carries a lease and can be safely taken over;
+- liveness checks the process, not shared infrastructure;
+- readiness gates traffic on database availability;
+- graceful shutdown allows in-flight money commands to finish before pod termination;
+- ledger throughput metrics increment **after transaction commit**, not after an SQL
+  insert that may still roll back.
+
+---
+
+## Operational evidence
+
+The repository distinguishes **implemented configuration** from **observed runtime
+behaviour**.
+
+| Capability | Evidence | Status |
+|---|---|---|
+| Financial failure experiments | SIGKILL, retry storm, concurrent duplicates, connection starvation | **Measured** |
+| Container build | CI build, Trivy gate, immutable image workflow | **CI-validated** |
+| Kubernetes manifests | Deployment, Service, Ingress, HPA, PDB, probes, security context | **CI-validated; live cluster verification pending** |
+| OpenShift | Kustomize overlay, Route, arbitrary-UID-compatible application deployment | **CI-validated; live OpenShift verification pending** |
+| Application telemetry | HTTP observations, JDBC spans, banking metrics, structured logs | **Implemented** |
+| Cluster OTel Collector | Kubernetes manifests and Dynatrace exporter | **CI-validated; runtime verification pending** |
+| Dynatrace | OTLP traces/metrics integration path | **Configured; live tenant verification pending** |
+| Service Mesh | Canary/mTLS validation design | **Not implemented** |
+
+The detailed verification model is documented in
+[Platform Deployment and APM Guide](docs/33-platform-deployment-and-apm-guide.md).
+
+---
 
 ## What broke when it was made to fail
 
-Reasoning about failure is cheap. These are the ones that were induced on a running
-system against a real PostgreSQL, chosen because nobody knew the outcome in advance.
-Killing a pod to watch Kubernetes restart it is not on the list: that demonstrates
-Kubernetes, not this.
+These failures were induced against a running PostgreSQL-backed application. They are
+kept separate from Kubernetes self-healing exercises: deleting a pod proves Kubernetes
+reconciliation; it does not prove the application preserves financial invariants.
 
-| Induced | What happened | What it cost, and the fix |
+| Failure | Observed result | Change that followed |
 |---|---|---|
-| `SIGKILL` during 60 concurrent transfers | Money correct, every uncommitted transaction rolled back. Four idempotency claims left `IN_PROGRESS` forever. | Those commands had not happened and could never be retried; the cleanup job only deletes terminal rows. Claims now carry a lease a retry can take over. |
-| 14 requests sharing one idempotency key, against a cold instance | 32 seconds of outage, ten `500`s, and still exactly one journal posted. | Connection starvation, not lock contention: a money command holds two connections at once, so at pool size every command waits for one nobody can release. The identical burst at pool 40 took one second with no errors. |
-| Concurrent duplicates of one command | Exactly one journal, but one caller got a `500`. | A unique violation was caught and the row read back inside the same transaction, which PostgreSQL had already aborted. The claim is now an `ON CONFLICT` whose row count decides the winner. |
-| Running the outbox as deployed | It had never run. | `@EnableScheduling` was absent, so the only `@Scheduled` method was inert. Tests had called it directly and missed the runtime configuration defect. |
-| Probing the health endpoints anonymously | `401` on liveness and readiness. | A kubelet sends no credentials, so this would have restart-looped every replica and kept them all out of the Service. |
-| Scanning the container image | Eight fixable `CRITICAL` CVEs, six in embedded Tomcat. | The pipeline now builds and scans the image before publishing it. |
+| `SIGKILL` during 60 concurrent transfers | Uncommitted work rolled back and money stayed correct, but four idempotency claims remained `IN_PROGRESS` forever | Claims now have a takeover lease |
+| 14 concurrent requests against a cold instance | 32 seconds, ten `500` responses, exactly one journal | Root cause was connection starvation; pool sizing is now explicit and documented |
+| Concurrent duplicates of one command | Exactly one journal, but one caller got `500` | Claim acquisition changed to `ON CONFLICT` rather than reading inside an already-aborted PostgreSQL transaction |
+| Running the outbox as deployed | Publisher never executed | Missing scheduling activation was fixed and guarded |
+| Anonymous health probes | `401` on liveness/readiness | Probe paths are explicitly accessible to the kubelet |
+| Container scan | Eight fixable `CRITICAL` findings | Image publication is gated by scanning and affected dependencies were upgraded |
 
-The invariant checked after every scenario is the one that matters in a bank: total
-money unchanged, no unbalanced journal, no negative balance. **It held in all of them.**
-What failed was availability and recoverability, never correctness.
+After each financial scenario the important invariant was checked again: total money
+unchanged, balanced journals, no unexpected negative balance. Availability failed in
+some scenarios; financial correctness did not.
 
-Method and measurements:
-[docs/19-runtime-failure-modes.md](docs/19-runtime-failure-modes.md).
+Full method and measurements:
+[Runtime Failure Modes](docs/19-runtime-failure-modes.md).
 
-## The rules that follow
+---
 
-- **PostgreSQL decides money.** Accounts, ledger, idempotency, approvals and audit live
-  there. A cache can be empty and a broker can be down without changing what is true.
-- **Posted and available are different questions.** A hold changes spendability without
-  pretending that settlement already happened.
-- **An idempotency key is a claim with a lease, not a flag.** Claims are taken in the
-  database, and one whose owner stopped can be taken over safely.
-- **Events are written with the money, published after it.** The outbox row commits in
-  the same transaction as the balance change.
-- **Liveness must not consult shared dependencies.** A probe that checks the database can
-  turn one dependency failure into a restart storm.
-- **Instrumentation and export are separate switches.** The application can remain
-  observable even when a telemetry backend is unavailable.
+## Platform and deployment
 
-## What it does
+The Kubernetes deployment is intentionally more than a single `Deployment.yaml`.
 
-Payments with hold, capture, void and refund. Concurrency-safe internal transfers.
-Deposits through open, accrual and maturity. Lending through disbursement, repayment,
-overdue and default. Around those: double-entry ledger, idempotency, audit trail,
-maker/checker approvals, reconciliation with break detection, outbox with dead-letter
-handling, runtime mode guards, and rate limiting that degrades open rather than
-blocking money.
+It includes:
 
-## Seeing it work
+- three application replicas;
+- startup, readiness and liveness probes;
+- separate application and management ports;
+- rolling updates with `maxUnavailable: 0`;
+- graceful Spring shutdown plus pod termination grace;
+- HPA and PodDisruptionBudget;
+- resource requests and limits;
+- non-root execution, dropped capabilities and read-only root filesystem;
+- pod anti-affinity;
+- ConfigMap/Secret separation;
+- immutable image selection through Kustomize.
+
+OpenShift reuses the Kubernetes base and changes only platform-specific concerns through
+an overlay: the nginx Ingress is replaced by an OpenShift `Route`, the environment
+identity changes, and PostgreSQL is expected to be provided by an OpenShift-compatible
+or external deployment.
+
+The application does not require a fixed runtime UID, which keeps the workload aligned
+with OpenShift's restricted security model instead of weakening the platform policy to
+fit the image.
+
+Deployment detail:
+[deploy/kubernetes/README.md](deploy/kubernetes/README.md) ·
+[Platform Deployment and APM Guide](docs/33-platform-deployment-and-apm-guide.md).
+
+---
+
+## Observability and APM
+
+CoreBank is instrumented around questions an operator can act on.
+
+### Traces
+
+A transfer trace can contain:
+
+```text
+HTTP /api/transfers/internal
+        │
+        ▼
+JDBC CONNECTION
+        │
+        ▼
+JDBC QUERY
+        │
+        ▼
+PostgreSQL
+```
+
+`CONNECTION` spans matter because one measured outage was connection-pool starvation,
+not slow SQL. Without connection-acquisition timing, that failure appears only as
+unexplained request latency.
+
+JDBC bind values are deliberately excluded from telemetry so account identifiers,
+customer references and monetary values are not copied into an APM backend.
+
+### Release correlation
+
+Telemetry carries `service.version` from the application build. A latency regression can
+therefore be investigated against the release that emitted it instead of treating every
+deployment as the same service.
+
+### Banking signals
+
+The service exports operational signals that HTTP status alone cannot answer, including:
+
+- pending and dead-letter outbox events;
+- open reconciliation breaks;
+- in-flight and stale idempotency claims;
+- total ledger size;
+- committed-journal throughput.
+
+Alerts link to written response procedures in the
+[Operations Runbook](docs/31-operations-runbook.md).
+
+### Vendor-neutral telemetry
+
+Application code exports OpenTelemetry rather than a vendor-specific SDK.
+
+Locally:
+
+```text
+CoreBank → OTel Collector → Tempo / Prometheus → Grafana
+```
+
+For managed APM:
+
+```text
+CoreBank → OTel Collector → Dynatrace OTLP
+```
+
+The cluster Collector already contains the Dynatrace OTLP exporter, while live tenant
+verification is intentionally tracked as pending rather than presented as completed
+experience.
+
+---
+
+## SLO and incident model
+
+The repository defines proposed service-level objectives for the money paths rather than
+for every endpoint.
+
+Current design includes:
+
+- **availability:** proposed 99.9% rolling 30-day target;
+- **latency:** proposed p95 below 2 seconds for synchronous payment/transfer paths;
+- **read-model freshness:** separate freshness objective;
+- explicit separation between correct `4xx` refusal and server-side failure;
+- alerts classified by customer symptom versus underlying cause.
+
+These are proposed engineering targets, not production statistics. There is no long-lived
+production traffic history to justify pretending otherwise.
+
+See [Service Levels](docs/32-service-levels.md).
+
+---
+
+## Run locally
+
+### Application
 
 ```bash
 docker compose up -d postgres
 ./mvnw spring-boot:run
-# http://localhost:9090/
 ```
 
-Redis and Kafka are optional; the application degrades rather than failing without
-them. A hosted instance runs at
-[corebank-api-acv7.onrender.com](https://corebank-api-acv7.onrender.com) and may take up
-to ninety seconds to wake. Sign in as `demo_admin / demo_admin`, initialise the demo
-data, then authorize a hold, capture it, run a transfer, and replay that transfer with
-the same idempotency key.
+Open:
 
-Walkthrough: [docs/28-demo-script.md](docs/28-demo-script.md).
+```text
+http://localhost:9090/
+```
 
-## Checking it
+Redis and Kafka are optional for the basic startup path. The application is designed so
+their absence does not redefine financial truth.
+
+A hosted demo is available at
+[corebank-api-acv7.onrender.com](https://corebank-api-acv7.onrender.com) and may take
+up to ninety seconds to wake.
+
+Demo credentials:
+
+```text
+demo_admin / demo_admin
+```
+
+Initialize the demo data, authorize and capture a hold, execute a transfer, then replay
+the transfer with the same idempotency key.
+
+Walkthrough: [Demo Walkthrough](docs/28-demo-script.md).
+
+### Local observability stack
+
+```bash
+docker compose -f deploy/observability/docker-compose.yml up -d
+
+COREBANK_OTLP_ENABLED=true \
+COREBANK_LOG_FORMAT=ecs \
+./mvnw spring-boot:run
+```
+
+### Kubernetes
+
+```bash
+kind create cluster --name corebank --config deploy/kubernetes/kind-cluster.yaml
+
+cp deploy/kubernetes/secret.example.yaml deploy/kubernetes/secret.yaml
+# edit the local secret before applying it
+
+kubectl apply -f deploy/kubernetes/namespace.yaml
+kubectl apply -f deploy/kubernetes/secret.yaml
+kubectl apply -k deploy/kubernetes
+```
+
+Runtime verification gates are listed in
+[Platform Deployment and APM Guide](docs/33-platform-deployment-and-apm-guide.md).
+
+---
+
+## Verification
 
 ```bash
 ./mvnw verify
 ./mvnw -Dgroups=fast test
 ```
 
-Money paths are covered against a real PostgreSQL rather than mocks, because the
-behaviour being tested is the database's. CI runs the fast subset, the full suite,
-validates Kubernetes manifests, builds the container image, scans it, and publishes
-only after the checks pass.
+Money-path integration tests run against PostgreSQL rather than mocks because row locks,
+transaction abort semantics and uniqueness behaviour are part of the feature.
 
-## Operating it
+CI performs:
 
-```bash
-# Metrics, traces and logs
-docker compose -f deploy/observability/docker-compose.yml up -d
-COREBANK_OTLP_ENABLED=true COREBANK_LOG_FORMAT=ecs ./mvnw spring-boot:run
-
-# Kubernetes
-kind create cluster --name corebank --config deploy/kubernetes/kind-cluster.yaml
-cp deploy/kubernetes/secret.example.yaml deploy/kubernetes/secret.yaml
-kubectl apply -f deploy/kubernetes/namespace.yaml -f deploy/kubernetes/secret.yaml
-kubectl apply -k deploy/kubernetes
+```text
+fast checks
+    ↓
+manifest render + schema validation
+    ↓
+full Testcontainers verification
+    ↓
+container build
+    ↓
+Trivy image scan
+    ↓
+publish immutable image
 ```
 
-The service emits platform metrics plus banking-specific signals for outbox backlog,
-dead letters, reconciliation breaks, stale idempotency claims and ledger activity.
-Telemetry leaves through OpenTelemetry so the backend remains a deployment choice.
+The image is not published when the gate fails.
 
-[deploy/observability/README.md](deploy/observability/README.md) ·
-[deploy/kubernetes/README.md](deploy/kubernetes/README.md) ·
-[DEPLOY.md](DEPLOY.md)
+---
 
-## Built with
+## Technology
 
-Java 17, Spring Boot, PostgreSQL with Flyway, Testcontainers, Redis, Kafka, Micrometer
-and OpenTelemetry. Prometheus, Tempo and Grafana provide the local observability stack.
-The application remains a modular monolith because transactional correctness is the
-hard problem here; splitting services early would make that harder without solving a
-real requirement.
+| Area | Choices |
+|---|---|
+| Application | Java 17, Spring Boot 4 |
+| Financial truth | PostgreSQL, Flyway |
+| Async / acceleration | Kafka, Redis |
+| Verification | JUnit, Testcontainers |
+| Packaging | Docker |
+| Platform | Kubernetes, Kustomize, OpenShift overlay |
+| Observability | Micrometer, OpenTelemetry, Prometheus, Tempo, Grafana |
+| Managed APM path | Dynatrace via OTLP |
+| Delivery | GitHub Actions, Trivy |
 
-## Scope
+Technology is deliberately downstream of the guarantees. None of these tools is allowed
+to become financial truth merely because it is convenient.
 
-This is not a running bank. It models the parts where money correctness is decided and
-stops before card schemes, clearing and settlement networks, KYC integrations and a
+---
+
+## Scope and limitations
+
+CoreBank is not a running bank and does not claim production deployment history.
+
+It models the areas where financial correctness is decided and stops before card
+schemes, external clearing/settlement networks, KYC providers and a complete
 customer-facing banking product.
 
-Some production concerns are intentionally left outside the repository: database high
-availability, production secret management, centralized log shipping and human alert
-routing.
+Also intentionally outside the current implementation:
+
+- production database high availability;
+- production secret-management integration;
+- centralized log shipping/paging integration;
+- live OpenShift verification;
+- live Dynatrace tenant verification;
+- Service Mesh runtime implementation.
+
+Those boundaries are documented rather than hidden.
+
+---
 
 ## Documentation
 
-The curated documentation index is at **[docs/README.md](docs/README.md)**.
+Start with:
 
-Recommended entry points:
+1. [Financial Invariants](docs/07-financial-invariants.md)
+2. [Source-of-Truth Map](docs/14-source-of-truth-map.md)
+3. [Runtime Failure Modes](docs/19-runtime-failure-modes.md)
+4. [Operations Runbook](docs/31-operations-runbook.md)
+5. [Service Levels](docs/32-service-levels.md)
+6. [Platform Deployment and APM Guide](docs/33-platform-deployment-and-apm-guide.md)
 
-- [Financial invariants](docs/07-financial-invariants.md)
-- [Source-of-truth map](docs/14-source-of-truth-map.md)
-- [Runtime failure modes](docs/19-runtime-failure-modes.md)
-- [Operations runbook](docs/31-operations-runbook.md)
-- [Service levels](docs/32-service-levels.md)
-- [Platform deployment & APM guide](docs/33-platform-deployment-and-apm-guide.md)
+Full index: [docs/README.md](docs/README.md).
