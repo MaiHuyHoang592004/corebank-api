@@ -225,6 +225,7 @@
 					<include>28-demo-script.md</include>
 					<include>31-operations-runbook.md</include>
 					<include>32-service-levels.md</include>
+					<include>33-platform-deployment-and-apm-guide.md</include>
 				</includes>
 			</resource>
 		</resources>

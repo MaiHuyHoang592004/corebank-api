@@ -119,20 +119,17 @@ per-indicator detail paths stay authenticated.
 
 ## Starting the service
 
-`README.md`, `DEPLOY.md`, `docs/28-demo-script.md` and `docs/29-interview-prep.md`
-currently disagree on two points: `./mvnw` versus `mvn`, and whether Redis must be
-started alongside PostgreSQL. This section resolves both. Where another document
-differs, this one is the operational answer.
+This section is the authoritative startup procedure for local operation.
 
-**Chosen: `./mvnw`, and PostgreSQL only.**
+Use the committed Maven wrapper (`./mvnw`) so the build tool version is controlled by
+the repository. PostgreSQL is the only dependency required for the documented startup
+path.
 
-`./mvnw` is chosen because the wrapper is committed and
-`.mvn/wrapper/maven-wrapper.properties` pins Maven `3.9.16`, so every operator runs the
-same build tool. A bare `mvn` runs whatever is on the operator's `PATH`. `README.md`
-already uses `./mvnw` throughout; `docs/28` and `docs/29` use `mvn`, and they are the
-two that should change.
+Redis is optional for startup because it provides rate limiting and idempotency replay
+acceleration rather than financial truth. Start Redis when those behaviours are being
+exercised.
 
-PostgreSQL alone is chosen because nothing in the documented startup path requires
+PostgreSQL alone is sufficient because nothing in the documented startup path requires
 Redis. `management.health.redis.enabled` is `false` in `application.yml`, so Redis
 cannot make the aggregate health endpoint report `DOWN`; readiness consults
 `readinessState` and `db` only. Redis provides rate limiting and an idempotency replay

@@ -38,6 +38,7 @@ project's implementation history.
 - [27 — Backup, restore and partition archive runbook](27-backup-restore-and-partition-archive-runbook.md)
 - [31 — Operations runbook](31-operations-runbook.md)
 - [32 — Service levels](32-service-levels.md)
+- [33 — Platform deployment and APM guide](33-platform-deployment-and-apm-guide.md)
 
 ## Domain context
 

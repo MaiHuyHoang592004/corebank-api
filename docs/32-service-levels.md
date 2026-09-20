@@ -93,8 +93,7 @@ this repository exists to argue against.
 
 ### Latency
 
-**This SLI does not work as the application is currently configured.** The intended
-definition is p95 over the two synchronous customer-facing money paths:
+The p95 objective for the synchronous customer-facing money paths is:
 
 ```promql
 histogram_quantile(0.95,
@@ -102,39 +101,29 @@ histogram_quantile(0.95,
 )
 ```
 
-`http_server_requests_seconds_bucket` does not exist. Micrometer publishes a Prometheus
-`summary` for a `Timer` unless a distribution histogram is explicitly requested, and
-there is no `management.metrics.distribution.percentiles-histogram` key anywhere in
-`src/main/resources/application.yml`. This was verified by scraping a registry directly
-rather than inferred: a `Timer` named `http.server.requests` with the default
-configuration exports exactly three series —
+`application.yml` explicitly enables the percentile histogram for
+`http.server.requests` and bounds the expected range from `10ms` to `60s`. That
+configuration exists because the latency alert and dashboard both depend on the
+`_bucket` series; without histogram publication the PromQL would return no value.
 
-```text
-http_server_requests_seconds_count{uri="/api/transfers"} 1
-http_server_requests_seconds_sum{uri="/api/transfers"} 0.12
-http_server_requests_seconds_max{uri="/api/transfers"} 0.12
-```
+The bounds are deliberate:
 
-— and no `_bucket` series at all. With `publishPercentileHistogram` enabled the same
-timer produced 69 bucket series. So the quantile query is not merely untuned; it returns
-an empty result, permanently.
+- values below `10ms` are not operationally interesting for these money paths;
+- requests cannot usefully exceed the platform's `60s` routing deadline;
+- bounding the histogram limits the number of buckets and therefore metric cardinality.
 
-This is **not** a deliberate omission. It is a gap, and it is wider than this document:
-the existing `MoneyEndpointLatency` alert and the `Money endpoint latency` panel on
-the Grafana overview dashboard are built on the same non-existent series — the panel's
-p95 and p50 queries both read `http_server_requests_seconds_bucket` — so neither the
-alert nor the panel has ever been able to fire or plot. Fixing it is one configuration key plus a decision about
-cardinality, and that decision is a real one — histogram buckets multiply the series
-count per `uri`/`status`/`method` combination, which is why it should be enabled
-deliberately and scoped to `http.server.requests` rather than switched on globally.
+The current proposed objective is **p95 under 2 seconds**, matching the
+`MoneyEndpointLatency` alert threshold so the SLI and alert cannot drift into two
+different definitions of acceptable latency.
 
-Until then, `money:http_request_duration_seconds:mean5m` is recorded from `_sum` and
-`_count`, which do exist. A mean is a weaker signal than a p95, not a substitute for
-one: it hides exactly the tail that connection-pool starvation produces, which is the
-failure this system has actually suffered (see
-[19-runtime-failure-modes.md](19-runtime-failure-modes.md)). **Proposed target once
-buckets exist: p95 under 2 seconds**, matching the `MoneyEndpointLatency` threshold so
-the alert and the objective cannot drift apart.
+This is still a **proposed target, not a measured production SLO**. The histogram
+configuration makes the query valid; only runtime traffic can establish whether the
+target and bucket bounds are appropriate.
+
+`money:http_request_duration_seconds:mean5m` is also recorded from `_sum` and
+`_count`. It is useful for trend context but is not a substitute for p95 because a
+mean hides the long tail produced by connection-pool starvation — a failure mode already
+measured in [19-runtime-failure-modes.md](19-runtime-failure-modes.md).
 
 ### Read-model freshness
 
@@ -319,8 +308,7 @@ absent.
 Every rule carries a `runbook:` annotation pointing at
 `docs/31-operations-runbook.md#<lowercased alertname>`. That file exists, and each of
 the six anchors resolves to an `### <AlertName>` heading under its *Alert response*
-section, so every annotation — and the row in
-[29-interview-prep.md](29-interview-prep.md) — lands on a written procedure. The
+section, so every annotation lands on a written procedure. The
 anchors are load-bearing rather than decorative: the link is the lowercased alert name,
 so renaming an alert in `alerts.yml` or renaming a heading in the runbook breaks it
 silently. The two have to be changed together.
@@ -341,10 +329,9 @@ silently. The two have to be changed together.
 
 These are unresolved, not rhetorical.
 
-1. **Should histogram buckets be enabled, and at what cardinality?** The latency SLI,
-   the `MoneyEndpointLatency` alert and the `Money endpoint latency` dashboard panel all
-   depend on it. Scoped to
-   `http.server.requests` the cost is bounded; enabled globally it is not.
+1. **Are the current histogram bounds and cardinality appropriate under real traffic?**
+   Histograms are enabled only for `http.server.requests`, bounded from `10ms` to
+   `60s`. Runtime traffic is still needed to validate that choice.
 2. **What is the real traffic shape?** Availability as a request ratio behaves very
    differently at 10 req/min and at 1,000 req/min, and the 432-request budget above is
    arithmetic over an assumed number.

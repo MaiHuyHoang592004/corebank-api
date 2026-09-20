@@ -148,3 +148,4 @@ Recommended entry points:
 - [Runtime failure modes](docs/19-runtime-failure-modes.md)
 - [Operations runbook](docs/31-operations-runbook.md)
 - [Service levels](docs/32-service-levels.md)
+- [Platform deployment & APM guide](docs/33-platform-deployment-and-apm-guide.md)

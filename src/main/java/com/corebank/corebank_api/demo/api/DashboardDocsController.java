@@ -36,7 +36,8 @@ public class DashboardDocsController {
 			"acceptance-criteria", "20-acceptance-criteria.md",
 			"sequence-diagrams", "16-sequence-diagrams.md",
 			"operations-runbook", "31-operations-runbook.md",
-			"service-levels", "32-service-levels.md");
+			"service-levels", "32-service-levels.md",
+			"platform-deployment", "33-platform-deployment-and-apm-guide.md");
 
 	@GetMapping("/{docKey}")
 	public ResponseEntity<Resource> open(@PathVariable String docKey) {
