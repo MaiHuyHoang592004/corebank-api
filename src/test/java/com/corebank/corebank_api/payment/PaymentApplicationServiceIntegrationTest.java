@@ -101,6 +101,16 @@ class PaymentApplicationServiceIntegrationTest {
 	void authorizeHoldCannotOverspend() {
 		SeededAccount seededAccount = seedAccount(10_000L, 1_000L, "VND");
 
+		// audit_events has no column tying a row to this test's account, and a rejected
+		// hold never creates the payment_order that could be joined to. Measure the delta
+		// instead of asserting an absolute zero: this class shares a Spring context, and
+		// therefore one database, with every other test that authorizes a hold, so the
+		// global count is whatever those happened to leave behind.
+		String authorizedHoldAudits =
+				"SELECT COUNT(*) FROM audit_events "
+						+ "WHERE action = 'PAYMENT_HOLD_AUTHORIZED' AND resource_type = 'PAYMENT_ORDER'";
+		int auditEventsBefore = count(authorizedHoldAudits);
+
 		assertThrows(
 				InsufficientFundsException.class,
 				() -> paymentApplicationService.authorizeHold(
@@ -128,8 +138,10 @@ class PaymentApplicationServiceIntegrationTest {
 
 		assertEquals(0, count("SELECT COUNT(*) FROM payment_orders WHERE payer_account_id = ?", seededAccount.customerAccountId()));
 		assertEquals(0, count("SELECT COUNT(*) FROM funds_holds WHERE customer_account_id = ?", seededAccount.customerAccountId()));
-		assertEquals(0, count(
-				"SELECT COUNT(*) FROM audit_events WHERE action = 'PAYMENT_HOLD_AUTHORIZED' AND resource_type = 'PAYMENT_ORDER'"));
+		assertEquals(
+				auditEventsBefore,
+				count(authorizedHoldAudits),
+				"a rejected hold must not append an audit event");
 		assertEquals(0, count(
 				"SELECT COUNT(*) FROM outbox_events WHERE event_type = 'PAYMENT_AUTHORIZED' AND aggregate_type = 'PAYMENT_ORDER' AND aggregate_id IN (SELECT payment_order_id::text FROM payment_orders WHERE payer_account_id = ?)",
 				seededAccount.customerAccountId()));

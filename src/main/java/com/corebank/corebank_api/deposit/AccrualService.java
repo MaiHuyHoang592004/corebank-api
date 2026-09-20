@@ -2,6 +2,7 @@ package com.corebank.corebank_api.deposit;
 
 import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.ledger.LedgerCommandService;
+import lombok.extern.slf4j.Slf4j;
 import com.corebank.corebank_api.ledger.LedgerCommandService.PostingInstruction;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,9 +14,20 @@ import java.util.Map;
 import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
+/**
+ * Daily interest accrual across all active deposit contracts.
+ *
+ * <p>Note: nothing currently invokes {@link #processDailyAccruals}; the per-contract
+ * {@code /api/deposits/accrue} endpoint goes through {@code DepositContractService} instead. This
+ * class is kept as the batch entry point and is not yet registered with {@code BatchRunService},
+ * so it does not have the cluster-wide single-run guarantee the other batch jobs have.
+ */
 @Service
+@Slf4j
 public class AccrualService {
 
 	private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -25,21 +37,33 @@ public class AccrualService {
 	private final DepositAccrualRepository depositAccrualRepository;
 	private final DepositEventRepository depositEventRepository;
 	private final LedgerCommandService ledgerCommandService;
+	private final TransactionTemplate perContractTransaction;
 
 	public AccrualService(
 			JdbcTemplate jdbcTemplate,
 			DepositContractRepository depositContractRepository,
 			DepositAccrualRepository depositAccrualRepository,
 			DepositEventRepository depositEventRepository,
-			LedgerCommandService ledgerCommandService) {
+			LedgerCommandService ledgerCommandService,
+			PlatformTransactionManager transactionManager) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.depositContractRepository = depositContractRepository;
 		this.depositAccrualRepository = depositAccrualRepository;
 		this.depositEventRepository = depositEventRepository;
 		this.ledgerCommandService = ledgerCommandService;
+		this.perContractTransaction = new TransactionTemplate(transactionManager);
+		this.perContractTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
 	}
 
-	@Transactional
+	/**
+	 * Accrues one day of interest for every ACTIVE contract.
+	 *
+	 * <p>Each contract commits in its own transaction. The previous version wrapped the whole batch
+	 * in a single {@code @Transactional} and caught per-contract exceptions intending to continue —
+	 * but a failure inside {@code postJournal} marks the shared transaction rollback-only and a
+	 * SQLException leaves the PostgreSQL transaction aborted, so every later contract fails too and
+	 * the entire batch is discarded at commit while the returned counters still report success.
+	 */
 	public AccrualBatchResult processDailyAccruals(AccrualBatchRequest request) {
 		LocalDate today = LocalDate.now();
 		int processed = 0;
@@ -57,81 +81,105 @@ public class AccrualService {
 					continue;
 				}
 
-				// Calculate daily interest
-				BigDecimal principal = new BigDecimal(contract.getPrincipalAmount());
-				BigDecimal annualRate = new BigDecimal(contract.getInterestRate());
-				BigDecimal dailyRate = annualRate.divide(new BigDecimal(365), 10, RoundingMode.HALF_UP);
-				BigDecimal dailyInterest = principal.multiply(dailyRate).divide(new BigDecimal(100), 0, RoundingMode.DOWN);
+				boolean accrued = perContractTransaction.execute(status -> accrueOneContract(contract, today, request));
 
-				long accruedInterest = dailyInterest.longValue();
-
-				// Get last accrual to calculate running balance
-				List<DepositAccrual> existingAccruals = depositAccrualRepository
-						.findByContractIdOrderByAccrualDateDesc(contract.getContractId());
-
-				long runningBalance = existingAccruals.stream()
-						.mapToLong(DepositAccrual::getRunningBalance)
-						.findFirst()
-						.orElse(0L);
-
-				runningBalance += accruedInterest;
-
-				// Create accrual record
-				DepositAccrual accrual = new DepositAccrual();
-				accrual.setContractId(contract.getContractId());
-				accrual.setAccrualDate(today);
-				accrual.setAccruedInterest(accruedInterest);
-				accrual.setRunningBalance(runningBalance);
-				accrual.setCreatedAt(java.time.Instant.now());
-
-				depositAccrualRepository.save(accrual);
-
-				// Post journal for interest accrual
-				UUID journalId = ledgerCommandService.postJournal(
-						new LedgerCommandService.PostJournalCommand(
-								"DEPOSIT_ACCRUAL_BATCH",
-								"DEPOSIT_ACCRUAL",
-								UUID.randomUUID(),
-								contract.getCurrency(),
-								null,
-								request.actor(),
-								request.correlationId(),
-								List.of(
-										new PostingInstruction(
-												request.debitLedgerAccountId(), // Interest Expense
-												null,
-												"D",
-												accruedInterest,
-												contract.getCurrency(),
-												false),
-										new PostingInstruction(
-												request.creditLedgerAccountId(), // Interest Payable
-												null,
-												"C",
-												accruedInterest,
-												contract.getCurrency(),
-												false))));
-
-				// Record accrual event
-				DepositEvent event = new DepositEvent();
-				event.setContractId(contract.getContractId());
-				event.setEventType("ACCURED");
-				event.setAmountMinor(accruedInterest);
-				event.setMetadataJson(buildAccrualMetadata(today, accruedInterest, runningBalance));
-				event.setCreatedAt(java.time.Instant.now());
-
-				depositEventRepository.save(event);
-
-				processed++;
-
+				if (accrued) {
+					processed++;
+				} else {
+					skipped++;
+				}
 			} catch (Exception ex) {
 				failed++;
-				// Log error but continue processing other contracts
-				System.err.println("Failed to accrue interest for contract " + contract.getContractId() + ": " + ex.getMessage());
+				log.error(
+						"Failed to accrue interest for deposit contract {}",
+						contract.getContractId(),
+						ex);
 			}
 		}
 
 		return new AccrualBatchResult(processed, skipped, failed);
+	}
+
+	/**
+	 * Accrues a single contract inside its own transaction.
+	 *
+	 * @return {@code true} when interest was posted, {@code false} when the contract rounded to zero
+	 *     interest for the day and was skipped
+	 */
+	private boolean accrueOneContract(DepositContract contract, LocalDate today, AccrualBatchRequest request) {
+		// Calculate daily interest
+		BigDecimal principal = new BigDecimal(contract.getPrincipalAmount());
+		BigDecimal annualRate = new BigDecimal(contract.getInterestRate());
+		BigDecimal dailyRate = annualRate.divide(new BigDecimal(365), 10, RoundingMode.HALF_UP);
+		BigDecimal dailyInterest = principal.multiply(dailyRate).divide(new BigDecimal(100), 0, RoundingMode.DOWN);
+
+		long accruedInterest = dailyInterest.longValue();
+
+		// A contract whose daily interest rounds down to zero must be skipped, not posted.
+		// postJournal rejects non-positive amounts and ledger_postings has a
+		// CHECK (amount_minor > 0), so attempting it would abort this contract's transaction.
+		if (accruedInterest <= 0) {
+			return false;
+		}
+
+		// Get last accrual to calculate running balance
+		List<DepositAccrual> existingAccruals = depositAccrualRepository
+				.findByContractIdOrderByAccrualDateDesc(contract.getContractId());
+
+		long runningBalance = existingAccruals.stream()
+				.mapToLong(DepositAccrual::getRunningBalance)
+				.findFirst()
+				.orElse(0L);
+
+		runningBalance += accruedInterest;
+
+		// Create accrual record
+		DepositAccrual accrual = new DepositAccrual();
+		accrual.setContractId(contract.getContractId());
+		accrual.setAccrualDate(today);
+		accrual.setAccruedInterest(accruedInterest);
+		accrual.setRunningBalance(runningBalance);
+		accrual.setCreatedAt(java.time.Instant.now());
+
+		depositAccrualRepository.save(accrual);
+
+		// Post journal for interest accrual
+		UUID journalId = ledgerCommandService.postJournal(
+				new LedgerCommandService.PostJournalCommand(
+						"DEPOSIT_ACCRUAL_BATCH",
+						"DEPOSIT_ACCRUAL",
+						UUID.randomUUID(),
+						contract.getCurrency(),
+						null,
+						request.actor(),
+						request.correlationId(),
+						List.of(
+								new PostingInstruction(
+										request.debitLedgerAccountId(), // Interest Expense
+										null,
+										"D",
+										accruedInterest,
+										contract.getCurrency(),
+										false),
+								new PostingInstruction(
+										request.creditLedgerAccountId(), // Interest Payable
+										null,
+										"C",
+										accruedInterest,
+										contract.getCurrency(),
+										false))));
+
+		// Record accrual event
+		DepositEvent event = new DepositEvent();
+		event.setContractId(contract.getContractId());
+		event.setEventType("ACCURED");
+		event.setAmountMinor(accruedInterest);
+		event.setMetadataJson(buildAccrualMetadata(today, accruedInterest, runningBalance));
+		event.setCreatedAt(java.time.Instant.now());
+
+		depositEventRepository.save(event);
+
+		return true;
 	}
 
 	private String buildAccrualMetadata(LocalDate accrualDate, long accruedInterest, long runningBalance) {

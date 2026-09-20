@@ -5,29 +5,59 @@
 	<parent>
 		<groupId>org.springframework.boot</groupId>
 		<artifactId>spring-boot-starter-parent</artifactId>
-		<version>4.0.4</version>
+		<version>4.0.8</version>
 		<relativePath/> <!-- lookup parent from repository -->
 	</parent>
 	<groupId>com.corebank</groupId>
 	<artifactId>corebank-api</artifactId>
-	<version>0.0.1-SNAPSHOT</version>
-	<name/>
-	<description/>
-	<url/>
+	<!--
+		The version is a property so a single Maven input sets it. The image build passes
+		-Drevision=<commit>, which lands in the jar manifest, which Spring Boot exposes as
+		spring.application.version, which becomes BOTH /actuator/info's build version and the
+		service.version resource attribute on telemetry. Driving them from two places would let
+		them disagree, and the one question an on-call engineer asks a pod is which build it is.
+
+		This project ships a container and never publishes its jar to a Maven repository, so the
+		literal ${revision} that would be written into an installed POM never matters here. Add
+		flatten-maven-plugin if that ever changes.
+	-->
+	<version>${revision}</version>
+	<name>CoreBank API</name>
+	<description>Core banking backend: double-entry ledger, payment hold/capture/void, idempotent
+		transfers, deposits and lending, with outbox, approvals, audit and reconciliation controls on
+		a PostgreSQL source of truth.</description>
+	<url>https://github.com/MaiHuyHoang592004/corebank-api</url>
 	<licenses>
-		<license/>
+		<license>
+			<name>MIT License</name>
+			<url>https://opensource.org/licenses/MIT</url>
+			<distribution>repo</distribution>
+		</license>
 	</licenses>
 	<developers>
-		<developer/>
+		<developer>
+			<name>Mai Huy Hoang</name>
+			<url>https://github.com/MaiHuyHoang592004</url>
+		</developer>
 	</developers>
 	<scm>
-		<connection/>
-		<developerConnection/>
-		<tag/>
-		<url/>
+		<connection>scm:git:https://github.com/MaiHuyHoang592004/corebank-api.git</connection>
+		<developerConnection>scm:git:git@github.com:MaiHuyHoang592004/corebank-api.git</developerConnection>
+		<tag>HEAD</tag>
+		<url>https://github.com/MaiHuyHoang592004/corebank-api</url>
 	</scm>
 	<properties>
 		<java.version>17</java.version>
+		<revision>0.0.1-SNAPSHOT</revision>
+		<!--
+			Overrides the Tomcat version managed by Spring Boot 4.0.8 (11.0.24).
+			The container image scan in CI gates on fixable CRITICAL findings, and
+			11.0.24 still carries two: CVE-2026-65182 (security constraint bypass via
+			improper access control) and CVE-2026-65905 (authentication bypass via a
+			replay attack on the DIGEST authenticator). Both are fixed in 11.0.25.
+			Remove this override once the managed version reaches 11.0.25 or later.
+		-->
+		<tomcat.version>11.0.26</tomcat.version>
 	</properties>
 	<dependencies>
 		<dependency>
@@ -65,6 +95,35 @@
 		<dependency>
 			<groupId>org.flywaydb</groupId>
 			<artifactId>flyway-database-postgresql</artifactId>
+		</dependency>
+
+		<!-- Observability -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-opentelemetry</artifactId>
+		</dependency>
+		<!--
+			JDBC spans. Spring's JDBC support carries no Observation instrumentation, so without
+			this a trace of a transfer shows one server span and the database time inside it is
+			unattributed — which is exactly the part worth seeing, because a money command holds
+			two connections at once and the failure this system actually suffered was connection
+			starvation, not slow SQL.
+
+			Pinned to the 2.x line and to 2.2.1 specifically. The 1.x line targets Spring Boot 3
+			and fails silently here, because DataSourceAutoConfiguration moved package in Boot 4
+			so its @AutoConfiguration(after = ...) no longer matches and no spans appear. Of the
+			2.x releases, 2.2.1 is built against Boot 4.0.5 — the same 4.0.x line as this project's
+			4.0.8. The newest, 2.3.0, is built against 4.1.1 and may reference APIs that 4.0.8 does
+			not have. Check the parity before bumping; "latest" is the wrong rule for this one.
+		-->
+		<dependency>
+			<groupId>net.ttddyy.observation</groupId>
+			<artifactId>datasource-micrometer-spring-boot</artifactId>
+			<version>2.2.1</version>
 		</dependency>
 
 		<dependency>
@@ -139,6 +198,37 @@
 	</dependencies>
 
 	<build>
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+			</resource>
+			<!--
+				The dashboard links to a few project documents. They are packaged onto the
+				classpath so the links work inside the container image, whose working directory
+				contains only app.jar. The repository files remain the single source of truth.
+			-->
+			<resource>
+				<directory>${project.basedir}</directory>
+				<targetPath>docs</targetPath>
+				<includes>
+					<include>README.md</include>
+				</includes>
+			</resource>
+			<resource>
+				<directory>${project.basedir}/docs</directory>
+				<targetPath>docs</targetPath>
+				<includes>
+					<include>14-source-of-truth-map.md</include>
+					<include>16-sequence-diagrams.md</include>
+					<include>19-runtime-failure-modes.md</include>
+					<include>20-acceptance-criteria.md</include>
+					<include>28-demo-script.md</include>
+					<include>31-operations-runbook.md</include>
+					<include>32-service-levels.md</include>
+					<include>33-platform-deployment-and-apm-guide.md</include>
+				</includes>
+			</resource>
+		</resources>
 		<plugins>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
@@ -153,6 +243,22 @@
 				</configuration>
 			</plugin>
 			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<!--
+							Scheduling is enabled in the application (see CorebankApiApplication).
+							Tests drive OutboxEventPublisher#processPendingEvents explicitly so that
+							assertions observe a deterministic number of publish attempts; leaving the
+							5-second poller running would race with them. SchedulingConfigurationTest
+							guards that the annotation itself stays in place.
+						-->
+						<spring.task.scheduling.enabled>false</spring.task.scheduling.enabled>
+					</systemPropertyVariables>
+				</configuration>
+			</plugin>
+			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 				<configuration>
@@ -164,6 +270,20 @@
 						</exclude>
 					</excludes>
 				</configuration>
+				<executions>
+					<!--
+						Writes META-INF/build-info.properties, which is what makes /actuator/info
+						report a version at all. Declaring executions here does not drop the
+						parent's repackage execution: Maven merges execution lists by id, and the
+						parent binds repackage under the id "repackage".
+					-->
+					<execution>
+						<id>build-info</id>
+						<goals>
+							<goal>build-info</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>

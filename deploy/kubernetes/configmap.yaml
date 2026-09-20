@@ -1,0 +1,48 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: corebank-config
+  namespace: corebank
+data:
+  # showcase disables Kafka auto-configuration and gates the destructive ops
+  # endpoints. Anything reachable from an Ingress should run with that gate on.
+  SPRING_PROFILES_ACTIVE: showcase
+  COREBANK_KAFKA_ENABLED: "false"
+
+  # The username is not a secret; the password is, and lives in the Secret.
+  SPRING_DATASOURCE_URL: jdbc:postgresql://corebank-postgres:5432/corebank
+
+  # 60% of a 1Gi limit leaves room for metaspace, thread stacks and direct buffers.
+  # A fixed -Xmx would have to be edited by hand every time the limit changes.
+  JAVA_OPTS: "-XX:MaxRAMPercentage=60 -XX:+UseG1GC"
+
+  LOGGING_LEVEL_COM_COREBANK: INFO
+
+  # Actuator moves to its own container port. The Service publishes 9090 only, so the
+  # Ingress cannot reach /actuator at all, while the kubelet and an in-cluster scraper
+  # reach 9091 directly. Verified: the application's security rules still apply on this
+  # port, so the probe paths stay anonymous and everything else stays authenticated.
+  MANAGEMENT_SERVER_PORT: "9091"
+
+  # One JSON document per log line, in Elastic Common Schema. Dynatrace, Datadog,
+  # Splunk and Loki all ingest it without a custom parser, and the MDC — trace id,
+  # span id, correlation id — rides along as fields rather than inside the message.
+  COREBANK_LOG_FORMAT: ecs
+  COREBANK_ENVIRONMENT: kubernetes
+
+  # OTLP export stays off until a collector exists in the cluster. Turning it on
+  # without one produces a steady stream of export failures and no telemetry, which is
+  # strictly worse than not exporting. Once a collector is deployed, set these:
+  #
+  #   COREBANK_OTLP_ENABLED: "true"
+  #   COREBANK_OTLP_TRACES_ENDPOINT: http://otel-collector.observability:4318/v1/traces
+  #   COREBANK_OTLP_METRICS_ENDPOINT: http://otel-collector.observability:4318/v1/metrics
+  #
+  # deploy/observability brings the same collector up locally with docker compose.
+  COREBANK_OTLP_ENABLED: "false"
+
+  # A money command can hold two connections at once, so the pool has to exceed twice
+  # the peak concurrent commands per instance or the service starves itself. Three
+  # replicas at 20 use 60 of PostgreSQL's default 100 connections; raising this without
+  # raising max_connections on the database moves the failure rather than removing it.
+  COREBANK_DB_POOL_SIZE: "20"

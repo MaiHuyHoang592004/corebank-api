@@ -31,8 +31,20 @@ public class DemoSecurityConfig {
 								"/api/deposits/maturity"))
 				.authorizeHttpRequests(authorize -> {
 					authorize
-						.requestMatchers("/actuator/health").permitAll()
+						// The probe paths must be anonymous: kubelet sends no credentials, so a 401 on
+						// liveness restart-loops every pod and a 401 on readiness keeps them all out of
+						// the Service. Listed explicitly rather than as /actuator/health/** so that
+						// per-indicator detail paths stay behind authentication.
+						.requestMatchers(
+								"/actuator/health",
+								"/actuator/health/liveness",
+								"/actuator/health/readiness")
+						.permitAll()
 							.requestMatchers("/", "/index.html").permitAll()
+							// Spring dispatches handler errors to /error. Without this, an anonymous
+							// request that produces a 404 on an otherwise public path is answered with
+							// 401, which reports the wrong problem to anyone poking at the demo.
+							.requestMatchers("/error").permitAll()
 							.requestMatchers("/dashboard", "/dashboard/**").permitAll()
 						.requestMatchers("/api/demo/**").hasAnyRole("OPS", "ADMIN")
 						.requestMatchers(
@@ -50,7 +62,15 @@ public class DemoSecurityConfig {
 							.requestMatchers(
 								"/api/ops/maintenance/**",
 								"/api/ops/executions/**",
-								"/api/ops/security/**")
+								// Was "/api/ops/security/**", which matched no controller at all.
+								// The customer-secret endpoints it was written to protect are
+								// mapped at /api/ops/customers by OpsCustomerSecretController, so
+								// the rule denied a path nobody could reach while the endpoints
+								// that read and write encrypted national ids, tax ids and KYC
+								// payloads fell through to anyRequest().authenticated() — reachable
+								// by demo_user in any showcase deployment. A deny rule aimed at the
+								// wrong path is worse than no rule, because the gate looks present.
+								"/api/ops/customers/**")
 							.denyAll();
 					}
 

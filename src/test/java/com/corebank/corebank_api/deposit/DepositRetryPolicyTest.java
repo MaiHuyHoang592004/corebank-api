@@ -7,11 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.corebank.corebank_api.common.CoreBankException;
 import java.sql.SQLException;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DeadlockLoserDataAccessException;
 import org.springframework.dao.PessimisticLockingFailureException;
 
+@Tag("fast")
 class DepositRetryPolicyTest {
 
 	private final DepositRetryPolicy policy = new DepositRetryPolicy();

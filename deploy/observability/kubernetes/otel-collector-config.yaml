@@ -1,0 +1,109 @@
+# Collector configuration for a cluster, exporting to Dynatrace over OTLP/HTTP.
+#
+# This is not deploy/observability/otel-collector.yaml with a namespace bolted on. That
+# file is a local lab: it fans telemetry out to Tempo, to a Prometheus exposition port
+# and to the debug exporter, all of which run next to it under docker compose. None of
+# those exist in the cluster and none of them should — a self-hosted Prometheus, Tempo
+# and Grafana is a second system to operate, back up and secure, and it does not fit a
+# Developer Sandbox quota. Here the collector is a forwarder with exactly one exit.
+#
+# The application is unchanged by either shape. It speaks OTLP and nothing else.
+receivers:
+  otlp:
+    protocols:
+      http:
+        # 0.0.0.0 rather than localhost: the traffic arrives from other pods, so it
+        # reaches this container through the pod IP, not the loopback interface.
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+extensions:
+  # Gives the kubelet something to probe. Without it the only readiness signal
+  # available is "the OTLP port accepts a TCP connection", which a collector that has
+  # failed to build its pipelines will still do.
+  #
+  # What it answers is narrower than it looks: on 0.115.1 this reports that the
+  # process is up and serving, not that export is succeeding. A full sending queue and
+  # a backend rejecting every batch both still answer 200 here. Export health is a
+  # metric to alert on, not a probe.
+  health_check:
+    endpoint: 0.0.0.0:13133
+    path: /
+
+processors:
+  # Must stay first in every pipeline below. It works by refusing data when the
+  # process is near its ceiling; a processor placed after batch would only see data
+  # that has already been accumulated in memory, which is the memory it exists to cap.
+  #
+  # limit_percentage is a percentage of the cgroup memory limit, which is why the
+  # Deployment sets resources.limits.memory and why that is not optional. With no
+  # limit the collector reads the node's total memory instead and computes a ceiling
+  # far above anything the pod will be allowed to allocate — the limiter never fires
+  # and the kubelet OOM-kills the container instead.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 15
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  # The single exit. Everything the cluster collects leaves here.
+  #
+  # The lab file's `prometheus` exporter carried
+  # `resource_to_telemetry_conversion: enabled: true`, and that setting is deliberately
+  # absent here rather than forgotten. It exists to copy OpenTelemetry resource
+  # attributes down onto each metric as a Prometheus label, because the Prometheus
+  # exposition format has no other place to put them. OTLP does: `service.version`,
+  # `service.namespace` and `deployment.environment` ride on the resource and arrive at
+  # Dynatrace intact. Turning it on over OTLP would duplicate every resource attribute
+  # onto every data point.
+  #
+  # ${env:VAR} rather than ${VAR}: on collector 0.115.1 the bare form is not expanded
+  # as an environment variable. Both values come from the pod's environment — see
+  # deployment.yaml — and the token comes from a Secret, so it is never written down
+  # in this directory.
+  otlphttp/dynatrace:
+    endpoint: ${env:DYNATRACE_OTLP_ENDPOINT}
+    headers:
+      Authorization: "Api-Token ${env:DYNATRACE_API_TOKEN}"
+    # Retry and queue are in-memory only. No file_storage extension is configured, so
+    # a collector restart drops whatever is queued. That is the right trade here:
+    # telemetry is not the ledger, and a disk-backed queue would mean a volume, a
+    # writable filesystem and a stateful pod.
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/dynatrace]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/dynatrace]
+    # Present so that a log payload arriving on the OTLP receiver has somewhere to go
+    # rather than being refused. Whether anything currently sends one is an open
+    # question: src/main/resources/application.yml sets
+    # management.opentelemetry.tracing.export.otlp.endpoint and
+    # management.otlp.metrics.export.url explicitly and sets no management.otlp.logging
+    # key at all, and the deployed configuration ships logs as ECS JSON on stdout for
+    # the platform to collect. This pipeline has not been observed carrying data.
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/dynatrace]
+  telemetry:
+    logs:
+      # warn, not info: at info the collector narrates every pipeline start and every
+      # successful export batch, which buries the one line that matters when a token
+      # is wrong.
+      level: warn

@@ -1,0 +1,153 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: corebank-api
+  namespace: corebank
+  labels:
+    app.kubernetes.io/name: corebank-api
+spec:
+  replicas: 3
+  # Keep enough history that `kubectl rollout undo` has somewhere to go back to.
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: corebank-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never drop below the declared replica count during a rollout: add one, wait
+      # for it to pass readiness, then retire an old one. maxUnavailable: 1 would
+      # take capacity away before the replacement is serving.
+      maxUnavailable: 0
+      maxSurge: 1
+  # A pod that passes readiness and then crashes two seconds later should not count
+  # as a successful step in the rollout.
+  minReadySeconds: 15
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: corebank-api
+      annotations:
+        # Discovery hints for a Prometheus that scrapes pods directly. The endpoint
+        # still requires credentials, so the scrape job needs basic_auth as well —
+        # see deploy/observability/prometheus.yml. Metrics disclose request paths and
+        # business volumes, which is not something a banking deployment should serve
+        # anonymously just to make scraping simpler.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9091"
+        prometheus.io/path: /actuator/prometheus
+    spec:
+      # 30s of graceful shutdown (spring.lifecycle.timeout-per-shutdown-phase) plus
+      # the preStop sleep, with headroom. Too short and the kubelet SIGKILLs a pod
+      # that is still finishing a transfer.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          # Preferred, not required: on a single-node lab cluster a hard rule would
+          # leave two of the three replicas permanently unschedulable.
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: corebank-api
+      containers:
+        - name: app
+          # Placeholder only. kustomization.yaml pins the tag that is actually
+          # deployed, so apply this directory through kustomize, never with
+          # `kubectl apply -f deployment.yaml`.
+          image: ghcr.io/maihuyhoang592004/corebank-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 9090
+            # Actuator listens here, not on http. The Service publishes http only, so
+            # nothing outside the cluster can reach /actuator through the Ingress.
+            - name: management
+              containerPort: 9091
+          envFrom:
+            - configMapRef:
+                name: corebank-config
+          env:
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: corebank-secrets
+                  key: SPRING_DATASOURCE_USERNAME
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: corebank-secrets
+                  key: SPRING_DATASOURCE_PASSWORD
+            - name: COREBANK_SHOWCASE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: corebank-secrets
+                  key: COREBANK_SHOWCASE_TOKEN
+
+          # Three probes, three different questions.
+          #
+          # startup: "has it finished booting?" Flyway runs at startup and takes an
+          # advisory lock, so with three replicas two of them wait for the first to
+          # finish migrating. Without this probe the liveness check would start
+          # failing during that wait and kill the pods mid-migration.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: management
+            periodSeconds: 5
+            failureThreshold: 60
+          # readiness: "should this pod receive traffic?" Gates on PostgreSQL,
+          # which every money command needs.
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: management
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # liveness: "is this JVM wedged?" Deliberately blind to the database and
+          # Redis — a shared dependency blip must not restart every replica at once.
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: management
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          lifecycle:
+            preStop:
+              exec:
+                # Endpoint removal and SIGTERM race each other. Sleeping first lets
+                # kube-proxy finish taking this pod out of the Service before the
+                # application stops accepting connections, which is what actually
+                # prevents dropped requests during a rollout.
+                command: ["sh", "-c", "sleep 5"]
+
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # readOnlyRootFilesystem is only workable because the JVM and Tomcat get
+            # a writable /tmp of their own.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

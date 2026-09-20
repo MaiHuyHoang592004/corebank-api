@@ -1,0 +1,54 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: corebank
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - pdb.yaml
+
+# secret.yaml is intentionally absent: it is generated from secret.example.yaml and
+# is not committed. Apply it separately before the first rollout.
+
+# The image tag to deploy, pinned to one commit.
+#
+# This is a version, not a convenience. A floating tag like `latest` answers "what is
+# newest" and never "what is running" — two pods started an hour apart can be running
+# different code under the same tag, and `kubectl rollout undo` rolls back to the same
+# floating name it just left. In a system that moves money, the deployed artefact has
+# to be identifiable after the fact, because that is what an incident timeline and an
+# audit both start from.
+#
+# So this file pins `sha-<commit>`, which CI publishes on every build and never
+# reassigns. `latest` additionally does not exist here: CI applies it only on the
+# default branch, and no build has landed on main yet.
+#
+# Releasing is bumping newTag below by hand, then:
+#
+#   kubectl kustomize deploy/kubernetes | kubectl apply -f -
+#
+# Not with `kustomize edit set image`. It rewrites this whole file through its YAML
+# printer: it reindents every list, adds a redundant newName, and drops the explicit
+# `includeSelectors: false` further down — leaving the comment that explains that
+# field describing something no longer there. The render happens to be unchanged,
+# because false is the default, but a release should not rely on a default it
+# meant to state. Checked with kustomize v5.4.3.
+#
+# CI fails the manifests job if a rendered manifest carries a floating tag again.
+images:
+  - name: ghcr.io/maihuyhoang592004/corebank-api
+    newTag: sha-a500aac382ac110b23948b844e8c581c7580cacc
+
+# includeSelectors is false deliberately. A Deployment's selector is immutable once
+# created, so folding a common label into it means any later change to that label
+# requires deleting and recreating the Deployment.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: corebank
+    includeSelectors: false

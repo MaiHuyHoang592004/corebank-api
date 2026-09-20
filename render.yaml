@@ -9,14 +9,14 @@ services:
     repo: https://github.com/MaiHuyHoang592004/corebank-api
     branch: main
     dockerfilePath: ./Dockerfile
-    healthCheckPath: /actuator/health
+    healthCheckPath: /actuator/health/readiness
     envVars:
       - key: SPRING_PROFILES_ACTIVE
         value: showcase
       - key: COREBANK_KAFKA_ENABLED
         value: "false"
-      - key: JAVA_OPTS
-        value: "-Xmx384m"
+      # The image sets -XX:MaxRAMPercentage=70 by default, which sizes the heap from
+      # whatever memory the plan grants. Override only to add flags.
       - key: SPRING_DATASOURCE_URL
         fromDatabase:
           name: corebank-postgres

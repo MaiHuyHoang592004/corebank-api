@@ -1,0 +1,74 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Namespace: corebank, not observability.
+#
+# There is a trap here worth naming, because the repository currently contradicts
+# itself. deploy/kubernetes/configmap.yaml suggests, in a comment, setting
+# COREBANK_OTLP_TRACES_ENDPOINT to http://otel-collector.observability:4318/v1/traces
+# — a collector in its own `observability` namespace. deploy/openshift/kustomization.yaml
+# sets `namespace: corebank` globally, and an OpenShift Developer Sandbox grants one
+# project, not two. A second namespace is not something that path can create.
+#
+# So this picks corebank, which makes the correct in-cluster endpoint
+# http://otel-collector.corebank:4318/v1/traces — or simply
+# http://otel-collector:4318/v1/traces, since the caller is in the same namespace.
+# The comment in deploy/kubernetes/configmap.yaml is now wrong and has deliberately
+# been left alone; the README in this directory says what to change and when. Applying
+# this directory while that comment's hostname is in use resolves to nothing and every
+# export fails, which is the failure this pairing exists to prevent.
+#
+# namespace.yaml is not a resource here. deploy/kubernetes/namespace.yaml already
+# creates `corebank`, and two manifests owning one Namespace object is a conflict
+# waiting for whichever is applied second.
+namespace: corebank
+
+resources:
+  - deployment.yaml
+  - service.yaml
+
+# secret.example.yaml is intentionally absent, exactly as in deploy/kubernetes: it is
+# a template for a secret.yaml that is not committed, and a Secret inside a kustomize
+# build ends up in every rendered file and CI log. Apply it separately before the
+# first rollout.
+
+# The ConfigMap is generated rather than written, and the reason is the hash suffix.
+#
+# The collector does not watch its config file and does not reload it. Editing a
+# plain, fixed-name ConfigMap changes the projected file inside the running container
+# a minute or two later and changes nothing else: the process keeps running the config
+# it parsed at startup. The edit appears to have been applied, `kubectl get configmap`
+# confirms the new content, and the collector's behaviour is still the old one. That is
+# the worst shape a change can take — silently ineffective.
+#
+# configMapGenerator appends a hash of the content to the name. New content means a
+# new ConfigMap name, which means a changed pod spec, which means a rollout. The
+# collector restarts and parses the new file. The rollout is the reload.
+#
+# This is also why generatorOptions does not set disableNameSuffixHash. That option
+# would turn the generator back into a plain ConfigMap and reintroduce the exact
+# failure above.
+configMapGenerator:
+  - name: otel-collector-config
+    files:
+      # Published under the key `config.yaml`, which is the filename the Deployment
+      # projects and the path its --config argument names.
+      - config.yaml=otel-collector-config.yaml
+    literals:
+      # The Dynatrace environment's OTLP ingest URL. Not a secret — the token is, and
+      # that lives in the Secret. Replace CHANGE_ME with the tenant id; a Dynatrace
+      # SaaS URL looks like https://abc12345.live.dynatrace.com/api/v2/otlp.
+      #
+      # It is a generator literal rather than a hard-coded env value so that editing
+      # it also changes the ConfigMap hash and rolls the pod, the same way a config
+      # file edit does.
+      - DYNATRACE_OTLP_ENDPOINT=https://CHANGE_ME.live.dynatrace.com/api/v2/otlp
+
+# Matches deploy/kubernetes/kustomization.yaml. includeSelectors is false for the same
+# reason it is there: a Deployment's selector is immutable once created, so folding a
+# common label into it means any later change to that label requires deleting and
+# recreating the Deployment.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: corebank
+    includeSelectors: false

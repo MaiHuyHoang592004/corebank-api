@@ -20,3 +20,8 @@ docker-compose*.yml
 # OS
 .DS_Store
 Thumbs.db
+
+# Local artifacts. Note docs/ is NOT excluded: the dashboard serves a few of those
+# files from the classpath, so they must reach the build context.
+showcase-output/
+docs/PROGRESS.log

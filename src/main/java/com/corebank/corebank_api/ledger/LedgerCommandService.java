@@ -3,6 +3,8 @@ package com.corebank.corebank_api.ledger;
 import com.corebank.corebank_api.account.AccountBalanceRepository;
 import com.corebank.corebank_api.account.CustomerAccount;
 import com.corebank.corebank_api.common.CoreBankException;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -19,21 +21,30 @@ import java.util.UUID;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class LedgerCommandService {
 
+	private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(LedgerCommandService.class);
+
 	private final JdbcTemplate jdbcTemplate;
 	private final AccountBalanceRepository accountBalanceRepository;
 	private final HotAccountSlotRuntimeService hotAccountSlotRuntimeService;
+	private final Counter journalsPosted;
 
 	public LedgerCommandService(
 			JdbcTemplate jdbcTemplate,
 			AccountBalanceRepository accountBalanceRepository,
-			HotAccountSlotRuntimeService hotAccountSlotRuntimeService) {
+			HotAccountSlotRuntimeService hotAccountSlotRuntimeService,
+			MeterRegistry meterRegistry) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.accountBalanceRepository = accountBalanceRepository;
 		this.hotAccountSlotRuntimeService = hotAccountSlotRuntimeService;
+		this.journalsPosted = Counter.builder("corebank.ledger.journals.posted")
+				.description("Ledger journals committed by this instance. Counts commits, not inserts.")
+				.register(meterRegistry);
 	}
 
 	@Transactional
@@ -66,6 +77,17 @@ public class LedgerCommandService {
 		List<HotAccountSlotRuntimeService.SlottingDecision> slottingDecisions = new ArrayList<>();
 
 		UUID journalId = UUID.randomUUID();
+
+		// Serialize the hash chain for the rest of this transaction.
+		//
+		// Appending to a tamper-evident chain is read-latest-then-insert, which is not safe under
+		// READ COMMITTED: two concurrent journals both read the same row_hash, both store it as
+		// prev_row_hash, and the chain forks — the property the chain exists to provide is lost,
+		// silently. A linear chain is inherently serial, so this lock is the honest cost of the
+		// design rather than a bottleneck to optimize away. It is transaction-scoped, so it is
+		// released on commit or rollback without an explicit unlock.
+		lockJournalChain();
+
 		byte[] prevRowHash = findLatestJournalRowHash().orElse(null);
 		byte[] rowHash = buildJournalRowHash(command, journalId, prevRowHash);
 
@@ -141,7 +163,52 @@ public class LedgerCommandService {
 		}
 
 		hotAccountSlotRuntimeService.appendSlottingAudit(journalId, command, slottingDecisions);
+		countJournalOnCommit();
 		return journalId;
+	}
+
+	/**
+	 * Counts a posted journal, but only once the transaction that wrote it commits.
+	 *
+	 * <p>Incrementing here, inline, would be wrong. Everything after the journal INSERT above —
+	 * the postings loop, the posted-balance updates, the slotting audit — can still fail, and the
+	 * whole transaction rolls back. A counter incremented at insert time would keep the increment
+	 * while the journal it counted ceased to exist. A metric describing money that was posted must
+	 * not report money that was not.
+	 *
+	 * <p>The callback also has to run at the <em>outermost</em> commit rather than at this method's
+	 * return, because money commands reach this code through
+	 * {@code IdempotentMoneyCommandTemplate}: the {@code @Transactional} on {@code postJournal}
+	 * usually joins a transaction that was already open, so the real commit happens well after this
+	 * frame pops. {@code registerSynchronization} attaches to whichever transaction is actually
+	 * current, which is exactly the boundary that decides whether the journal is durable.
+	 *
+	 * <p>Consequence worth stating: this counts journals committed <em>by this process</em>. Rows
+	 * inserted by migrations, backfills or out-of-band tooling are not counted. For a throughput
+	 * signal that is the correct behaviour, and it is also what makes {@code sum(rate(...))} across
+	 * replicas correct — each instance counts only its own writes.
+	 */
+	private void countJournalOnCommit() {
+		if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+			// No transaction is in progress, so the INSERT was auto-committed by the driver and is
+			// already durable. Counting it immediately is correct here, not a fallback.
+			journalsPosted.increment();
+			return;
+		}
+
+		TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+			@Override
+			public void afterCommit() {
+				// An exception thrown from afterCommit propagates to the caller of the commit, so a
+				// metrics failure could surface as a failed money command for work that is already
+				// durable. Recording a number is never worth that.
+				try {
+					journalsPosted.increment();
+				} catch (RuntimeException ex) {
+					log.warn("Failed to record corebank.ledger.journals.posted after commit", ex);
+				}
+			}
+		});
 	}
 
 	private void validateBalancedJournal(List<PostingInstruction> postings) {
@@ -177,12 +244,22 @@ public class LedgerCommandService {
 		}
 	}
 
+	/**
+	 * Advisory-lock key for the ledger journal hash chain. Arbitrary but stable; it must not
+	 * collide with {@code AuditService}'s key, which guards a different chain.
+	 */
+	private static final long JOURNAL_CHAIN_LOCK_KEY = 842_100_001L;
+
+	private void lockJournalChain() {
+		jdbcTemplate.queryForList("SELECT pg_advisory_xact_lock(?)", JOURNAL_CHAIN_LOCK_KEY);
+	}
+
 	private Optional<byte[]> findLatestJournalRowHash() {
 		List<byte[]> hashes = jdbcTemplate.query(
 				"""
 				SELECT row_hash
 				FROM ledger_journals
-				ORDER BY created_at DESC, journal_id DESC
+				ORDER BY chain_seq DESC
 				LIMIT 1
 				""",
 				(rs, rowNum) -> rs.getBytes("row_hash"));

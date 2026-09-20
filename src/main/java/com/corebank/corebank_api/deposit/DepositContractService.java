@@ -252,6 +252,16 @@ public class DepositContractService {
 
 	@Transactional
 	public MaturityResponse processMaturity(MaturityRequest request) {
+		// Take the contract row lock before reading it.
+		//
+		// Idempotency only collapses retries that reuse the same key. Two maturity calls carrying
+		// different keys are two distinct commands, so without this lock both read status=ACTIVE,
+		// both pass ensureActiveContract, and both credit principal + accrued interest — the
+		// customer is paid twice and two maturity journals are posted. Locking the contract (rather
+		// than relying on the customer-account lock taken further down) is what makes the
+		// status check below a read-modify-write instead of a read-then-hope.
+		lockDepositContract(request.contractId());
+
 		DepositContract contract = depositContractRepository.findById(request.contractId())
 				.orElseThrow(() -> new CoreBankException("Deposit contract not found: " + request.contractId()));
 
@@ -277,11 +287,18 @@ public class DepositContractService {
 		// Update contract status
 		contract.setStatus("MATURED");
 		contract.setUpdatedAt(java.time.Instant.now());
-		jdbcTemplate.update(
-				"UPDATE deposit_contracts SET status = ?, updated_at = ? WHERE contract_id = ?",
+		// Guard the transition on the status we actually observed. Combined with the row lock above
+		// this makes a second maturity attempt fail loudly rather than pay out again.
+		int maturedRows = jdbcTemplate.update(
+				"UPDATE deposit_contracts SET status = ?, updated_at = ? WHERE contract_id = ? AND status = 'ACTIVE'",
 				contract.getStatus(),
 				Timestamp.from(contract.getUpdatedAt()),
 				contract.getContractId());
+
+		if (maturedRows != 1) {
+			throw new CoreBankException(
+					"Deposit contract is no longer ACTIVE and cannot be matured: " + contract.getContractId());
+		}
 
 		// Update customer account balance (return principal + interest)
 		CustomerAccount account = accountBalanceRepository.lockById(contract.getCustomerAccountId())
@@ -422,6 +439,23 @@ public class DepositContractService {
 				contract.isAutoRenew(),
 				Timestamp.from(contract.getCreatedAt()),
 				Timestamp.from(contract.getUpdatedAt()));
+	}
+
+	/**
+	 * Acquires the contract row lock for the remainder of the current transaction.
+	 *
+	 * <p>Returns nothing: the value is the lock, not the row. The caller re-reads the contract
+	 * afterwards so it observes the state committed by whichever transaction held the lock first.
+	 */
+	private void lockDepositContract(UUID contractId) {
+		List<UUID> locked = jdbcTemplate.query(
+				"SELECT contract_id FROM deposit_contracts WHERE contract_id = ? FOR UPDATE",
+				(rs, rowNum) -> rs.getObject("contract_id", UUID.class),
+				contractId);
+
+		if (locked.isEmpty()) {
+			throw new CoreBankException("Deposit contract not found: " + contractId);
+		}
 	}
 
 	private void ensureActiveContract(DepositContract contract, String action) {

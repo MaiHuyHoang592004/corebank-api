@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "openshift Route v1, transcribed from the OpenShift API so that kubeconform -strict can check the Route in this overlay. The public schema catalogues kubeconform knows about do not carry it, and validating everything except the one resource that is specific to this platform would be a check that cannot fail. Only the fields this repository could plausibly use are modelled; additionalProperties is false throughout, so a misspelled key is rejected rather than ignored.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "spec"],
+  "properties": {
+    "apiVersion": { "const": "route.openshift.io/v1" },
+    "kind": { "const": "Route" },
+    "metadata": { "type": "object" },
+    "status": { "type": "object" },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["to"],
+      "properties": {
+        "host": { "type": "string" },
+        "subdomain": { "type": "string" },
+        "path": { "type": "string" },
+        "wildcardPolicy": { "enum": ["None", "Subdomain"] },
+        "to": { "$ref": "#/definitions/routeTargetReference" },
+        "alternateBackends": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/routeTargetReference" }
+        },
+        "port": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["targetPort"],
+          "properties": {
+            "targetPort": { "type": ["string", "integer"] }
+          }
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["termination"],
+          "properties": {
+            "termination": { "enum": ["edge", "reencrypt", "passthrough"] },
+            "insecureEdgeTerminationPolicy": { "enum": ["None", "Allow", "Redirect"] },
+            "certificate": { "type": "string" },
+            "key": { "type": "string" },
+            "caCertificate": { "type": "string" },
+            "destinationCACertificate": { "type": "string" },
+            "externalCertificate": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": { "name": { "type": "string" } }
+            }
+          }
+        },
+        "httpHeaders": { "type": "object" }
+      }
+    }
+  },
+  "definitions": {
+    "routeTargetReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "name"],
+      "properties": {
+        "kind": { "enum": ["Service"] },
+        "name": { "type": "string" },
+        "weight": { "type": ["integer", "null"], "minimum": 0, "maximum": 256 }
+      }
+    }
+  }
+}

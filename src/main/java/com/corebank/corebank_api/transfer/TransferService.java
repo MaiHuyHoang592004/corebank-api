@@ -81,6 +81,23 @@ public class TransferService {
 	}
 
 	private TransferResponse executeTransferBusiness(TransferRequest request) {
+		// Validate before locking. Both checks were previously left to side effects further down:
+		// a non-positive amount reached the ledger and was rejected by CHECK (amount_minor > 0) as a
+		// 500 after balances had already been mutated in this transaction, and a self-transfer
+		// collapsed to a single row in the IN clause below and surfaced as "Unable to lock both
+		// accounts". Neither told the caller what was actually wrong.
+		if (request.amountMinor() <= 0) {
+			throw new CoreBankException("Transfer amount must be positive");
+		}
+
+		if (request.sourceAccountId() == null || request.destinationAccountId() == null) {
+			throw new CoreBankException("Source and destination account ids are required");
+		}
+
+		if (request.sourceAccountId().equals(request.destinationAccountId())) {
+			throw new CoreBankException("Source and destination accounts must be different");
+		}
+
 		List<CustomerAccount> lockedAccounts = accountBalanceRepository.lockByIdsInDeterministicOrder(
 				List.of(request.sourceAccountId(), request.destinationAccountId()));
 

@@ -33,3 +33,32 @@ build/
 .vscode/
 .gitnexus
 .m2/
+
+### Local environment ###
+.env
+.env.local
+
+### OS ###
+.DS_Store
+Thumbs.db
+
+### Logs ###
+*.log
+
+### Kubernetes local secrets ###
+deploy/kubernetes/secret.yaml
+deploy/observability/kubernetes/secret.yaml
+
+### Local/internal working material ###
+AGENTS.md
+CLAUDE.md
+.claude/
+policy-kit/
+notes/
+docs/internal/
+docs/PROGRESS.log
+docs/*interview*
+docs/*cline*
+docs/*execution-plan*
+docs/*repository-file-tree*
+docs/*cloud-onboarding*

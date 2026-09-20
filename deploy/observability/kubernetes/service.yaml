@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  labels:
+    app.kubernetes.io/name: otel-collector
+spec:
+  # ClusterIP, and there is no Route and no Ingress in this directory.
+  #
+  # An OTLP receiver does not authenticate its callers. Published through a Route it
+  # would accept spans, metrics and log records from anyone who found the hostname,
+  # and every one of them would be forwarded to Dynatrace under this tenant's API
+  # token — billed to the tenant, and mixed into the same service names the real
+  # telemetry uses. There is no reason to reach this from outside the cluster:
+  # the only client is the application, in the same namespace.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: otel-collector
+  ports:
+    # What the application sends to: COREBANK_OTLP_TRACES_ENDPOINT and
+    # COREBANK_OTLP_METRICS_ENDPOINT are HTTP URLs.
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+    # Published for a future gRPC exporter. The application does not use it today.
+    - name: otlp-grpc
+      port: 4317
+      targetPort: otlp-grpc
+  # 13133 is deliberately absent. The kubelet probes the container port on the pod IP
+  # directly, so the health endpoint needs no Service — and not publishing it keeps
+  # the collector's internal state off an address any pod in the cluster can reach.

@@ -1,0 +1,81 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: corebank
+
+resources:
+  - ../kubernetes
+  - route.yaml
+
+# OpenShift differs from a vanilla cluster in two ways that stop the base applying
+# at all. This overlay handles exactly those two and changes nothing else.
+#
+# 1. Arbitrary UIDs. The restricted-v2 SCC assigns each namespace a UID range and
+#    runs every container as a UID from it. A pod that asks for a specific
+#    runAsUser or fsGroup is rejected outright — and the base's PostgreSQL asks for
+#    999 for both, because postgres:16-alpine needs its data directory owned by the
+#    postgres user. The fix is not to relax the pod's security context; that image
+#    genuinely cannot run as an unknown UID. The fix is to stop running it here.
+#
+#    The application Deployment needs no patch at all: it already sets
+#    runAsNonRoot without naming a UID, which is exactly what restricted-v2 wants.
+#    That was worth checking rather than assuming, and it is the reason this
+#    overlay is small.
+#
+# 2. Routing. OpenShift admits external traffic with Route objects. The base's
+#    Ingress names an nginx ingressClass that does not exist there.
+
+patches:
+  # -- 1. Drop the in-cluster database ---------------------------------------
+  # On OpenShift the database comes from the Developer Catalog (its PostgreSQL
+  # template uses a Red Hat image built for arbitrary UIDs) or from a managed
+  # instance outside the cluster. That is also closer to how this would really
+  # run: a ledger does not belong in a hand-rolled single-replica StatefulSet with
+  # no failover, no backups and no point-in-time recovery. postgres.yaml in the
+  # base says as much about itself.
+  - target:
+      kind: StatefulSet
+      name: corebank-postgres
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: corebank-postgres
+  - target:
+      kind: Service
+      name: corebank-postgres
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: corebank-postgres
+
+  # The catalog template publishes its Service as `postgresql`. If you provisioned
+  # the database some other way, this is the one value that has to be corrected
+  # before the first rollout. Getting it wrong fails safe: the readiness probe
+  # gates on the database, so the pods stay out of the Service instead of
+  # accepting money commands they cannot complete.
+  - target:
+      kind: ConfigMap
+      name: corebank-config
+    patch: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: corebank-config
+      data:
+        SPRING_DATASOURCE_URL: jdbc:postgresql://postgresql:5432/corebank
+        COREBANK_ENVIRONMENT: openshift
+
+  # -- 2. Replace the Ingress with a Route -----------------------------------
+  - target:
+      kind: Ingress
+      name: corebank-api
+    patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: corebank-api

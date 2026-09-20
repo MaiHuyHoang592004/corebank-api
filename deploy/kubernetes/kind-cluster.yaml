@@ -1,0 +1,27 @@
+# Local cluster for the lab. Three workers so that the pod anti-affinity rule in
+# deployment.yaml actually spreads the replicas and a node drain is a meaningful
+# exercise rather than a no-op.
+#
+#   kind create cluster --name corebank --config kind-cluster.yaml
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: corebank
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      # ingress-nginx's kind deployment selects this label.
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+  - role: worker
+  - role: worker
+  - role: worker

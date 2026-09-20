@@ -1,0 +1,236 @@
+name: CI
+
+# Every push to a branch in this repository and every pull request. The money paths
+# here are covered almost entirely by tests that talk to a real PostgreSQL through
+# Testcontainers, so "it compiles" is not a useful gate on its own.
+on:
+  push:
+    branches:
+      - main
+      - 'hoangmh/**'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+# A newer push to the same branch makes the in-flight run irrelevant. The full suite
+# is slow, so not cancelling wastes a runner for twenty minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '17'
+
+jobs:
+  # ---------------------------------------------------------------- fast feedback
+  # The 29 tests tagged "fast" need no container and finish in seconds, so a broken
+  # build or a regressed invariant surfaces in about a minute instead of twenty.
+  #
+  # This job can only ADD signal: the verify job below runs the whole suite with no
+  # tag filter, so forgetting to tag a new test costs speed, never coverage.
+  fast-checks:
+    name: Compile and container-free tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: Compile main and test sources
+        run: ./mvnw -B -ntp test-compile
+
+      - name: Run container-free tests
+        run: ./mvnw -B -ntp -Dgroups=fast test
+
+  # ---------------------------------------------------------------- manifests
+  # Catches typos and removed fields in the Kubernetes manifests without needing a
+  # cluster. kubeconform validates against the published API schemas; -strict rejects
+  # unknown fields, which is what actually catches a misspelled probe or resource key
+  # that a cluster would silently ignore.
+  manifests:
+    name: Validate Kubernetes manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubeconform
+        run: |
+          curl -sSL -o kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+
+      - name: Render and validate
+        run: |
+          kubectl kustomize deploy/kubernetes > /tmp/rendered.yaml
+          kubeconform -strict -summary -kubernetes-version 1.31.0 \
+            /tmp/rendered.yaml deploy/kubernetes/secret.example.yaml
+
+      # The OpenShift overlay drops the in-cluster PostgreSQL and swaps the Ingress
+      # for a Route. Route is not in any schema catalogue kubeconform knows about, so
+      # the schema is vendored in the repository; validating every resource except the
+      # one that is specific to the platform would be a check that cannot fail.
+      - name: Render and validate the OpenShift overlay
+        run: |
+          kubectl kustomize deploy/openshift > /tmp/rendered-openshift.yaml
+          kubeconform -strict -summary -kubernetes-version 1.31.0 \
+            -schema-location default \
+            -schema-location 'deploy/openshift/schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /tmp/rendered-openshift.yaml
+
+      # The OpenTelemetry Collector is a separate kustomize root under
+      # deploy/observability/kubernetes, so neither render above reaches it. Its
+      # ConfigMap is generated, which means a mistake in the collector's config file
+      # surfaces here as a render failure rather than as a pod that starts and quietly
+      # forwards nothing.
+      - name: Render and validate the collector
+        run: |
+          kubectl kustomize deploy/observability/kubernetes > /tmp/rendered-collector.yaml
+          kubeconform -strict -summary -kubernetes-version 1.31.0 \
+            /tmp/rendered-collector.yaml deploy/observability/kubernetes/secret.example.yaml
+
+      # A floating tag cannot answer "what is running right now", which is the first
+      # question an incident timeline asks. It also makes `kubectl rollout undo` roll
+      # back to the same name it just left. All three renders must name an immutable tag.
+      - name: Reject floating image tags
+        run: |
+          if grep -nE '^\s*image: .*:(latest|main|master)$' \
+              /tmp/rendered.yaml /tmp/rendered-openshift.yaml /tmp/rendered-collector.yaml; then
+            echo "::error::a rendered manifest deploys a floating tag; pin sha-<commit> in deploy/kubernetes/kustomization.yaml, or an explicit version in deploy/observability/kubernetes/deployment.yaml"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------- full suite
+  verify:
+    name: Full test suite (Testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      # ubuntu-latest ships a running Docker daemon, which is all Testcontainers
+      # needs. Pulling the images up front keeps the first test from paying for it
+      # and makes a registry problem look like a registry problem.
+      - name: Pre-pull test images
+        run: |
+          docker pull postgres:16-alpine
+          docker pull redis:7-alpine
+
+      - name: Run the full suite
+        run: ./mvnw -B -ntp verify
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------- image
+  # Only runs once the code is known good. Pull requests build the image to prove the
+  # Dockerfile still works but do not publish one.
+  image:
+    name: Build image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [fast-checks, verify, manifests]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute image name
+        id: image
+        # GHCR rejects uppercase path segments and this repository's owner has them.
+        run: |
+          echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.name }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            # Deterministic across every event type. On a pull request the sha tag is
+            # derived from the PR head rather than github.sha, so it is not a reliable
+            # handle for the scan step below.
+            type=raw,value=ci-${{ github.run_id }}
+
+      # Build into the local daemon first, scan that exact artifact, and only then
+      # publish. Building straight to the registry would mean a vulnerable image is
+      # already public by the time the scan runs.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Bakes the commit into the jar manifest, which Spring Boot surfaces as
+          # spring.application.version. That single value becomes both /actuator/info's
+          # build version and the service.version attribute on exported telemetry, so a
+          # running pod and an APM trace agree on which build they came from — and both
+          # agree with the sha-<commit> image tag the manifests pin.
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Trivy is run from its own pinned image rather than through a third-party
+      # action, so there is one less version to track and the scanner version is
+      # explicit. The base JRE image carries CVEs with no fix available, and failing
+      # on those would make CI permanently red while telling nobody anything, so this
+      # gates only on a CRITICAL finding that can actually be remediated.
+      - name: Scan image for critical vulnerabilities
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.74.0 image \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              --format table \
+              "${{ steps.image.outputs.name }}:ci-${{ github.run_id }}"
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        run: |
+          printf '%s\n' '${{ steps.meta.outputs.tags }}' | while read -r tag; do
+            [ -n "$tag" ] || continue
+            echo "pushing $tag"
+            docker push "$tag"
+          done

@@ -7,16 +7,198 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:corebank}
     password: ${SPRING_DATASOURCE_PASSWORD:corebank123}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # Sized deliberately, not left at the default of 10.
+      #
+      # A money command can hold two connections at the same time: the business
+      # transaction, and the REQUIRES_NEW transaction that records the idempotency
+      # outcome inside it. So the pool must exceed twice the peak number of concurrent
+      # money commands, or the service starves itself — every in-flight command holds
+      # one connection and waits for a second that nobody can release.
+      #
+      # That is not theoretical. Fourteen concurrent requests against a cold instance
+      # with the default pool of 10 produced ten HTTP 500s and took the full
+      # thirty-second connection timeout to clear. The identical burst against a pool
+      # of 40 finished in one second with no errors. Exactly-once held in both cases;
+      # what failed was availability, not correctness.
+      #
+      # 20 leaves room for roughly ten concurrent money commands per instance. Three
+      # replicas at this setting use 60 of PostgreSQL's default 100 connections, which
+      # is why this is a deliberate number rather than a large one.
+      #
+      # The real fix is to stop holding two connections per command. Until that
+      # refactor, this is the bound that keeps the failure out of reach.
+      maximum-pool-size: ${COREBANK_DB_POOL_SIZE:20}
 
   flyway:
     enabled: true
     locations: classpath:db/migration
 
+  # Let in-flight money commands finish before the JVM exits. Without this a rolling
+  # update SIGTERMs a pod mid-transfer while it still holds SELECT ... FOR UPDATE locks.
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
 server:
   port: ${PORT:${SERVER_PORT:9090}}
+  shutdown: graceful
+
+# Structured logs are opt-in. A developer reading a terminal wants the readable
+# format; a log pipeline wants one JSON object per line. ecs is the Elastic Common
+# Schema, which Dynatrace, Datadog, Splunk and Loki all ingest without a custom parser.
+logging:
+  structured:
+    format:
+      console: ${COREBANK_LOG_FORMAT:}
+    ecs:
+      service:
+        # Without this the ECS documents carry a service name but no environment, so a
+        # shared log backend cannot tell staging traffic from production traffic.
+        environment: ${COREBANK_ENVIRONMENT:local}
+    json:
+      context:
+        # Carry the MDC into every JSON log line, which is what puts correlationId,
+        # requestId and the actor next to the message rather than in a separate index.
+        include: true
+  # Used when structured logging is off. traceId and spanId come from Micrometer
+  # Tracing, so a log line can be pivoted to its trace without any extra plumbing.
+  pattern:
+    correlation: "[${spring.application.name:},%X{traceId:-},%X{spanId:-},%X{correlationId:-}] "
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,metrics
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      group:
+        # Liveness answers one question only: is this JVM wedged?
+        # It must never consult the database or Redis — a shared dependency blip would
+        # otherwise restart every replica at once and turn a degradation into an outage.
+        liveness:
+          include: livenessState
+        # Readiness gates traffic. The database is a hard requirement for every money
+        # command, so it belongs here; Redis and the read-model projection do not, because
+        # the application is designed to degrade rather than fail when they are absent.
+        readiness:
+          include: readinessState,db
+    prometheus:
+      access: read_only
+  health:
+    # Redis is non-authoritative acceleration (rate limiting + idempotency replay cache)
+    # and the documented local run starts PostgreSQL only, so its absence must not make
+    # the aggregate health endpoint report DOWN.
+    redis:
+      enabled: false
+
+  metrics:
+    tags:
+      # Every series carries these, so one Prometheus or Dynatrace instance can hold
+      # several deployments without the queries becoming ambiguous.
+      application: ${spring.application.name}
+      environment: ${COREBANK_ENVIRONMENT:local}
+
+    distribution:
+      # Without this there are no `_bucket` series at all — a Timer exports only _count,
+      # _sum and _max. That mattered more than it sounds. MoneyEndpointLatency in
+      # deploy/observability/alerts.yml and the latency panel on the Grafana dashboard
+      # are both histogram_quantile() over http_server_requests_seconds_bucket, so from
+      # the day they were written until this line existed neither could produce a value.
+      # They did not alert falsely; they could not alert at all, which is worse — a
+      # latency alert that is silent because its input is empty looks exactly like one
+      # that is silent because the service is healthy.
+      percentiles-histogram:
+        http.server.requests: true
+      # Buckets are what percentiles cost, so bound them. The default range spans
+      # nanoseconds to minutes and emits dozens of buckets per URI per status per
+      # replica. Nothing here is interesting below 10ms, and the OpenShift router cuts a
+      # request off at 60s, so a bucket past that measures nothing that can happen.
+      minimum-expected-value:
+        http.server.requests: 10ms
+      maximum-expected-value:
+        http.server.requests: 60s
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+
+  # Tracing is always instrumented, so every log line carries a trace id even with no
+  # collector running. Export is a separate switch: turning it on without a collector
+  # would just produce a steady stream of connection failures.
+  tracing:
+    enabled: true
+    sampling:
+      # A portfolio deployment sees little traffic, so sampling everything costs
+      # nothing and makes a demo reproducible. Lower this under real load.
+      probability: ${COREBANK_TRACE_SAMPLE_RATE:1.0}
+    export:
+      enabled: ${COREBANK_OTLP_ENABLED:false}
+    baggage:
+      correlation:
+        # Propagates the application's own correlation id across service boundaries
+        # and into the MDC alongside the trace id.
+        fields: correlationId,requestId
+
+  # OTLP is the wire format, not the vendor. The same exporter feeds an OpenTelemetry
+  # Collector, Prometheus via the collector, Dynatrace, Datadog or Grafana Tempo;
+  # switching backend is a change of endpoint, not of application code.
+  opentelemetry:
+    resource-attributes:
+      deployment.environment: ${COREBANK_ENVIRONMENT:local}
+      service.namespace: corebank
+      # Which build is emitting this telemetry. An APM tool groups a latency regression by
+      # release; without this every deploy looks like the same service, and "it got slow on
+      # Tuesday" cannot be tied to what shipped on Tuesday.
+      #
+      # Spring Boot derives spring.application.version from the jar manifest, so it is unset
+      # when running from an IDE or `mvn spring-boot:run`, where there is no manifest on the
+      # application package. The :unknown default is required, not decorative — an
+      # unresolvable placeholder fails context startup outright.
+      #
+      # Deliberately NOT added to management.metrics.tags. Those are common tags on every
+      # meter, so the version there would change the label set of every series on every
+      # deploy, break rate() continuity application-wide, and double the active series for
+      # the length of each rollout. Release identity belongs on the resource.
+      service.version: ${spring.application.version:unknown}
+    tracing:
+      export:
+        otlp:
+          endpoint: ${COREBANK_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+  otlp:
+    metrics:
+      export:
+        enabled: ${COREBANK_OTLP_ENABLED:false}
+        url: ${COREBANK_OTLP_METRICS_ENDPOINT:http://localhost:4318/v1/metrics}
+        # Dynatrace ingests OTLP metrics as deltas; Spring Boot defaults to cumulative.
+        # Setting it in the application is the better of the two fixes: this process knows
+        # its own cumulative baseline, so the deltas are correct by construction. The
+        # collector's cumulativetodelta processor also works, but it makes the collector
+        # stateful — it must remember the previous value per series — and a stateful
+        # collector cannot safely run more than one replica.
+        aggregation-temporality: ${COREBANK_OTLP_TEMPORALITY:delta}
+
+# JDBC observations (net.ttddyy.observation:datasource-micrometer-spring-boot).
+#
+# The auto-configuration wraps every DataSource and emits spans on the same
+# ObservationRegistry that Micrometer Tracing already bridges to OpenTelemetry, so these
+# land inside the existing HTTP trace with no extra wiring.
+jdbc:
+  # CONNECTION is the one that earns its place here, and it is listed first deliberately.
+  # This system's real outage was connection starvation, not slow SQL: a money command holds
+  # two connections at once — the business transaction plus the REQUIRES_NEW transaction that
+  # records the idempotency outcome inside it — so once concurrent commands reach the pool
+  # size, each holds one while waiting for a second nobody can release. A CONNECTION span
+  # makes that visible as time spent acquiring, instead of as unexplained latency.
+  #
+  # FETCH and KEYS are omitted: result-set and generated-key spans multiply span count on
+  # every query and answer questions this system has never needed to ask.
+  includes: CONNECTION,QUERY
+  datasource-proxy:
+    # Bind parameters stay out of spans. In this application they are account identifiers,
+    # amounts and customer references; capturing them would ship customer financial data to
+    # whatever APM backend is configured and retain it there. This is the library default —
+    # it is set explicitly because it is the setting most dangerous to flip by accident.
+    include-parameter-values: false
