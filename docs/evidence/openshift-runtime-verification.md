@@ -152,8 +152,12 @@ Dynatrace for the same requests, was 100 – 140 ms. The difference is TLS, the 
 the application, and none of these client latencies is an application figure. They are comparable to each other
 (same path) and to nothing else.
 
-The Route was **not** opened in a graphical browser in this run; its dashboard and API were exercised over HTTPS
-from the client (see Remaining limitations).
+**In a browser.** The Route was opened in the desktop app's built-in browser pane (no login involved). `/` loaded over
+HTTPS in a secure context with the title "CoreBank — Fintech Backend Portfolio"; its "Open Live Dashboard" link goes to
+`/dashboard/`, which loaded as "FinLedger Lab — Fintech Backend Live Demo". The four requests the browser made
+(`/`, `/dashboard/index.html`, `styles.css`, `app.js`) were all `200`, and the console had no errors. The dashboard's
+API calls need the showcase credentials and were **not** exercised in the browser (no password was typed into a page);
+the money flow was driven with an HTTP client, above.
 
 ## Pod replacement
 
@@ -309,8 +313,8 @@ This includes the runs interrupted by pod deletion, rollout, rollback and the da
 - **One free, shared cluster, one project, one region.** Quotas, the router and the node pool are the Sandbox's;
   the Sandbox may also hibernate workloads, which was not observed here.
 - **Client latency is not application latency** (see [Route and HTTPS](#route-and-https)).
-- **The Route was not opened in a graphical browser** in this run. It was exercised over HTTPS with an HTTP
-  client, including the certificate chain, the redirect and the 404 on actuator paths.
+- **The browser check covered the static pages only** (the landing page and the dashboard shell). The authenticated
+  API calls, the certificate chain, the redirect and the 404 on actuator paths were exercised with an HTTP client.
 - **PostgreSQL 15.8**, one major version older than the tested 16, from a deprecated `DeploymentConfig`, single
   replica, no backups, no failover. This is a lab database.
 - **The 512Mi database limit at 170 connections** was not exercised (304Mi at 121).
