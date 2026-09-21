@@ -1,0 +1,23 @@
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: corebank-api
+spec:
+  # Short name: Istio resolves it in this rule's own namespace, so the overlay's
+  # namespace override does not have to rewrite it.
+  host: corebank-api
+  trafficPolicy:
+    tls:
+      # Stated rather than left to auto-mTLS, so the intent is in the manifest and a
+      # client whose sidecar was not injected fails loudly instead of silently
+      # falling back to plaintext.
+      mode: ISTIO_MUTUAL
+  # A subset is a name for "the pods with this label". The label is `version`, set on
+  # each Deployment's pod template by kustomization.yaml and ./v2.
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2

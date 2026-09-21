@@ -39,6 +39,13 @@ project's implementation history.
 - [31 — Operations runbook](31-operations-runbook.md)
 - [32 — Service levels](32-service-levels.md)
 - [33 — Platform deployment and APM guide](33-platform-deployment-and-apm-guide.md)
+- [Platform POC: Kubernetes, OpenShift and Dynatrace](poc/corebank-dynatrace-platform-poc.md)
+- Runtime evidence, all lab observations:
+  [Kubernetes](evidence/kubernetes-runtime-verification.md) ·
+  [Dynatrace APM](evidence/dynatrace-apm-verification.md) ·
+  [Dynatrace incident RCA](evidence/dynatrace-incident-rca.md) ·
+  [OpenShift](evidence/openshift-runtime-verification.md) ·
+  [Service mesh](evidence/service-mesh-verification.md)
 
 ## Domain context
 

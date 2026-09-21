@@ -20,19 +20,26 @@ run successfully. This guide keeps that boundary explicit.
 | Area | Repository evidence | Current status |
 |---|---|---|
 | Application container | `Dockerfile`, CI image build and Trivy gate | **Repository-verified** |
-| Kubernetes base | `deploy/kubernetes/` | **Rendered and schema-validated in CI; live cluster evidence pending** |
+| Kubernetes base | `deploy/kubernetes/` | **Runtime-verified on Kind** ([evidence](evidence/kubernetes-runtime-verification.md)); the Ingress object is **not** verified |
 | Local observability | `deploy/observability/` | **Configuration present; application instrumentation is repository-verified** |
-| OpenShift overlay | `deploy/openshift/` | **Rendered and schema-validated; live OpenShift evidence pending** |
-| Cluster OTel Collector | `deploy/observability/kubernetes/` | **Rendered and schema-validated; live collector evidence pending** |
-| Dynatrace OTLP ingest | Collector exporter + application OTLP configuration | **Configured; live tenant evidence pending** |
-| Dynatrace Kubernetes Operator / DynaKube | Not deployed by this repository | **Not implemented** |
-| Service Mesh | No mesh manifests in the repository | **Not implemented; validation design documented below** |
+| OpenShift overlay | `deploy/openshift/` | **Runtime-verified on one Red Hat Developer Sandbox** after two fixes ([evidence](evidence/openshift-runtime-verification.md)) |
+| Cluster OTel Collector | `deploy/observability/kubernetes/` | **Runtime-verified** on Kind and on the Sandbox |
+| Dynatrace OTLP ingest | Collector exporter + application OTLP configuration | **Verified on Kind on a trial tenant**, including an induced incident ([APM](evidence/dynatrace-apm-verification.md), [RCA](evidence/dynatrace-incident-rca.md)); **and on OpenShift** (attributes, JDBC spans and counts read back; [OpenShift evidence](evidence/openshift-runtime-verification.md)) |
+| Dynatrace Kubernetes Operator / DynaKube | Not deployed by this repository | **Not run**: the Sandbox has no `dynatrace.com` CRD and refuses the cluster-scoped creates |
+| Dynatrace incident RCA | `docs/evidence/dynatrace-incident-rca.md` | **Measured**: an induced 45 s row-lock told apart from pool wait and slow SQL |
+| Service Mesh | `deploy/service-mesh/` (upstream Istio) | **Upstream Istio 1.31 runtime-verified on Kind**; OpenShift Service Mesh **not run**, it needs cluster-scoped permissions the Sandbox does not grant ([evidence](evidence/service-mesh-verification.md)) |
 
 The runtime failure experiments in
 [19-runtime-failure-modes.md](19-runtime-failure-modes.md) are separate from the
 platform status above. Those experiments were run against a real PostgreSQL-backed
-application and produced measured results. They do not imply that the Kubernetes,
-OpenShift or Dynatrace paths have already been exercised.
+application and produced measured results; they are not evidence about the platform
+rows.
+
+Every platform row above is a **lab observation**: one host or one free shared cluster, a
+trial tenant, synthetic traffic at about 10 requests/s. None of it is a production
+measurement, none is an SLO, and it is not production experience with OpenShift or
+Dynatrace. The end-to-end write-up is
+[the platform POC](poc/corebank-dynatrace-platform-poc.md).
 
 ---
 
@@ -177,6 +184,13 @@ observed:
 These gates prove platform behaviour. They do not replace the financial failure tests in
 [19-runtime-failure-modes.md](19-runtime-failure-modes.md).
 
+**Result.** All seven gates were observed on Kind on 2026-09-21
+([evidence](evidence/kubernetes-runtime-verification.md)), with these findings: readiness
+fails by timeout when the database is unavailable, so requests in the detection window wait
+about 30 s for a `500` (gate 2); every pod restarts once on a cold start (gate 1); the HPA
+scales out under routine traffic and during rollouts (gate 7); and the PostgreSQL connection
+limit was below what six replicas hold, which is fixed.
+
 ### Rollback boundary
 
 Application rollback and database rollback are different operations.
@@ -277,8 +291,15 @@ OpenShift is considered runtime-verified only when:
 6. rollout and rollback behaviour is rechecked on OpenShift;
 7. the final manifests used for the environment are reproducible from versioned files.
 
-Until those checks are captured, the honest repository status is **overlay validated,
-runtime pending**.
+**Result.** Gates 1 to 4 and 6 were observed on a Red Hat Developer Sandbox (OpenShift
+4.21) on 2026-09-21 ([evidence](evidence/openshift-runtime-verification.md)). Gate 5 held:
+the peak `requests.cpu` was 1560m of a 3 CPU quota and nothing had to be changed. Gate 7 is
+**partly** met: the two fixes are in versioned files, but the project name is substituted at
+render time and the database is provisioned by commands, not by a manifest. The overlay as
+first committed was refused on the Sandbox (the Namespace object and the hard-coded
+namespace), and the catalog database's 100-connection limit left the sixth HPA replica
+crash-looping; both are fixed. The honest status is **runtime-verified on one project-scoped
+Sandbox**, not on a cluster where operators and policies differ.
 
 ---
 
@@ -479,6 +500,17 @@ The Dynatrace integration is considered runtime-verified only when a real tenant
 A screenshot alone is weak evidence. The stronger evidence is a reproducible incident
 where the trace changes in the way the injected failure predicts.
 
+**Result.** Gates 1 to 7 were observed on Kind against a trial tenant
+([APM](evidence/dynatrace-apm-verification.md),
+[RCA](evidence/dynatrace-incident-rca.md)). The induced fault was a 45 s row lock, not
+pool exhaustion: the trace showed one 45.02 s `QUERY` span with `acquired` at the start of
+the `CONNECTION` span, which is what separated lock contention from pool wait and slow SQL.
+On OpenShift (a Developer Sandbox project) gates 1 to 5 were also observed: 3,899 transfer
+spans with `deployment.environment=openshift` and the commit SHA, JDBC `connection` and
+`query` spans, and `corebank.ledger.journals.posted` = 3,899, the number of journals the
+database committed in that window; gates 6 and 7 were not repeated there. Not observed
+anywhere: OTLP logs, Davis problems, alerting.
+
 ---
 
 ## 6. Dynatrace on Kubernetes
@@ -526,13 +558,25 @@ If a restricted OpenShift environment refuses the Operator or required cluster-s
 resources, record the exact RBAC denial. Do not weaken cluster security simply to make a
 demo green.
 
+**Observed on the Developer Sandbox.** The Dynatrace Operator (`dynatrace-operator`, certified
+catalogue, `v1.10.2`) declares only the `AllNamespaces` install mode. The cluster serves no
+`dynatrace.com` API group, so a `DynaKube` is refused with `no matches for kind "DynaKube"`,
+and `oc auth can-i` answers *no* to creating CRDs, cluster roles and SCCs. DynaKube was
+therefore **not run**, and nothing was worked around.
+
 ---
 
 ## 7. Service Mesh
 
 ### Current status
 
-There is no Service Mesh configuration in CoreBank today.
+There is no Service Mesh in the base deployment. `deploy/service-mesh/` holds an overlay
+for **upstream Istio** (two versions of the same application, weighted routing, STRICT
+mutual TLS, a rollback file) that was verified on Kind with Istio 1.31.0
+([evidence](evidence/service-mesh-verification.md)). **Red Hat OpenShift Service Mesh was
+not run**: both its operators declare only the `AllNamespaces` install mode and the
+Developer Sandbox refuses a Subscription in `openshift-operators`, an OperatorGroup and
+the cluster-scoped creates. Only "Istio runtime verified on Kind" can be said.
 
 That is intentional. The application is a modular monolith and does not need to be
 split into artificial microservices merely to justify a mesh.
@@ -581,6 +625,20 @@ If the OpenShift environment does not permit Service Mesh Operator installation,
 traffic-management concept may be validated with upstream Istio on Kind. That proves
 Istio behaviour, **not** OpenShift Service Mesh runtime experience. The distinction
 should remain explicit.
+
+**Result of that experiment**, against the five checks above:
+
+1. Both versions were healthy before traffic was split: **met**.
+2. Distribution matched the weights: **partly**. 50/50 gave 49.8 %; 90/10 delivered 8.7 % to
+   v2 over 4,936 requests, a consistent shortfall that is not explained.
+3. mTLS did not break the database or telemetry paths: **not established by design**. The
+   database was left outside the mesh (its hop is unencrypted) and mesh telemetry was not
+   sent anywhere.
+4. Rollback restored traffic to the known-good revision: **met**; 1,064 requests after the
+   change went to v1, none to v2, none failed.
+5. Telemetry carried enough release identity to compare the revisions: **partly**. The
+   sidecars' `destination_version` and the application's own counters separated them;
+   Dynatrace was not part of that run.
 
 ---
 
@@ -667,6 +725,15 @@ Remaining limitation:
 The record should contain facts that can be reproduced. Avoid statements such as
 "production-ready", "OpenShift-tested" or "Dynatrace-integrated" until the corresponding
 runtime gate above has actually passed.
+
+Records made so far, all lab observations:
+
+- [Kubernetes runtime verification](evidence/kubernetes-runtime-verification.md)
+- [Dynatrace APM verification](evidence/dynatrace-apm-verification.md)
+- [Dynatrace incident RCA](evidence/dynatrace-incident-rca.md)
+- [OpenShift runtime verification](evidence/openshift-runtime-verification.md)
+- [Service mesh verification](evidence/service-mesh-verification.md)
+- [Platform POC](poc/corebank-dynatrace-platform-poc.md)
 
 ---
 

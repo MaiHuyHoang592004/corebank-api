@@ -7,8 +7,8 @@ resources:
   - ../kubernetes
   - route.yaml
 
-# OpenShift differs from a vanilla cluster in two ways that stop the base applying
-# at all. This overlay handles exactly those two and changes nothing else.
+# OpenShift differs from a vanilla cluster in three ways that stop the base applying
+# at all. This overlay handles exactly those three and changes nothing else.
 #
 # 1. Arbitrary UIDs. The restricted-v2 SCC assigns each namespace a UID range and
 #    runs every container as a UID from it. A pod that asks for a specific
@@ -24,6 +24,18 @@ resources:
 #
 # 2. Routing. OpenShift admits external traffic with Route objects. The base's
 #    Ingress names an nginx ingressClass that does not exist there.
+#
+# 3. The Namespace object. On OpenShift a namespace is created as a project, and a
+#    user who can work inside a project usually cannot create or even read
+#    namespaces: on the Red Hat Developer Sandbox applying the Namespace object
+#    fails with `Forbidden ... cannot get resource "namespaces"`, even though the
+#    project the rest of the overlay targets already exists. The object carries one
+#    label and nothing that OpenShift needs, so it is dropped here and the project
+#    is created (or already exists) outside the overlay.
+#
+#    That leaves `namespace: corebank` above as the default. If the project has
+#    another name, substitute it at render time, as deploy/kubernetes/README.md
+#    shows, rather than editing this file for one cluster.
 
 patches:
   # -- 1. Drop the in-cluster database ---------------------------------------
@@ -79,3 +91,14 @@ patches:
       kind: Ingress
       metadata:
         name: corebank-api
+
+  # -- 3. Drop the Namespace ---------------------------------------------------
+  - target:
+      kind: Namespace
+      name: corebank
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: corebank

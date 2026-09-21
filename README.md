@@ -113,13 +113,20 @@ behaviour**.
 | Capability | Evidence | Status |
 |---|---|---|
 | Financial failure experiments | SIGKILL, retry storm, concurrent duplicates, connection starvation | **Measured** |
+| Dynatrace incident RCA | induced 45 s row-lock, diagnosed from traces and the database ([evidence](docs/evidence/dynatrace-incident-rca.md)) | **Measured** |
 | Container build | CI build, Trivy gate, immutable image workflow | **CI-validated** |
-| Kubernetes manifests | Deployment, Service, Ingress, HPA, PDB, probes, security context | **CI-validated; live cluster verification pending** |
-| OpenShift | Kustomize overlay, Route, arbitrary-UID-compatible application deployment | **CI-validated; live OpenShift verification pending** |
-| Application telemetry | HTTP observations, JDBC spans, banking metrics, structured logs | **Implemented** |
-| Cluster OTel Collector | Kubernetes manifests and Dynatrace exporter | **CI-validated; runtime verification pending** |
-| Dynatrace | OTLP traces/metrics integration path | **Configured; live tenant verification pending** |
-| Service Mesh | Canary/mTLS validation design | **Not implemented** |
+| Kubernetes manifests | Deployment, Service, HPA, PDB, probes, security context | **Runtime-verified on Kind**: cold start, pod replacement, database loss, rolling update, failed rollout and rollback, HPA ([evidence](docs/evidence/kubernetes-runtime-verification.md)) |
+| Kubernetes Ingress | `ingress.yaml` (nginx class) | **Not verified**: ingress-nginx is retired and was not installed; Kind is verified through a Service port-forward |
+| OpenShift | Kustomize overlay, Route, arbitrary-UID-compatible application deployment | **Runtime-verified on the Red Hat Developer Sandbox** under `restricted-v2`, through a public Route: replacement, rollout, rollback, HPA. Two defects found and fixed ([evidence](docs/evidence/openshift-runtime-verification.md)) |
+| Application telemetry | HTTP observations, JDBC spans, banking metrics, structured logs | **Verified in Dynatrace** (traces, JDBC spans, metrics); OTLP logs were not observed |
+| Cluster OTel Collector | Kubernetes manifests and Dynatrace exporter | **Runtime-verified** on Kind and on the Sandbox |
+| Dynatrace | OTLP traces/metrics integration path, incident diagnosis | **Verified on Kind on a trial tenant**, including a diagnosed lock-contention incident ([APM](docs/evidence/dynatrace-apm-verification.md), [RCA](docs/evidence/dynatrace-incident-rca.md)). On OpenShift the same read-back was done: `deployment.environment=openshift`, the release SHA, JDBC spans, and span and metric counts equal to the journals committed there |
+| Service Mesh | Istio canary, mTLS, rollback ([`deploy/service-mesh/`](deploy/service-mesh/README.md)) | **Upstream Istio 1.31 runtime-verified on Kind.** OpenShift Service Mesh was **not run**: the operator needs cluster-scoped permissions the Sandbox does not grant ([evidence](docs/evidence/service-mesh-verification.md)) |
+| Dynatrace Operator (DynaKube) | Not in this repository | **Not run**: no CRD and no permission on the Sandbox |
+
+All of the above are lab observations on one host or a free shared cluster, with synthetic traffic. They are not
+production measurements and no figure is an SLO. The end-to-end write-up is
+[the platform POC](docs/poc/corebank-dynatrace-platform-poc.md).
 
 The detailed verification model is documented in
 [Platform Deployment and APM Guide](docs/33-platform-deployment-and-apm-guide.md).
@@ -175,7 +182,8 @@ or external deployment.
 
 The application does not require a fixed runtime UID, which keeps the workload aligned
 with OpenShift's restricted security model instead of weakening the platform policy to
-fit the image.
+fit the image. That was checked on a running cluster: pods were admitted by `restricted-v2`
+with a UID the platform chose, and no `anyuid` or SCC change was used.
 
 Deployment detail:
 [deploy/kubernetes/README.md](deploy/kubernetes/README.md) ·
@@ -246,9 +254,10 @@ For managed APM:
 CoreBank → OTel Collector → Dynatrace OTLP
 ```
 
-The cluster Collector already contains the Dynatrace OTLP exporter, while live tenant
-verification is intentionally tracked as pending rather than presented as completed
-experience.
+The cluster Collector's Dynatrace OTLP exporter was run against a trial tenant: traces with
+JDBC spans, banking metrics and the release identity arrived, and a database incident was
+diagnosed from them ([evidence](docs/evidence/dynatrace-apm-verification.md)). What was not
+observed is listed there too: OTLP logs, alerting and Davis problems.
 
 ---
 
@@ -328,7 +337,10 @@ kubectl apply -f deploy/kubernetes/secret.yaml
 kubectl apply -k deploy/kubernetes
 ```
 
-Runtime verification gates are listed in
+There is no ingress controller on the Kind path: reach the application with
+`kubectl port-forward svc/corebank-api 8080:80`. Runtime results are in
+[Kubernetes runtime verification](docs/evidence/kubernetes-runtime-verification.md); the
+gates are listed in the
 [Platform Deployment and APM Guide](docs/33-platform-deployment-and-apm-guide.md).
 
 ---
@@ -395,9 +407,10 @@ Also intentionally outside the current implementation:
 - production database high availability;
 - production secret-management integration;
 - centralized log shipping/paging integration;
-- live OpenShift verification;
-- live Dynatrace tenant verification;
-- Service Mesh runtime implementation.
+- Red Hat OpenShift Service Mesh and the Dynatrace Operator: neither could be installed with the
+  access used, so there is no experience of either (upstream Istio was verified instead);
+- Dynatrace log ingestion, alerting and Davis problems;
+- any production measurement: every runtime figure here is a lab observation.
 
 Those boundaries are documented rather than hidden.
 

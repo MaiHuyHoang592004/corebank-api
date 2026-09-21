@@ -75,10 +75,11 @@ matters. It names `otel-collector.observability:4318`, a collector in a separate
 `observability` namespace. `deploy/openshift/kustomization.yaml` sets
 `namespace: corebank` globally and a Developer Sandbox grants one project, so a second
 namespace is not something that path can create. This directory therefore deploys into
-`corebank`, and the ConfigMap's comment is now stale. It was left stale on purpose
-rather than edited alongside a collector that has never run — but it is the first thing
-to correct at cutover, because a wrong Service hostname resolves to nothing and every
-export fails silently from the application's point of view.
+`corebank`, and the ConfigMap's comment is stale. It is left as it is, and the cutover
+was done by substituting the three values at render time instead of editing the tracked
+file (see `docs/evidence/dynatrace-apm-verification.md`). A wrong Service hostname
+resolves to nothing and every export fails silently from the application's point of
+view, which is why the values are worth checking first.
 
 Changing that ConfigMap does not restart the application pods. `kubectl rollout restart
 deployment/corebank-api` does.
@@ -129,34 +130,25 @@ hand, with the versions named.
 | No floating tag | CI's own `grep -nE '^\s*image: .*:(latest\|main\|master)$'` | clean |
 | Config is well-formed YAML | `yaml.safe_load` on `otel-collector-config.yaml` | parses; `traces`, `metrics` and `logs` each run `[memory_limiter, batch]` into `otlphttp/dynatrace` |
 
-That is the whole of the evidence, and it is narrower than it looks.
-**Nothing here has been applied to a cluster, and the collector binary has never been
-started with this configuration.** No container runtime was available in the
-environment these manifests were written in, so `otelcol-contrib validate` was not run.
-`kubeconform` validates the Kubernetes objects; the collector config travels inside a
-ConfigMap as an opaque string, so a typo in `otlphttp/dynatrace` would render, validate
-and pass CI, and would first be visible as a pod in `CrashLoopBackOff`.
+That was the CI evidence, and it is narrower than it looks: `kubeconform` validates the
+Kubernetes objects, while the collector config travels inside a ConfigMap as an opaque
+string, so a typo in `otlphttp/dynatrace` would render, validate and pass CI.
 
-Open questions, each of which is a thing to check on first contact with a cluster
-rather than a thing that is known:
+**It has since been run.** The collector was applied to a Kind cluster and to a Red Hat
+Developer Sandbox project and exported to a Dynatrace trial tenant; the results are in
+`docs/evidence/dynatrace-apm-verification.md`. Each question that was open is answered:
 
-- Whether `runAsNonRoot: true` is satisfied by `otel/opentelemetry-collector-contrib:0.115.1`.
-  It requires the image to declare a numeric non-root `USER`; if it does not, the
-  kubelet refuses to start the container and the fix is a `runAsUser` that
-  `restricted-v2` would then reject. This was not verified against the image.
-- Whether `readOnlyRootFilesystem: true` is workable for this image. No exporter or
-  extension configured here writes to disk, and a `/tmp` `emptyDir` is mounted as
-  insurance, but that is reasoning rather than an observation.
-- Whether `health_check` serves `path: /` on `0.115.1`. It is set explicitly rather
-  than relying on a default, but the response has not been seen.
-- Whether the application emits OTLP **logs** at all. `application.yml` configures
-  `management.opentelemetry.tracing.export.otlp.endpoint` and
-  `management.otlp.metrics.export.url` explicitly and sets no `management.otlp.logging`
-  key, and the deployed configuration ships logs as ECS JSON on stdout. The `logs`
-  pipeline exists so a log payload is not refused, not because one is known to arrive.
-- The exact Dynatrace token scopes. `openTelemetryTrace.ingest`, `metrics.ingest` and
-  `logs.ingest` are the ones the pipelines imply; the authoritative names come from the
-  tenant's token page.
+| Open question | Observed |
+|---|---|
+| `runAsNonRoot: true` with `otel/opentelemetry-collector-contrib:0.115.1` | satisfied: the image runs as uid 10001; under OpenShift `restricted-v2` the platform assigned another UID and it still ran |
+| `readOnlyRootFilesystem: true` | works, with the `/tmp` `emptyDir` mounted; it ran for the whole session. Running without the `emptyDir` was not tested |
+| `health_check` serves `/` | yes: `200` with `{"status":"Server available", …}` |
+| The application emits OTLP **logs** | **not observed**: only `traces` and `metrics` payloads reached the collector, and the trace's Logs tab showed 0 records |
+| Dynatrace token scopes | `openTelemetryTrace.ingest` and `metrics.ingest` (UI names "Ingest OpenTelemetry traces" and "Ingest metrics") are enough; `logs.ingest` was not granted |
+
+What is still true: this is a lab on a trial tenant, the collector runs as one replica with
+an in-memory queue, and a wrong token is a permanent `401` that the exporter answers by
+dropping the data, visible only in the collector's log.
 
 ## Not done yet
 
@@ -175,9 +167,10 @@ purpose.
    counters are the signal that the token is wrong or the tenant is rejecting data, and
    nothing currently scrapes or alerts on them — which means the failure mode this
    directory most needs to detect is the one it is blind to.
-4. **`COREBANK_OTLP_ENABLED` is still `"false"`.** Deliberate ordering, as above, but
-   until it is flipped this collector receives nothing and the gap between what the
-   application can emit and what the deployment collects is unchanged.
+4. **`COREBANK_OTLP_ENABLED` is still `"false"` in the tracked ConfigMap.** It was switched
+   on at render time for the verification and the collector then received telemetry; the
+   default stays off so that a deployment without a collector does not produce a stream of
+   export failures.
 5. **One replica, no PDB.** A collector restart or a node drain loses whatever is
    queued in memory. Nothing money depends on, but it is a real hole in telemetry
    continuity, and unlike the application there is no `PodDisruptionBudget` here.

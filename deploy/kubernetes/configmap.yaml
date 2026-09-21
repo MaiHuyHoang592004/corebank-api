@@ -42,7 +42,10 @@ data:
   COREBANK_OTLP_ENABLED: "false"
 
   # A money command can hold two connections at once, so the pool has to exceed twice
-  # the peak concurrent commands per instance or the service starves itself. Three
-  # replicas at 20 use 60 of PostgreSQL's default 100 connections; raising this without
-  # raising max_connections on the database moves the failure rather than removing it.
+  # the peak concurrent commands per instance or the service starves itself. Hikari keeps
+  # the whole pool open at idle, so what has to fit in PostgreSQL is the largest pod count
+  # the cluster can reach (HPA maxReplicas + rolling-update surge + one draining pod = 8)
+  # times this value: 8 x 20 = 160, against the max_connections=200 in postgres.yaml. Raising
+  # this without raising max_connections on the database moves the failure rather than
+  # removing it; check-connection-budget.sh fails CI if the two stop adding up.
   COREBANK_DB_POOL_SIZE: "20"

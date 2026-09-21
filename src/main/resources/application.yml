@@ -22,9 +22,13 @@ spring:
       # of 40 finished in one second with no errors. Exactly-once held in both cases;
       # what failed was availability, not correctness.
       #
-      # 20 leaves room for roughly ten concurrent money commands per instance. Three
-      # replicas at this setting use 60 of PostgreSQL's default 100 connections, which
-      # is why this is a deliberate number rather than a large one.
+      # 20 leaves room for roughly ten concurrent money commands per instance. The pool is
+      # held open at idle, so PostgreSQL has to accept it for every pod the deployment can
+      # reach, not just the steady-state three: the reference Kubernetes manifests allow 8
+      # (6 HPA replicas, 1 rolling-update surge, 1 draining) and so set max_connections=200
+      # for 160 pooled connections. Against PostgreSQL's default of 100, six replicas
+      # exhausted the server in a load test. That is why this is a deliberate number rather
+      # than a large one.
       #
       # The real fix is to stop holding two connections per command. Until that
       # refactor, this is the bound that keeps the failure out of reach.

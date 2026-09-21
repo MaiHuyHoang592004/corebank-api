@@ -100,16 +100,45 @@ jobs:
           kubeconform -strict -summary -kubernetes-version 1.31.0 \
             /tmp/rendered-collector.yaml deploy/observability/kubernetes/secret.example.yaml
 
+      # The service-mesh overlay runs two versions of the application behind one Service.
+      # kubeconform has no schema for the Istio kinds, so they are skipped here and checked
+      # by the script below instead: a schema would say each object is well-formed while the
+      # objects disagree with each other, which is the mistake this overlay can actually make
+      # (a route to a subset nothing defines answers 503 for that share of the traffic).
+      - name: Render and validate the service mesh overlay
+        run: |
+          kubectl kustomize deploy/service-mesh > /tmp/rendered-mesh.yaml
+          kubeconform -strict -summary -kubernetes-version 1.31.0 \
+            -skip VirtualService,DestinationRule,PeerAuthentication \
+            /tmp/rendered-mesh.yaml
+
+      - name: Check the service mesh routing invariants
+        run: |
+          python3 -c 'import yaml' 2>/dev/null || pip install --quiet pyyaml
+          deploy/service-mesh/check-mesh-routing.sh /tmp/rendered-mesh.yaml
+
       # A floating tag cannot answer "what is running right now", which is the first
       # question an incident timeline asks. It also makes `kubectl rollout undo` roll
-      # back to the same name it just left. All three renders must name an immutable tag.
+      # back to the same name it just left. Every render must name an immutable tag.
       - name: Reject floating image tags
         run: |
           if grep -nE '^\s*image: .*:(latest|main|master)$' \
-              /tmp/rendered.yaml /tmp/rendered-openshift.yaml /tmp/rendered-collector.yaml; then
+              /tmp/rendered.yaml /tmp/rendered-openshift.yaml /tmp/rendered-collector.yaml \
+              /tmp/rendered-mesh.yaml; then
             echo "::error::a rendered manifest deploys a floating tag; pin sha-<commit> in deploy/kubernetes/kustomization.yaml, or an explicit version in deploy/observability/kubernetes/deployment.yaml"
             exit 1
           fi
+
+      # Every pod holds a full Hikari pool at idle, so the HPA's maximum, the rolling-update
+      # surge and the pool size all draw on one PostgreSQL max_connections. With the default
+      # of 100, six replicas exhausted the server in a load test: pods could not fill their
+      # pools, money requests returned 500 after the 30 s connection timeout, and psql could
+      # not connect. The OpenShift overlay expects an external database, so for that render
+      # the script prints the figure the database must accept instead of comparing.
+      - name: Check the PostgreSQL connection budget
+        run: |
+          bash deploy/kubernetes/check-connection-budget.sh /tmp/rendered.yaml
+          bash deploy/kubernetes/check-connection-budget.sh /tmp/rendered-openshift.yaml
 
   # ---------------------------------------------------------------- full suite
   verify:

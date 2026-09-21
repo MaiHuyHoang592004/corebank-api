@@ -29,10 +29,10 @@ deploy/openshift/            overlay for OpenShift — see "OpenShift" below
 ```bash
 kind create cluster --name corebank --config kind-cluster.yaml
 
-# Ingress controller. Skip if you only want port-forward.
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
-kubectl -n ingress-nginx wait --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller --timeout=180s
+# No ingress controller is installed. The Ingress in this directory targets
+# ingress-nginx, which Kubernetes retired in March 2026 (repository archived, no further
+# releases or security fixes), so this guide does not install it. Reach the application
+# with a port-forward instead, see "Reaching the application" below.
 
 # Secrets first: the database and the application both read from them.
 cp secret.example.yaml secret.yaml
@@ -84,12 +84,32 @@ kubectl -n corebank patch serviceaccount default \
   -p '{"imagePullSecrets":[{"name":"ghcr"}]}'
 ```
 
-Then add `127.0.0.1 corebank.local` to `/etc/hosts` and open
-`http://corebank.local/dashboard/`, or skip the Ingress entirely:
+### Reaching the application
 
 ```bash
 kubectl -n corebank port-forward svc/corebank-api 8080:80
+# then open http://localhost:8080/
 ```
+
+The Service publishes port 80, which forwards to the application container's port 9090.
+The management port, 9091, is deliberately not on the Service: probes reach it through
+the pod IP, and to look at it yourself forward a pod rather than the Service
+(`kubectl -n corebank port-forward pod/<name> 9091:9091`).
+
+Two limits of a port-forward matter when you test, and both were observed rather than
+assumed. `kubectl` resolves `svc/…` to **one pod** when it starts and stays on it: 61
+requests sent through it were all served by a single pod. So it cannot show load
+balancing, readiness gating or EndpointSlice membership, and if that pod is deleted or
+scaled in, the tunnel drops. Use it to try the application; to measure availability
+across pods, send requests from inside the cluster to
+`http://corebank-api.corebank.svc.cluster.local` (see the rollout exercise below).
+
+**The Ingress is legacy and unverified.** `ingress.yaml` is kept as it was, with
+`ingressClassName: nginx`. It was applied to the API server, which accepted it, but no
+controller has served traffic through it in the runtime verification, so nothing here
+claims it works. On OpenShift, external routing is the Route in `deploy/openshift/`. Moving
+to another ingress controller or to the Gateway API is a separate infrastructure decision
+and is not part of this directory.
 
 ## What each probe is for
 
@@ -149,12 +169,21 @@ a difference to close.
 ### Zero-downtime rollout
 
 ```bash
-# Keep a request in flight during the rollout and watch for a non-200.
-while true; do curl -s -o /dev/null -w '%{http_code}\n' http://corebank.local/actuator/health/readiness; sleep 0.2; done &
+# Keep requests in flight during the rollout and watch for a non-200. Run them from
+# inside the cluster, against the Service, so they cross every pod: a port-forward stays
+# on one pod and would drop when that pod is replaced. Probe an application path, not
+# /actuator: the management port is private and is not on the Service.
+kubectl run rollout-probe --rm -i --restart=Never --image=curlimages/curl -- \
+  sh -c 'while true; do curl -s -o /dev/null -w "%{http_code}\n" http://corebank-api.corebank.svc.cluster.local/; sleep 0.2; done'
 
+# In another terminal:
 kubectl -n corebank set image deployment/corebank-api app=ghcr.io/maihuyhoang592004/corebank-api:<new-sha>
 kubectl -n corebank rollout status deployment/corebank-api
 ```
+
+If metrics-server is installed the HPA is live, and it was observed scaling the Deployment
+from 3 to 6 while a rollout was in progress, so a rollout can end with more replicas than
+it started with and take longer than the replica count at the start suggests.
 
 `maxUnavailable: 0` adds a pod before retiring one, so capacity never dips. The
 `preStop` sleep matters as much: endpoint removal and `SIGTERM` race each other, and
@@ -190,7 +219,7 @@ command. Without it the HPA reports `<unknown>` and simply never acts.
 ## OpenShift
 
 The base does not apply on OpenShift. `deploy/openshift/` is an overlay on top of it
-that fixes the two things that stop it, and nothing else.
+that fixes the three things that stop it, and nothing else.
 
 ### Why the base fails there
 
@@ -211,6 +240,13 @@ what cannot run, not the policy. So the overlay stops running that image here.
 **Routing.** OpenShift admits external traffic with `Route`. The base's `Ingress`
 names an nginx ingressClass that does not exist on OpenShift.
 
+**The Namespace object.** On the Red Hat Developer Sandbox a user works inside a project
+that already exists and cannot read or create namespaces, so applying the base's
+`Namespace` fails with `Forbidden ... cannot get resource "namespaces"`. Every other
+object is refused too while the overlay still says `namespace: corebank`, because the
+project has another name. Both were observed on a live Sandbox; see
+`docs/evidence/openshift-runtime-verification.md`.
+
 ### What the overlay changes
 
 | Object | Change | Why |
@@ -220,7 +256,8 @@ names an nginx ingressClass that does not exist on OpenShift.
 | ConfigMap `corebank-config` | `SPRING_DATASOURCE_URL` → `postgresql:5432`, `COREBANK_ENVIRONMENT` → `openshift` | point at a database provisioned outside the overlay |
 | Ingress `corebank-api` | deleted | wrong object for this platform |
 | Route `corebank-api` | added | edge TLS, HTTP redirected, router timeout 60s |
-| Deployment, Service, HPA, PDB, Namespace | unchanged | already valid under `restricted-v2` |
+| Namespace `corebank` | deleted | a project-scoped user cannot create or read namespaces |
+| Deployment, Service, HPA, PDB | unchanged | already valid under `restricted-v2` |
 
 The router timeout is the one number worth explaining. OpenShift's default is 30s,
 where the base Ingress allows 60s. A money command can wait on a row lock; if the
@@ -237,21 +274,65 @@ instance.
 
 ### Deploying it
 
+The project has to exist first. Where you can create one, `oc new-project corebank` gives
+the overlay's default name. Where you cannot (the Developer Sandbox gives you a project
+named after your account), use the one you have and substitute its name at render time
+instead of editing the overlay.
+
 ```bash
-oc new-project corebank
+PROJECT=$(oc project -q)        # or: oc new-project corebank && PROJECT=corebank
+SUBST="s/^\(\s*\)namespace: corebank$/\1namespace: $PROJECT/"
 
 # The password below and the one in the Secret must match. Nothing checks this for
 # you; a mismatch shows up as pods that never pass readiness.
-oc apply -f deploy/kubernetes/secret.yaml
+sed "$SUBST" deploy/kubernetes/secret.yaml | oc apply -f -
+
+# The template's default is PostgreSQL 10, which is end of life. 15-el9 is the newest
+# tag the Sandbox catalog carries; the application is tested against 16.
 oc new-app postgresql-persistent \
+  -p POSTGRESQL_VERSION=15-el9 \
   -p POSTGRESQL_DATABASE=corebank \
   -p POSTGRESQL_USER=corebank \
   -p POSTGRESQL_PASSWORD=<same value as SPRING_DATASOURCE_PASSWORD>
 
-oc apply -k deploy/openshift
-oc -n corebank rollout status deployment/corebank-api
+# The template starts PostgreSQL with max_connections=100 and has no parameter for it.
+# The application needs 170 (see "The database connection ceiling" below), so set it
+# before the application is deployed. This restarts the database once.
+oc set env dc/postgresql POSTGRESQL_MAX_CONNECTIONS=200
+oc rollout status dc/postgresql
+
+kubectl kustomize deploy/openshift | sed "$SUBST" | oc apply -f -
+oc rollout status deployment/corebank-api
 oc get route corebank-api
 ```
+
+`oc apply -k deploy/openshift` works only where the project really is called `corebank`.
+Elsewhere it is refused, because the overlay's `namespace: corebank` names a project the
+user has no rights in.
+
+`oc new-app postgresql-persistent` still creates a `DeploymentConfig`, which OpenShift
+has deprecated since 4.14. It works, and it is the Red Hat image that runs under an
+arbitrary UID, so the overlay leaves it alone; it is a reason to move the database to a
+managed instance rather than something to rewrite here.
+
+#### The database connection ceiling
+
+Each application pod's Hikari pool holds its connections while idle, so pods cost
+connections whether or not they serve traffic. With the HPA at its maximum of 6, one
+extra pod during a rollout and one still terminating, that is 8 pods x 20 + 10 reserve =
+170 connections; `check-connection-budget.sh` prints the figure for this overlay. The
+catalog database's default of 100 does not cover it: on a Developer Sandbox the sixth
+pod the HPA created could not start, because Flyway got
+
+```
+FATAL: remaining connection slots are reserved for non-replication superuser connections
+```
+
+and the pod sat in `CrashLoopBackOff` while the other five served traffic. Setting
+`POSTGRESQL_MAX_CONNECTIONS=200`, as in the steps above, is what fixed it. Any managed
+database used instead needs `max_connections` of at least the figure the script prints.
+The template's 512Mi memory limit was enough at the 121 client connections observed with
+that setting (304Mi used); the full 170 was not exercised.
 
 If your database is not the Service named `postgresql`, edit `SPRING_DATASOURCE_URL`
 in the overlay's ConfigMap patch first. Getting it wrong fails safe: readiness gates
@@ -266,19 +347,24 @@ schema catalogue `kubeconform` ships with, so its schema is vendored under
 to the platform would be a check that cannot fail. That schema was tested against a
 deliberately misspelled enum and rejected it.
 
-That is the whole of the evidence. **The overlay has never been applied to a live
-OpenShift cluster.** Rendering and schema validation catch a malformed manifest; they
-say nothing about whether the SCC admits the pods, whether the router behaves as
-described, or whether the catalog database works as assumed.
+CI is not the whole of the evidence any more. The overlay was applied to a Red Hat
+Developer Sandbox (OpenShift 4.21, a project-scoped account) and exercised through its
+Route: SCC admission with an arbitrary UID, the HTTPS Route and its redirect, pod
+replacement, rolling update, rollback and the HPA. Running it found the two defects fixed
+above (the Namespace object, and the catalog database's connection ceiling). The results
+are in `docs/evidence/openshift-runtime-verification.md`.
+
+That is **one free, shared cluster and one project-scoped user**, with synthetic traffic.
+It says nothing about a cluster where an administrator installs operators or applies other
+policy, and its figures are not production measurements.
 
 ### Not done yet
 
 These are gaps, not decisions. The section below this one lists the things that are
 absent on purpose.
 
-1. **Never run on a real cluster.** As above — rendered and validated only. Every
-   claim here about SCC admission and router behaviour is reasoning from the docs,
-   not an observation.
+1. **Run on one cluster only.** A Developer Sandbox, as above. Not tried: a cluster with
+   other SCCs or network policy, node loss, an OpenShift upgrade, a Sandbox hibernation.
 2. **No database manifest on this path.** The overlay deletes PostgreSQL and expects
    one to exist; nothing in the repository provisions it. The password has to be kept
    in sync by hand between `oc new-app` and `secret.yaml`, and `secret.example.yaml`
@@ -286,18 +372,16 @@ absent on purpose.
 3. **The Route has no host and no certificate of its own.** OpenShift generates the
    hostname and the router serves its default wildcard certificate. Workable for a
    lab, not for a named domain.
-4. **Resource footprint never checked against a Developer Sandbox quota.** Three
-   replicas request 750m CPU and 1.5Gi and cap at 3 CPU and 3Gi, and the PDB wants 2
-   of 3 available. Whether that fits the Sandbox's limits is untested; the overlay
-   patches neither the replica count nor the HPA's `minReplicas: 3`.
-5. **No telemetry leaves the cluster yet.** `COREBANK_OTLP_ENABLED` is still
-   `"false"`. `deploy/observability/kubernetes/` now carries manifests for an
-   OpenTelemetry Collector that forwards to Dynatrace over OTLP, but they have never
-   been applied to a cluster and the switch is left off until they have — turning
-   export on with nothing answering produces a stream of export failures and no
-   telemetry. Prometheus, Tempo and Grafana stay docker-compose-only, deliberately.
-   Until that cutover this is still the largest gap between what the application can
-   emit and what the deployment actually collects.
+4. **The Sandbox quota was checked and the footprint fits**, with no patch: the peak
+   `requests.cpu` was 1560m of 3 CPU with six replicas, and nothing had to be changed. A
+   seventh pod during a rollout at the HPA maximum was not exercised (arithmetically about
+   1.8 of 3 CPU). The collector and the database share the same project quota.
+5. **Telemetry is off by default.** `COREBANK_OTLP_ENABLED` is still `"false"` in the
+   tracked ConfigMap. With the collector from `deploy/observability/kubernetes/` it was
+   switched on at render time on the Sandbox and telemetry reached a Dynatrace trial tenant
+   (`docs/evidence/openshift-runtime-verification.md`, "Dynatrace on OpenShift"): the traces
+   carried `deployment.environment=openshift`, the release SHA and JDBC spans. Prometheus,
+   Tempo and Grafana stay docker-compose-only, deliberately.
 6. **Nothing scrapes the metrics endpoint.** The pods carry `prometheus.io/*`
    annotations, but the overlay creates no `ServiceMonitor` and no credentials
    Secret, and the endpoint requires authentication.
@@ -305,10 +389,12 @@ absent on purpose.
    unset everywhere under `deploy/`, and `CustomerSecretCryptoService` answers
    `SERVICE_UNAVAILABLE` without it. This applies to every deployment path, not just
    this one.
-8. **No service mesh, and no progressive delivery.** Traffic goes Route → Service →
-   pods. There is no mTLS between workloads, no canary or blue/green split, and no
-   per-request routing. The rollout safety here comes from `maxUnavailable: 0` and
-   the probes, which is a different and weaker guarantee.
+8. **No service mesh, and no progressive delivery, in this base.** Traffic goes Route →
+   Service → pods, with no mTLS between workloads and no canary split. The rollout safety
+   here comes from `maxUnavailable: 0` and the probes, which is a different and weaker
+   guarantee. An upstream Istio canary and mTLS overlay exists in `deploy/service-mesh/` and
+   was verified on Kind only; Red Hat OpenShift Service Mesh could not be installed with the
+   Sandbox's access.
 
 ## Deliberately not here
 
