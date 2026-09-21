@@ -219,7 +219,7 @@ command. Without it the HPA reports `<unknown>` and simply never acts.
 ## OpenShift
 
 The base does not apply on OpenShift. `deploy/openshift/` is an overlay on top of it
-that fixes the two things that stop it, and nothing else.
+that fixes the three things that stop it, and nothing else.
 
 ### Why the base fails there
 
@@ -240,6 +240,13 @@ what cannot run, not the policy. So the overlay stops running that image here.
 **Routing.** OpenShift admits external traffic with `Route`. The base's `Ingress`
 names an nginx ingressClass that does not exist on OpenShift.
 
+**The Namespace object.** On the Red Hat Developer Sandbox a user works inside a project
+that already exists and cannot read or create namespaces, so applying the base's
+`Namespace` fails with `Forbidden ... cannot get resource "namespaces"`. Every other
+object is refused too while the overlay still says `namespace: corebank`, because the
+project has another name. Both were observed on a live Sandbox; see
+`docs/evidence/openshift-runtime-verification.md`.
+
 ### What the overlay changes
 
 | Object | Change | Why |
@@ -249,7 +256,8 @@ names an nginx ingressClass that does not exist on OpenShift.
 | ConfigMap `corebank-config` | `SPRING_DATASOURCE_URL` → `postgresql:5432`, `COREBANK_ENVIRONMENT` → `openshift` | point at a database provisioned outside the overlay |
 | Ingress `corebank-api` | deleted | wrong object for this platform |
 | Route `corebank-api` | added | edge TLS, HTTP redirected, router timeout 60s |
-| Deployment, Service, HPA, PDB, Namespace | unchanged | already valid under `restricted-v2` |
+| Namespace `corebank` | deleted | a project-scoped user cannot create or read namespaces |
+| Deployment, Service, HPA, PDB | unchanged | already valid under `restricted-v2` |
 
 The router timeout is the one number worth explaining. OpenShift's default is 30s,
 where the base Ingress allows 60s. A money command can wait on a row lock; if the
@@ -266,21 +274,40 @@ instance.
 
 ### Deploying it
 
+The project has to exist first. Where you can create one, `oc new-project corebank` gives
+the overlay's default name. Where you cannot (the Developer Sandbox gives you a project
+named after your account), use the one you have and substitute its name at render time
+instead of editing the overlay.
+
 ```bash
-oc new-project corebank
+PROJECT=$(oc project -q)        # or: oc new-project corebank && PROJECT=corebank
+SUBST="s/^\(\s*\)namespace: corebank$/\1namespace: $PROJECT/"
 
 # The password below and the one in the Secret must match. Nothing checks this for
 # you; a mismatch shows up as pods that never pass readiness.
-oc apply -f deploy/kubernetes/secret.yaml
+sed "$SUBST" deploy/kubernetes/secret.yaml | oc apply -f -
+
+# The template's default is PostgreSQL 10, which is end of life. 15-el9 is the newest
+# tag the Sandbox catalog carries; the application is tested against 16.
 oc new-app postgresql-persistent \
+  -p POSTGRESQL_VERSION=15-el9 \
   -p POSTGRESQL_DATABASE=corebank \
   -p POSTGRESQL_USER=corebank \
   -p POSTGRESQL_PASSWORD=<same value as SPRING_DATASOURCE_PASSWORD>
 
-oc apply -k deploy/openshift
-oc -n corebank rollout status deployment/corebank-api
+kubectl kustomize deploy/openshift | sed "$SUBST" | oc apply -f -
+oc rollout status deployment/corebank-api
 oc get route corebank-api
 ```
+
+`oc apply -k deploy/openshift` works only where the project really is called `corebank`.
+Elsewhere it is refused, because the overlay's `namespace: corebank` names a project the
+user has no rights in.
+
+`oc new-app postgresql-persistent` still creates a `DeploymentConfig`, which OpenShift
+has deprecated since 4.14. It works, and it is the Red Hat image that runs under an
+arbitrary UID, so the overlay leaves it alone; it is a reason to move the database to a
+managed instance rather than something to rewrite here.
 
 If your database is not the Service named `postgresql`, edit `SPRING_DATASOURCE_URL`
 in the overlay's ConfigMap patch first. Getting it wrong fails safe: readiness gates
