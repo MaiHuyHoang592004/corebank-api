@@ -295,6 +295,12 @@ oc new-app postgresql-persistent \
   -p POSTGRESQL_USER=corebank \
   -p POSTGRESQL_PASSWORD=<same value as SPRING_DATASOURCE_PASSWORD>
 
+# The template starts PostgreSQL with max_connections=100 and has no parameter for it.
+# The application needs 170 (see "The database connection ceiling" below), so set it
+# before the application is deployed. This restarts the database once.
+oc set env dc/postgresql POSTGRESQL_MAX_CONNECTIONS=200
+oc rollout status dc/postgresql
+
 kubectl kustomize deploy/openshift | sed "$SUBST" | oc apply -f -
 oc rollout status deployment/corebank-api
 oc get route corebank-api
@@ -308,6 +314,25 @@ user has no rights in.
 has deprecated since 4.14. It works, and it is the Red Hat image that runs under an
 arbitrary UID, so the overlay leaves it alone; it is a reason to move the database to a
 managed instance rather than something to rewrite here.
+
+#### The database connection ceiling
+
+Each application pod's Hikari pool holds its connections while idle, so pods cost
+connections whether or not they serve traffic. With the HPA at its maximum of 6, one
+extra pod during a rollout and one still terminating, that is 8 pods x 20 + 10 reserve =
+170 connections; `check-connection-budget.sh` prints the figure for this overlay. The
+catalog database's default of 100 does not cover it: on a Developer Sandbox the sixth
+pod the HPA created could not start, because Flyway got
+
+```
+FATAL: remaining connection slots are reserved for non-replication superuser connections
+```
+
+and the pod sat in `CrashLoopBackOff` while the other five served traffic. Setting
+`POSTGRESQL_MAX_CONNECTIONS=200`, as in the steps above, is what fixed it. Any managed
+database used instead needs `max_connections` of at least the figure the script prints.
+The template's 512Mi memory limit was enough at the 121 client connections observed with
+that setting (304Mi used); the full 170 was not exercised.
 
 If your database is not the Service named `postgresql`, edit `SPRING_DATASOURCE_URL`
 in the overlay's ConfigMap patch first. Getting it wrong fails safe: readiness gates
