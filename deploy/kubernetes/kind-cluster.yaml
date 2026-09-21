@@ -9,9 +9,10 @@ name: corebank
 nodes:
   - role: control-plane
     kubeadmConfigPatches:
-      # Marks the node that has ports 80 and 443 mapped to the host. ingress-nginx's kind
-      # manifest no longer selects this label on its own (it asks only for linux), so the
-      # README patches the controller's nodeSelector to match it.
+      # Marks the node that has ports 80 and 443 mapped to the host, for an ingress
+      # controller that selects it. The runtime verification installed no ingress controller
+      # (ingress-nginx is retired) and reached the application through a Service
+      # port-forward, so this label and the port mappings below were not exercised.
       - |
         kind: InitConfiguration
         nodeRegistration:

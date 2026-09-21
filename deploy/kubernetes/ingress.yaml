@@ -1,3 +1,10 @@
+# LEGACY AND UNVERIFIED. This Ingress targets ingress-nginx (ingressClassName: nginx), which
+# Kubernetes retired in March 2026: the repository is archived and receives no releases or
+# security fixes. The runtime verification installed no ingress controller, so nothing has
+# served traffic through this object; the API server accepted it and that is all that was
+# observed. It is kept as it was. On Kind the verified access path is a Service port-forward
+# (see README.md), and on OpenShift external routing is the Route in deploy/openshift.
+# Replacing it (another controller, or the Gateway API) is a separate infrastructure change.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

@@ -29,17 +29,10 @@ deploy/openshift/            overlay for OpenShift — see "OpenShift" below
 ```bash
 kind create cluster --name corebank --config kind-cluster.yaml
 
-# Ingress controller. Skip if you only want port-forward.
-# Pinned to the last upstream release: kubernetes/ingress-nginx was archived in
-# March 2026 and `main` no longer moves, so a tag is the reproducible spelling.
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
-# That manifest no longer selects the ingress-ready label, so the scheduler may put the
-# controller on a worker. Only the control-plane container has ports 80 and 443 mapped to
-# the host, so a controller anywhere else accepts nothing from localhost.
-kubectl -n ingress-nginx patch deployment ingress-nginx-controller --type merge \
-  -p '{"spec":{"template":{"spec":{"nodeSelector":{"ingress-ready":"true"}}}}}'
-kubectl -n ingress-nginx wait --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller --timeout=180s
+# No ingress controller is installed. The Ingress in this directory targets
+# ingress-nginx, which Kubernetes retired in March 2026 (repository archived, no further
+# releases or security fixes), so this guide does not install it. Reach the application
+# with a port-forward instead, see "Reaching the application" below.
 
 # Secrets first: the database and the application both read from them.
 cp secret.example.yaml secret.yaml
@@ -91,12 +84,32 @@ kubectl -n corebank patch serviceaccount default \
   -p '{"imagePullSecrets":[{"name":"ghcr"}]}'
 ```
 
-Then add `127.0.0.1 corebank.local` to `/etc/hosts` and open
-`http://corebank.local/dashboard/`, or skip the Ingress entirely:
+### Reaching the application
 
 ```bash
 kubectl -n corebank port-forward svc/corebank-api 8080:80
+# then open http://localhost:8080/
 ```
+
+The Service publishes port 80, which forwards to the application container's port 9090.
+The management port, 9091, is deliberately not on the Service: probes reach it through
+the pod IP, and to look at it yourself forward a pod rather than the Service
+(`kubectl -n corebank port-forward pod/<name> 9091:9091`).
+
+Two limits of a port-forward matter when you test, and both were observed rather than
+assumed. `kubectl` resolves `svc/…` to **one pod** when it starts and stays on it: 61
+requests sent through it were all served by a single pod. So it cannot show load
+balancing, readiness gating or EndpointSlice membership, and if that pod is deleted or
+scaled in, the tunnel drops. Use it to try the application; to measure availability
+across pods, send requests from inside the cluster to
+`http://corebank-api.corebank.svc.cluster.local` (see the rollout exercise below).
+
+**The Ingress is legacy and unverified.** `ingress.yaml` is kept as it was, with
+`ingressClassName: nginx`. It was applied to the API server, which accepted it, but no
+controller has served traffic through it in the runtime verification, so nothing here
+claims it works. On OpenShift, external routing is the Route in `deploy/openshift/`. Moving
+to another ingress controller or to the Gateway API is a separate infrastructure decision
+and is not part of this directory.
 
 ## What each probe is for
 
@@ -156,12 +169,21 @@ a difference to close.
 ### Zero-downtime rollout
 
 ```bash
-# Keep a request in flight during the rollout and watch for a non-200.
-while true; do curl -s -o /dev/null -w '%{http_code}\n' http://corebank.local/actuator/health/readiness; sleep 0.2; done &
+# Keep requests in flight during the rollout and watch for a non-200. Run them from
+# inside the cluster, against the Service, so they cross every pod: a port-forward stays
+# on one pod and would drop when that pod is replaced. Probe an application path, not
+# /actuator: the management port is private and is not on the Service.
+kubectl run rollout-probe --rm -i --restart=Never --image=curlimages/curl -- \
+  sh -c 'while true; do curl -s -o /dev/null -w "%{http_code}\n" http://corebank-api.corebank.svc.cluster.local/; sleep 0.2; done'
 
+# In another terminal:
 kubectl -n corebank set image deployment/corebank-api app=ghcr.io/maihuyhoang592004/corebank-api:<new-sha>
 kubectl -n corebank rollout status deployment/corebank-api
 ```
+
+If metrics-server is installed the HPA is live, and it was observed scaling the Deployment
+from 3 to 6 while a rollout was in progress, so a rollout can end with more replicas than
+it started with and take longer than the replica count at the start suggests.
 
 `maxUnavailable: 0` adds a pod before retiring one, so capacity never dips. The
 `preStop` sleep matters as much: endpoint removal and `SIGTERM` race each other, and
