@@ -26,7 +26,8 @@ run successfully. This guide keeps that boundary explicit.
 | Cluster OTel Collector | `deploy/observability/kubernetes/` | **Runtime-verified** on Kind and on the Sandbox |
 | Dynatrace OTLP ingest | Collector exporter + application OTLP configuration | **Verified on Kind on a trial tenant**, including an induced incident ([APM](evidence/dynatrace-apm-verification.md), [RCA](evidence/dynatrace-incident-rca.md)); **and on OpenShift** (attributes, JDBC spans and counts read back; [OpenShift evidence](evidence/openshift-runtime-verification.md)) |
 | Dynatrace Kubernetes Operator / DynaKube | Not deployed by this repository | **Not run**: the Sandbox has no `dynatrace.com` CRD and refuses the cluster-scoped creates |
-| Service Mesh | `deploy/service-mesh/` (upstream Istio) | **Istio 1.31 verified on Kind**; OpenShift Service Mesh **not run** ([evidence](evidence/service-mesh-verification.md)) |
+| Dynatrace incident RCA | `docs/evidence/dynatrace-incident-rca.md` | **Measured**: an induced 45 s row-lock told apart from pool wait and slow SQL |
+| Service Mesh | `deploy/service-mesh/` (upstream Istio) | **Upstream Istio 1.31 runtime-verified on Kind**; OpenShift Service Mesh **not run**, it needs cluster-scoped permissions the Sandbox does not grant ([evidence](evidence/service-mesh-verification.md)) |
 
 The runtime failure experiments in
 [19-runtime-failure-modes.md](19-runtime-failure-modes.md) are separate from the

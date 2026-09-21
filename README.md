@@ -113,6 +113,7 @@ behaviour**.
 | Capability | Evidence | Status |
 |---|---|---|
 | Financial failure experiments | SIGKILL, retry storm, concurrent duplicates, connection starvation | **Measured** |
+| Dynatrace incident RCA | induced 45 s row-lock, diagnosed from traces and the database ([evidence](docs/evidence/dynatrace-incident-rca.md)) | **Measured** |
 | Container build | CI build, Trivy gate, immutable image workflow | **CI-validated** |
 | Kubernetes manifests | Deployment, Service, HPA, PDB, probes, security context | **Runtime-verified on Kind**: cold start, pod replacement, database loss, rolling update, failed rollout and rollback, HPA ([evidence](docs/evidence/kubernetes-runtime-verification.md)) |
 | Kubernetes Ingress | `ingress.yaml` (nginx class) | **Not verified**: ingress-nginx is retired and was not installed; Kind is verified through a Service port-forward |
@@ -120,7 +121,7 @@ behaviour**.
 | Application telemetry | HTTP observations, JDBC spans, banking metrics, structured logs | **Verified in Dynatrace** (traces, JDBC spans, metrics); OTLP logs were not observed |
 | Cluster OTel Collector | Kubernetes manifests and Dynatrace exporter | **Runtime-verified** on Kind and on the Sandbox |
 | Dynatrace | OTLP traces/metrics integration path, incident diagnosis | **Verified on Kind on a trial tenant**, including a diagnosed lock-contention incident ([APM](docs/evidence/dynatrace-apm-verification.md), [RCA](docs/evidence/dynatrace-incident-rca.md)). On OpenShift the same read-back was done: `deployment.environment=openshift`, the release SHA, JDBC spans, and span and metric counts equal to the journals committed there |
-| Service Mesh | Istio canary, mTLS, rollback ([`deploy/service-mesh/`](deploy/service-mesh/README.md)) | **Istio 1.31 verified on Kind.** OpenShift Service Mesh was **not run**: the operator cannot be installed with Sandbox access ([evidence](docs/evidence/service-mesh-verification.md)) |
+| Service Mesh | Istio canary, mTLS, rollback ([`deploy/service-mesh/`](deploy/service-mesh/README.md)) | **Upstream Istio 1.31 runtime-verified on Kind.** OpenShift Service Mesh was **not run**: the operator needs cluster-scoped permissions the Sandbox does not grant ([evidence](docs/evidence/service-mesh-verification.md)) |
 | Dynatrace Operator (DynaKube) | Not in this repository | **Not run**: no CRD and no permission on the Sandbox |
 
 All of the above are lab observations on one host or a free shared cluster, with synthetic traffic. They are not
