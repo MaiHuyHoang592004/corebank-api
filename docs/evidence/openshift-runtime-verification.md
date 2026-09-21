@@ -170,6 +170,16 @@ the money flow was driven with an HTTP client, above.
 | Ready endpoints at the lowest sample | 2 of 3 (the PDB `minAvailable: 2` was respected) |
 | Restarts | 0 |
 
+Identities and timeline (captures about every 5 s, so each time is the first capture that showed the event):
+
+| | Pod | UID (first 8) | Seen |
+|---|---|---|---|
+| Deleted | `corebank-api-856fd5c9d-9c2jc` | `90f32a2e` | `oc delete pod` issued 09:37:23.5; `Terminating` in the first capture after (+5.2 s); gone by +8.3 s |
+| Replacement | `corebank-api-856fd5c9d-89x94` | `8cbfb99a` | created in the same capture (+5.2 s); first `Ready` at +29.7 s |
+| Untouched | `…-m2crd`, `…-hd76k` | `3dca9e3b`, `c77adfa4` | `Ready` throughout |
+
+All three pods ran the same image ID (`sha256:30fea6fafd50…`) before and after.
+
 The slowest requests (≈3.2 s, 2.9 s) started at about +29 – 31 s, when the replacement joined and its JVM took its
 first requests. The recorder sampled about every 5 s on this platform, so "lowest sample" is a coarse bound.
 
@@ -183,6 +193,7 @@ A change of image tag on the Deployment (repository pin → `sha-2746b2b…`) wh
 | Available replicas at the lowest sample | **3** (`maxUnavailable: 0`, `maxSurge: 1`, `minReadySeconds: 15`) |
 | Requests | 1500, **all 200**, 0 transport errors, 1500 distinct journals |
 | Pods listed at most | 5 (3 old/new plus one surge plus a terminating one) |
+| ReplicaSets | before: `corebank-api-65cdc7754b`, tag `sha-a500aac…`, 4 desired / 4 ready (the HPA had scaled to 4 before the update began), image ID `sha256:fd7537176097…`; after: `corebank-api-856fd5c9d`, tag `sha-2746b2b…`, 3 / 3, image ID `sha256:30fea6fafd50…`, and the old ReplicaSet at 0 |
 
 ## Rollback
 
