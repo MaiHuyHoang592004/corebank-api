@@ -155,6 +155,21 @@ agreed on where every request went; weights 50/50 gave 49.8 %; weights 90/10 gav
 (a shortfall not explained); a plaintext client without a sidecar was reset while the same request from a meshed pod
 was answered; a rollback to 100 % v1 under load sent 1,064 of 1,064 subsequent requests to v1 with no error.
 
+### Findings that changed the repository
+
+Each was found by running the system, not by reading it, and each is a separate commit with its runtime cause:
+
+| Commit | Finding |
+|---|---|
+| `7ef9970` | Every pod's connection pool stays open at idle, so six replicas hold exactly PostgreSQL's default 100 connections; the database refused new connections and money requests failed after 30 s. `max_connections=200`, plus a CI guard that fails when the pool, the HPA maximum and the database limit disagree |
+| `29ed215` | The Kind instructions installed ingress-nginx, which Kubernetes retired in March 2026; the path was replaced by a Service port-forward and an in-cluster client, and the Ingress is no longer counted as verified |
+| `550fb66` | The OpenShift overlay was refused as written on a project-scoped account: `Forbidden … cannot get resource "namespaces"`. The Namespace object is deleted from the overlay and the project name is substituted at render time; the documented catalog step also defaulted to end-of-life PostgreSQL 10 |
+| `457d1c6` | The catalog database on OpenShift has the same 100-connection ceiling and the overlay had removed the Kind fix; the sixth HPA replica crash-looped (`FATAL: remaining connection slots are reserved for non-replication superuser connections`). `POSTGRESQL_MAX_CONNECTIONS=200` fixed it |
+
+Not fixed, and left for a decision: readiness fails by timeout and requests wait 30 s in the detection window; the
+database's memory headroom; the HPA scaling out under routine traffic; `/actuator/prometheus` answering `401` while
+the Deployment advertises it for scraping.
+
 ## 9. Acceptance criteria
 
 | ID | Criterion | Result | Evidence |
