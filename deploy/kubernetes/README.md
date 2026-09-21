@@ -379,9 +379,9 @@ absent on purpose.
 5. **Telemetry is off by default.** `COREBANK_OTLP_ENABLED` is still `"false"` in the
    tracked ConfigMap. With the collector from `deploy/observability/kubernetes/` it was
    switched on at render time on the Sandbox and telemetry reached a Dynatrace trial tenant
-   (`docs/evidence/dynatrace-apm-verification.md`); the attributes of the OpenShift traces
-   were not read back in the tenant. Prometheus, Tempo and Grafana stay docker-compose-only,
-   deliberately.
+   (`docs/evidence/openshift-runtime-verification.md`, "Dynatrace on OpenShift"): the traces
+   carried `deployment.environment=openshift`, the release SHA and JDBC spans. Prometheus,
+   Tempo and Grafana stay docker-compose-only, deliberately.
 6. **Nothing scrapes the metrics endpoint.** The pods carry `prometheus.io/*`
    annotations, but the overlay creates no `ServiceMonitor` and no credentials
    Secret, and the endpoint requires authentication.

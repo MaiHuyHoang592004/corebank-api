@@ -24,7 +24,7 @@ run successfully. This guide keeps that boundary explicit.
 | Local observability | `deploy/observability/` | **Configuration present; application instrumentation is repository-verified** |
 | OpenShift overlay | `deploy/openshift/` | **Runtime-verified on one Red Hat Developer Sandbox** after two fixes ([evidence](evidence/openshift-runtime-verification.md)) |
 | Cluster OTel Collector | `deploy/observability/kubernetes/` | **Runtime-verified** on Kind and on the Sandbox |
-| Dynatrace OTLP ingest | Collector exporter + application OTLP configuration | **Verified on Kind on a trial tenant**, including an induced incident ([APM](evidence/dynatrace-apm-verification.md), [RCA](evidence/dynatrace-incident-rca.md)); **partly on OpenShift** (telemetry arrived; its attributes were not read back) |
+| Dynatrace OTLP ingest | Collector exporter + application OTLP configuration | **Verified on Kind on a trial tenant**, including an induced incident ([APM](evidence/dynatrace-apm-verification.md), [RCA](evidence/dynatrace-incident-rca.md)); **and on OpenShift** (attributes, JDBC spans and counts read back; [OpenShift evidence](evidence/openshift-runtime-verification.md)) |
 | Dynatrace Kubernetes Operator / DynaKube | Not deployed by this repository | **Not run**: the Sandbox has no `dynatrace.com` CRD and refuses the cluster-scoped creates |
 | Service Mesh | `deploy/service-mesh/` (upstream Istio) | **Istio 1.31 verified on Kind**; OpenShift Service Mesh **not run** ([evidence](evidence/service-mesh-verification.md)) |
 
@@ -504,9 +504,11 @@ where the trace changes in the way the injected failure predicts.
 [RCA](evidence/dynatrace-incident-rca.md)). The induced fault was a 45 s row lock, not
 pool exhaustion: the trace showed one 45.02 s `QUERY` span with `acquired` at the start of
 the `CONNECTION` span, which is what separated lock contention from pool wait and slow SQL.
-On OpenShift the collector and the application export were run and 1,000 requests reached
-the tenant, but gates 2, 4 and 5 were **not read back** there. Not observed anywhere: OTLP
-logs, Davis problems, alerting.
+On OpenShift (a Developer Sandbox project) gates 1 to 5 were also observed: 3,899 transfer
+spans with `deployment.environment=openshift` and the commit SHA, JDBC `connection` and
+`query` spans, and `corebank.ledger.journals.posted` = 3,899, the number of journals the
+database committed in that window; gates 6 and 7 were not repeated there. Not observed
+anywhere: OTLP logs, Davis problems, alerting.
 
 ---
 

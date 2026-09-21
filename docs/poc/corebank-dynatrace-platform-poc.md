@@ -115,7 +115,7 @@ in-mesh client ─mTLS─► Service ─ VirtualService 90/10 ─► v1 pods (2)
 | 3. Dynatrace onboarding | trial tenant, minimum-scope token, collector on Kind, application OTLP switched on | traces, JDBC spans and 10 `corebank.*` metric series read back |
 | 4. Incident and RCA | a bounded, reversible row-lock on the two hot accounts (45 s) | diagnosed from Dynatrace traces plus cluster-side evidence |
 | 5. OpenShift | `oc login --web`, overlay, catalog PostgreSQL, Route, replacement, rollout, rollback, HPA | two defects found and fixed; then all passed |
-| 6. Telemetry on OpenShift | collector into the project, application switched on | data arrived; attribute read-back **not completed** |
+| 6. Telemetry on OpenShift | collector into the project, application switched on | 3,899 transfers exported; attributes, JDBC spans and counts read back in Dynatrace |
 | 7. Service mesh | OpenShift Service Mesh permissions checked; upstream Istio 1.31.0 on Kind | OSSM not installable; Istio canary, mTLS, rollback verified |
 | 8. DynaKube | permissions checked | not possible; recorded and stopped |
 
@@ -144,11 +144,11 @@ lab observations, **not SLOs and not production measurements**.
 - 10 `corebank.*` metric series and the Hikari series; `corebank.ledger.journals.posted` summed to exactly the
   2,700 journals committed.
 - **Not observed:** OTLP logs (0 records), Davis problems, alerting, Smartscape.
-- **On OpenShift:** the collector deployed under `restricted-v2` with no Route for the OTLP receiver, the application
-  exported to it, and a 1,200-transfer run produced 1,000 requests in Dynatrace's trace explorer (server span
-  100 – 140 ms, the last at the moment the run ended). The resource attributes (`deployment.environment=openshift`,
-  `service.version`) and the JDBC spans of *those* traces were **not read back**: the browser tab used for that was
-  hidden by the operating system. This part is **partly met**.
+- **On OpenShift:** the collector deployed under `restricted-v2` with no Route for the OTLP receiver and the application
+  exported to it. Read back with the same token: `deployment.environment=openshift` with `service.version` equal to the
+  commit SHA, **3,899** `http post /api/transfers/internal` server spans, JDBC `connection` (42,025) and `query` (68,657)
+  spans, and `corebank.ledger.journals.posted` = 3,899. The database committed exactly 3,899 journals in that window, so
+  the three counts agree. Only counts and attributes were read; the JDBC span events were not re-inspected there.
 
 **Service mesh** (`service-mesh-verification.md`): upstream Istio 1.31.0 on Kind. Three independent counters
 agreed on where every request went; weights 50/50 gave 49.8 %; weights 90/10 gave 8.7 % to v2 over 4,936 requests
@@ -183,7 +183,7 @@ the Deployment advertises it for scraping.
 | AC7 | The overlay is admitted on OpenShift under `restricted-v2`, with an arbitrary UID, no `anyuid`, no SCC change | **Met, with a finding** (two defects, both fixed) | OpenShift |
 | AC8 | HTTPS Route, HTTP redirected, actuator not published | **Met** | OpenShift |
 | AC9 | Replacement, rollout and rollback keep the Route serving | **Met** | OpenShift |
-| AC10 | Traces and metrics reach Dynatrace with the release identity and JDBC spans | **Met on Kind; partly met on OpenShift** (arrival seen, attributes not read back) | Dynatrace |
+| AC10 | Traces and metrics reach Dynatrace with the release identity and JDBC spans | **Met** on Kind and on OpenShift (span and metric counts equal the database's journals; JDBC span events inspected on Kind only) | Dynatrace, OpenShift |
 | AC11 | An induced database incident can be diagnosed from Dynatrace | **Met** | RCA |
 | AC12 | Financial invariants hold after every experiment | **Met** (0 negative balances, 0 unbalanced journals, 0 duplicate correlation ids, journals = succeeded claims, each environment) | all |
 | AC13 | Canary, mutual TLS and rollback with a service mesh | **Met with upstream Istio on Kind; OpenShift Service Mesh: Not met** (operator cannot be installed) | Service mesh |
@@ -202,7 +202,7 @@ the Deployment advertises it for scraping.
 | T6 | Failed rollout and rollback | non-existent tag, then `rollout undo` | Kind, OpenShift |
 | T7 | HPA scale-out and scale-in | routine and bursty load | Kind, OpenShift |
 | T8 | Route behaviour | HTTPS, HTTP redirect, actuator path, certificate | OpenShift |
-| T9 | Telemetry arrival and content | 600 – 2,000 transfers, read back in Dynatrace | Kind, OpenShift (partly) |
+| T9 | Telemetry arrival and content | 600 – 3,899 transfers, read back in Dynatrace | Kind, OpenShift |
 | T10 | Incident diagnosis | 45 s row-lock on the two hot accounts, bounded and reversible | Kind |
 | T11 | Weighted routing | 90/10 and 50/50 across two versions, three counters | Istio on Kind |
 | T12 | mTLS | server-side metric label, plaintext client without a sidecar, `istioctl x describe` | Istio on Kind |
@@ -269,7 +269,8 @@ Dynatrace token** and delete the notebook created in the tenant. Nothing outside
 - The pinned image `sha-a500aac…` cannot produce JDBC spans; Dynatrace and mesh v2 runs used `sha-2746b2b…`.
 - OpenShift's database is a deprecated `DeploymentConfig` running PostgreSQL 15.8 (the application is tested on 16),
   single replica, no backups.
-- Dynatrace read-back on OpenShift is incomplete (see AC10). OTLP logs, alerting and Davis were not covered.
+- Dynatrace on OpenShift was read as counts and attributes through DQL; the trace waterfall and the JDBC span events were
+  inspected on Kind and for one trace on OpenShift only. OTLP logs, alerting and Davis were not covered.
 - Open decisions in the repository, deliberately not changed: Hikari `connection-timeout` (30 s makes readiness fail by
   timeout and money requests wait 30 s), PostgreSQL memory limit (477 Mi of 512 Mi observed on Kind), HPA sizing
   (routine traffic scales it out).
@@ -289,8 +290,8 @@ A next stage should, in this order:
    quoted, and push the branch so CI runs on the fixes.
 2. **Move the database off the catalog `DeploymentConfig`** onto a managed instance, sized from the connection budget
    the script prints, with backups and a tested restore.
-3. **Complete the Dynatrace read-back on OpenShift**, then add what was not covered: logs correlation, a Davis
-   problem and an alert on a wrong-token or dropped-data condition, and a NetworkPolicy for the collector.
+3. **Add what the Dynatrace runs did not cover**: logs correlation, a Davis problem and an alert on a wrong-token or
+   dropped-data condition, and a NetworkPolicy for the collector.
 4. **Repeat on an environment with cluster-admin**, where OpenShift Service Mesh and the Dynatrace Operator can actually
    be installed. Only that run can support statements about either product.
 5. **Decide what the mesh is for** before adopting one: the experiment shows it works with this application, not that

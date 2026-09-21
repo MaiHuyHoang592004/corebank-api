@@ -48,7 +48,7 @@ a service level.
 | Database connection budget | **Rehearsed** | `check-connection-budget.sh`; `max_connections=200` on Kind and on the Sandbox catalog database |
 | Diagnosing lock contention from traces and the database | **Rehearsed once** (Kind, Dynatrace) | a 45 s row lock diagnosed from a `QUERY` span plus `pg_stat_activity`. `pg_blocking_pids()` and `pg_terminate_backend()` were **not** exercised ([RCA](evidence/dynatrace-incident-rca.md)) |
 | OpenShift Route, HTTPS, actuator not published | **Rehearsed** (Sandbox) | HTTPS `200`, HTTP `302`, `/actuator/*` `404` |
-| Collector and Dynatrace export | **Rehearsed** (Kind; Sandbox partly) | see [APM verification](evidence/dynatrace-apm-verification.md) |
+| Collector and Dynatrace export | **Rehearsed** (Kind, Sandbox) | see [APM verification](evidence/dynatrace-apm-verification.md) |
 | Traffic shifting, mTLS and rollback with a mesh | **Rehearsed** (upstream Istio on Kind only) | [Service mesh verification](evidence/service-mesh-verification.md) |
 | Local start with Docker Compose | **Not re-run** in this exercise | the application was run through Kubernetes |
 | Daily health verification (`/api/reporting/...`, `actuator/info`) | **Not rehearsed** | only the health endpoints and the metrics endpoint were read |

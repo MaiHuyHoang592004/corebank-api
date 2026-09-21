@@ -106,6 +106,13 @@ the journals those runs committed, so the counter is accurate. Its per-minute al
 approximate (the application exports on a 60 s step and Dynatrace stored it at one-minute resolution), so it is
 not fine enough to locate a 45 s stall; the incident is read from traces and from the cluster-side recording.
 
+## The same read, on OpenShift
+
+The collector and the application export were later run on a Red Hat Developer Sandbox project and read back from the
+same tenant with the same token; the details are in `openshift-runtime-verification.md`. In short: the same service
+appears under `deployment.environment=openshift` with the same `service.version`, its JDBC and transfer spans are
+present, and the journals counter equals the journals the database committed.
+
 ## Findings
 
 1. **The image pinned in `kustomization.yaml` cannot produce JDBC spans.** `sha-a500aac…` predates the

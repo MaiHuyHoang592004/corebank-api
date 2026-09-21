@@ -24,7 +24,8 @@ latencies include the network path from a workstation to the cluster and say lit
 | Pod replacement, rolling update, failed rollout and rollback keep the Route serving | **verified** | 450 + 1500 + 800 requests, 0 non-200 |
 | HPA scale-out to 6 replicas on the Sandbox quota | **verified after a fix** | first attempt left the 6th pod in `CrashLoopBackOff` (database connection ceiling) |
 | Persistence across a database pod replacement | **verified** | 2000 journals written before the restart are present after it |
-| Dynatrace on OpenShift, Service Mesh, DynaKube | **not in this document** | see `dynatrace-apm-verification.md` and `service-mesh-verification.md` |
+| Dynatrace on OpenShift: workload identity, transfer and JDBC spans, banking metric | **verified** | [below](#dynatrace-on-openshift): 3,899 spans = 3,899 metric = 3,899 journals |
+| Service Mesh, DynaKube | **not in this document** | see `service-mesh-verification.md`; DynaKube was not run (no CRD, no permission) |
 
 ## Environment
 
@@ -311,6 +312,58 @@ consecutive failures; requests sent in that window waited for the database rathe
 
 Database memory at 121 clients: 304Mi of the template's 512Mi limit. The full 170 was not exercised, so the
 512Mi limit at 170 connections is an extrapolation.
+
+## Dynatrace on OpenShift
+
+The OpenTelemetry collector from `deploy/observability/kubernetes/` was deployed into the same project and the
+application was switched to export to it, then the result was read back in the Dynatrace tenant that the Kind
+verification used (the same ingest token; no new one was created).
+
+**Deployment.**
+
+- Collector: one replica, `restricted-v2`, UID from the project range, `readOnlyRootFilesystem`, no restarts. Its Service
+  is a `ClusterIP`; the project has no Route for it (`oc get route` lists only `corebank-api`).
+- The application ConfigMap was changed **at render time** to `COREBANK_OTLP_ENABLED=true` with
+  `COREBANK_OTLP_TRACES_ENDPOINT` and `COREBANK_OTLP_METRICS_ENDPOINT` pointing at
+  `http://otel-collector.<project>:4318/v1/{traces,metrics}`. The tracked ConfigMap still says `"false"`.
+  `oc rollout restart` was needed because the ConfigMap is not hashed: 127.4 s with 0 restarts.
+- The Dynatrace endpoint and the token were not typed into the repository: the token was read from the git-ignored local
+  file into an in-memory Secret manifest that was applied and never printed.
+- The collector logged only the `NaN` partial success that the Kind run already showed
+  (`corebank.read_model.projection.lag.seconds`, value dropped). No `401` and no export failure.
+
+**Load.** Three runs through the Route with export on: 1,200 transfers, 700 transfers (during the database restart above;
+699 succeeded, one router `503`), and 2,000 transfers (the HPA repeat). All committed journals:
+1,200 + 699 + 2,000 = **3,899**. The database confirms it: `select count(*) from ledger_journals where created_at >=
+'09:52Z'` = **3,899**, first `09:53:05`, last `10:09:51` UTC.
+
+**Read back** (DQL in a Notebook; the UI shows UTC+7, so 16:53 there is 09:53 UTC):
+
+| Question | Result |
+|---|---|
+| Which environments and versions send `corebank-api`? | two rows: `deployment.environment=kubernetes` and `=openshift`, both `service.version=2746b2b7deef531b1a3c4f238d5f310e0e2910c3`, `service.namespace=corebank` |
+| HTTP server spans, environment `openshift`, last 6 h | **3,899** `http post /api/transfers/internal`, first 16:53:03, last 17:09:51 (UTC+7) = 09:53:03 – 10:09:51 UTC |
+| Other server spans, last 3 h | all `openshift`: `http get /**` 9, `http get` 2, `http get /dashboard/` 1 (the last two are consistent with the browser visit described above, at about 11:44 UTC) |
+| JDBC spans, last 3 h (`span.kind=client`) | `openshift`: `query` 68,657, `connection` 42,025; `kubernetes`: `query` 23,689, `connection` 36,615 |
+| Banking metric, last 6 h | `corebank.ledger.journals.posted` summed per `deployment.environment`: **`openshift` 3,899**, `kubernetes` 3,300 |
+
+**What matches.** Three independent counts of the same thing agree exactly: the database's 3,899 journals, Dynatrace's
+3,899 server spans, and the metric's 3,899. So at this rate every transfer produced a server span, and the counter
+matched exactly across three runs, including the one that spanned the database restart (the application pods did not
+restart during the exported runs). The first trace opened in the tenant
+(09:57:32 UTC, from this run; the Kind cluster was idle then) showed the server span at 110 ms with its
+authenticate/authorize spans, `secured request`, two `connection` spans and a `query` span.
+
+**Limits.**
+
+- **What was read.** Span and metric *counts and attributes* through DQL. The trace waterfall was inspected for one
+  request only, and the JDBC `CONNECTION` span's `acquired` / `commit` events were not re-inspected on OpenShift. Hikari
+  metric values were not read.
+- **Windows are relative** (`now()-3h`, `now()-6h`), so the 3-hour span counts include everything in that window, not
+  only the OpenShift runs; the 3,899 figures are bounded by their own first and last times.
+- **Not observed:** OTLP logs, Davis problems, alerting. The Dynatrace UI was driven through a browser tab, which had to
+  be the visible tab of a visible window; several query sections were added to the tenant's existing "Untitled notebook".
+- The `kubernetes` total (3,300) is shown for contrast only; its composition was not re-derived here.
 
 ## Financial invariants
 
