@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# A separate namespace, so the mesh experiment never touches the namespace that the
+# Kubernetes and Dynatrace evidence was recorded in.
+namespace: corebank-mesh
+
+# TWO versions of the SAME application behind ONE Service, each with an Istio sidecar:
+#
+#   ./v1  the base, image pinned by ../kubernetes
+#   ./v2  the base Deployment again, image pinned in ./v2/kustomization.yaml
+#
+# Both talk to the same PostgreSQL and the same schema, which is the honest shape of a
+# canary for this application: there is no second database to fork. That is only safe
+# while the two versions share a schema, which is why the pins name releases whose
+# Flyway history is identical.
+#
+# Each version renames its own Deployment inside its own directory. Doing it here
+# instead does not work: kustomize remembers a resource's original name, so a patch
+# aimed at `corebank-api` in this file would also hit v2's renamed Deployment.
+resources:
+  - v1
+  - v2
+  - destination-rule.yaml
+  - virtual-service.yaml
+  - peer-authentication.yaml

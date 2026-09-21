@@ -1,0 +1,10 @@
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: default
+spec:
+  # Namespace-wide, no selector. Every pod with a sidecar accepts only mutual TLS.
+  # Pods without one (the database, which is annotated out of injection) are not
+  # affected: PeerAuthentication is enforced by the receiving sidecar.
+  mtls:
+    mode: STRICT

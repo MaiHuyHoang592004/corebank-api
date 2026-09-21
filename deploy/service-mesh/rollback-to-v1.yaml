@@ -1,0 +1,24 @@
+# Rollback: 100% of traffic to v1. Not part of kustomization.yaml; apply it on purpose:
+#
+#   kubectl -n corebank-mesh apply -f deploy/service-mesh/rollback-to-v1.yaml
+#
+# It replaces the VirtualService of the same name, so the canary route disappears from
+# the mesh in one step and the v2 pods simply stop receiving requests. They are left
+# running (for inspection); scale `corebank-api-v2` to 0 afterwards if they are not
+# needed. Re-applying virtual-service.yaml starts the canary again.
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: corebank-api
+spec:
+  hosts:
+    - corebank-api
+  http:
+    - route:
+        - destination:
+            host: corebank-api
+            subset: v1
+          weight: 100
+      timeout: 60s
+      retries:
+        attempts: 0

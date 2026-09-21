@@ -1,0 +1,57 @@
+# Every object ../v1 already owns. They carry `namespace: corebank`
+# because that is the namespace the base kustomization has set by the time these
+# patches run; a delete patch without it matches nothing.
+$patch: delete
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: corebank
+---
+$patch: delete
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: corebank-config
+  namespace: corebank
+---
+$patch: delete
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: corebank-postgres
+  namespace: corebank
+---
+$patch: delete
+apiVersion: v1
+kind: Service
+metadata:
+  name: corebank-postgres
+  namespace: corebank
+---
+$patch: delete
+apiVersion: v1
+kind: Service
+metadata:
+  name: corebank-api
+  namespace: corebank
+---
+$patch: delete
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: corebank-api
+  namespace: corebank
+---
+$patch: delete
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: corebank-api
+  namespace: corebank
+---
+$patch: delete
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: corebank-api
+  namespace: corebank

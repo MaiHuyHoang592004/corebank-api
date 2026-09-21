@@ -1,0 +1,29 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: corebank-api
+spec:
+  hosts:
+    - corebank-api
+  http:
+    - route:
+        - destination:
+            host: corebank-api
+            subset: v1
+          weight: 90
+        - destination:
+            host: corebank-api
+            subset: v2
+          weight: 10
+      # The router timeout on OpenShift and the Ingress timeout on Kubernetes are both
+      # 60s, because a money command can wait on a row lock. Say the same here, so the
+      # in-mesh path behaves like the external ones instead of inheriting whatever the
+      # mesh default happens to be.
+      timeout: 60s
+      # No hidden retries. Istio retries connection failures and 503s twice by default.
+      # For a money command the application's idempotency key would make a retry safe,
+      # but a retry that succeeds is a failure that no client, no trace and no request
+      # counter ever sees. Failures should be visible; a client can retry by its own
+      # choice, with the same key.
+      retries:
+        attempts: 0

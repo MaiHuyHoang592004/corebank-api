@@ -1,0 +1,96 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# v1 is the base, unchanged in behaviour: same image pin, same probes, same resources.
+# It also owns everything the two versions share (Namespace, ConfigMap, Services,
+# PostgreSQL, PDB), which is why ../v2 deletes those from its own copy.
+resources:
+  - ../../kubernetes
+
+patches:
+  # -- The namespace opts in to sidecar injection ------------------------------
+  - target:
+      kind: Namespace
+      name: corebank
+    patch: |
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: corebank
+        labels:
+          istio-injection: enabled
+
+  # -- The base Deployment becomes v1 ------------------------------------------
+  # The selector gains `version` so the two Deployments never select each other's
+  # pods. A Deployment's selector is immutable, so this must be applied to a namespace
+  # that has never held the un-versioned Deployment.
+  - target:
+      kind: Deployment
+      name: corebank-api
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: corebank-api-v1
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: add
+        path: /metadata/labels/version
+        value: v1
+      - op: add
+        path: /spec/selector/matchLabels/version
+        value: v1
+      - op: add
+        path: /spec/template/metadata/labels/version
+        value: v1
+
+  # -- The database stays outside the mesh -------------------------------------
+  # The JDBC connection is opaque TCP, and a sidecar in front of the ledger's only
+  # database would add a failure mode to the one component that must not gain one.
+  # The application's sidecar still originates plain TCP to it.
+  - target:
+      kind: StatefulSet
+      name: corebank-postgres
+    patch: |
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: corebank-postgres
+      spec:
+        template:
+          metadata:
+            annotations:
+              sidecar.istio.io/inject: "false"
+
+  # -- Not part of this experiment ---------------------------------------------
+  # The HPA targets the Deployment by name and would fight the fixed replica counts
+  # that make the 90/10 split readable; the Ingress is not the path under test.
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: corebank-api
+    patch: |
+      $patch: delete
+      apiVersion: autoscaling/v2
+      kind: HorizontalPodAutoscaler
+      metadata:
+        name: corebank-api
+  - target:
+      kind: Ingress
+      name: corebank-api
+    patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: corebank-api
+
+  - target:
+      kind: ConfigMap
+      name: corebank-config
+    patch: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: corebank-config
+      data:
+        COREBANK_ENVIRONMENT: kind-istio

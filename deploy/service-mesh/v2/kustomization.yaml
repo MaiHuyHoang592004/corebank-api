@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# v2 is the base Deployment again, and nothing else: every other object in the base is
+# deleted here (delete-shared.yaml) because ../v1 already owns it, and a
+# second copy would collide. Deriving v2 this way keeps one definition of probes,
+# security context and resources instead of two that drift apart.
+resources:
+  - ../../kubernetes
+
+# The version under canary. It must share Flyway history with the parent's v1 image:
+# both write the same database. The base's own pin (v1) is `sha-a500aac…`; no
+# migration differs between that and this release.
+images:
+  - name: ghcr.io/maihuyhoang592004/corebank-api
+    newTag: sha-2746b2b7deef531b1a3c4f238d5f310e0e2910c3
+
+patches:
+  - path: delete-shared.yaml
+  - target:
+      kind: Deployment
+      name: corebank-api
+    patch: |-
+      - op: replace
+        path: /metadata/name
+        value: corebank-api-v2
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: add
+        path: /metadata/labels/version
+        value: v2
+      - op: add
+        path: /spec/selector/matchLabels/version
+        value: v2
+      - op: add
+        path: /spec/template/metadata/labels/version
+        value: v2
