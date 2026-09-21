@@ -108,8 +108,12 @@ kubectl -n corebank-mesh apply -f deploy/service-mesh/virtual-service.yaml    # 
 - **No ingress gateway.** Traffic enters the mesh from a client pod that has a sidecar.
   Getting external traffic to the mesh (an Istio gateway, or the OpenShift Route) is not done.
 - **Sidecar mode only.** Istio's ambient mode was not tried.
-- **CI only renders the base and OpenShift overlays.** The Istio objects of this overlay were checked
-  by applying them to a real API server on Kind, not by a schema validator in CI.
+- **No schema validation for the Istio objects.** No catalogue `kubeconform` ships with covers them, so
+  CI skips those three kinds and runs `check-mesh-routing.sh` instead: it asserts that the objects agree
+  with each other (every route has a subset, every subset matches a Deployment's `version` label, the
+  Service fronts both, weights add up to 100, the database keeps its injection opt-out). That catches the
+  mistakes this overlay can actually make — both real ones were agreement bugs that rendered cleanly — but
+  it is not a field-by-field schema check, and only a cluster proves Istio accepts the objects.
 - **The split is approximate.** With weights 90/10 the sidecars sent about 8.7% of requests to v2
   over ~4,900 requests, a shortfall that was consistent across runs and is not explained. With 50/50 it
   was 49.8%. See the evidence document.

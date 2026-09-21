@@ -1,6 +1,6 @@
 # Service Mesh Verification
 
-**Istio runtime verified on Kind.** **Red Hat OpenShift Service Mesh was not run**: it cannot be installed with the
+**Upstream Istio runtime verified on Kind.** **Red Hat OpenShift Service Mesh was not run**: it cannot be installed with the
 access the Developer Sandbox gives, and this document records the exact denials. Nothing below is OpenShift Service
 Mesh experience.
 
@@ -68,6 +68,7 @@ OpenShift Service Mesh's operator-managed installation or lifecycle.
 | | |
 |---|---|
 | Cluster | Kind v0.33.0, Kubernetes v1.36.4, 1 control-plane + 3 workers (the cluster used for `kubernetes-runtime-verification.md`) |
+| Git SHA | application images built from `a500aac382ac…` (v1) and `2746b2b7deef531b1a3c4f238d5f310e0e2910c3` (v2); the manifests are `deploy/service-mesh/` as committed in `faaf813` |
 | Istio | 1.31.0 (released 2026-08-31), `istioctl` `istioctl-1.31.0-win-amd64.zip` from the official `istio/istio` GitHub release, SHA-256 verified against the published `.sha256` |
 | Kubernetes support | the 1.31 support table lists Kubernetes 1.36 as tested; the install and every experiment worked on it |
 | Install | `istioctl install --set profile=minimal --set meshConfig.accessLogFile=/dev/stdout --set meshConfig.defaultConfig.holdApplicationUntilProxyStarts=true`; 15 s; only `istiod` (no gateways); `istioctl x precheck` clean beforehand |
@@ -83,6 +84,7 @@ OpenShift Service Mesh's operator-managed installation or lifecycle.
 |---|---|---|
 | `VirtualService`, `DestinationRule` | `networking.istio.io/v1` | served and storage version |
 | `PeerAuthentication` | `security.istio.io/v1` | served and storage version |
+| `Telemetry` | `telemetry.istio.io/v1` | served, but `v1alpha1` is the storage version. **Not used here**: the overlay defines no `Telemetry` object, and the telemetry below was read from the sidecars themselves |
 
 Istio 1.31's documentation offers weighted routing both through these and through Gateway API `HTTPRoute`, and says it
 intends to make Gateway API the default in time. The Istio APIs were chosen because they are GA and documented for
@@ -123,11 +125,17 @@ counters that do not depend on it cross-check it: each application's own
 - **50/50 was exact** (498 vs 500 expected, ±16 at one standard deviation), so weights are honoured and a weight change
   reaches the sidecars: it was applied with `kubectl apply` and the next run followed it.
 - **90/10 was consistently a little low.** Across the four 90/10 samples (4,936 requests) v2 received **431 (8.73 %)**
-  where 494 ± 21 was expected, about −3 standard deviations. Each run alone is within ~2.4σ, but all four samples were below
-  10 %. **This is not explained**: it is not a routing error (every request went where a counter
-  says, and 50/50 was exact) and it did not affect correctness, but "90/10" here means "about 9/91" over a few
-  thousand requests, and a canary that must receive exactly 10 % should not rely on it. A generic cause (the selection
-  in the proxy, or a small-sample effect) was not tested.
+  where 494 ± 21 was expected. Each run alone is within ~2.4σ, but all four were below 10 %, and in aggregate that is
+  about −3σ.
+
+  **Interpretation.** 8.73 % is inside the band a canary is normally operated with (roughly 8 – 12 % for a 10 % target
+  at this sample size), and it is not a routing fault: every request landed where three independent counters say it
+  did, and the 50/50 run was exact, so the weights are honoured and reach the sidecars. What the aggregate does say is
+  that the deviation is systematic rather than noise. The likely mechanism was **not tested**: Envoy distributes
+  weighted traffic per connection, and this client is four workers in a closed loop, so a few long-lived connections
+  can bias the split in a way that averages out at 50/50 but shows up at 90/10. The honest reading is that the weights
+  are directionally correct and the split is approximate; a canary that must receive exactly 10 % of *requests* should
+  measure it rather than assume it. The weights were **not** adjusted to make the number look closer to 10 %.
 - Client-observed latency was similar in the runs where it was recorded (A, B, E: p95 78 – 86 ms, ~10 requests/s), and every
   request was `200`; this is a different
   topology from the non-mesh Kind runs (4 pods here, no HPA) and is **not** a measurement of mesh overhead.
@@ -194,5 +202,8 @@ change, produced neither a lost nor a doubled transfer.
 - **Sidecar mode only**, no ambient mode.
 - **Telemetry stopped at the sidecars.** No metrics backend, no tracing, no Dynatrace.
 - **The application-to-database connection is outside the mesh and unencrypted by it.**
-- **The overlay is validated only by rendering and by a real API server**, not by a schema validator in CI: no
-  schema catalogue that `kubeconform` ships with covers the Istio objects.
+- **The Istio objects get no schema validation.** No catalogue `kubeconform` ships with covers them. CI skips
+  those kinds and runs `deploy/service-mesh/check-mesh-routing.sh`, which asserts that the objects agree with
+  each other; it was tested against six mutated renders (a route to an undefined subset, a subset matching no
+  pod, weights summing to 105, both Deployments on one version, the database injected) and fails on each. That
+  is narrower than a schema check, and only a cluster proves Istio accepts the objects.
