@@ -28,21 +28,40 @@ Flyway migrations under `src/main/resources/db/migration/`, `deploy/kubernetes/*
 and `deploy/observability/alerts.yml`. Where a claim could not be grounded in a file it
 is written below as an open question rather than as an instruction.
 
-**No command in this runbook has been executed.** The environment this document was
-written in has no Docker daemon, so the application was never started, no endpoint was
-ever called, no alert was ever evaluated against a live Prometheus, and no `curl`
-invocation below has produced a response. The response shapes quoted are the Java
-`record` definitions the controllers return, read from source; they are what the code
-will serialise, not what an operator has seen come back.
+**Most of this runbook has still not been run as written.** In September 2026 a subset of
+the procedures was rehearsed on a Kind cluster, on the OpenShift Developer Sandbox and against
+a Dynatrace trial tenant; the rest is a reviewed design. The table below separates the two.
+"Rehearsed" means the behaviour was executed and observed with synthetic traffic on a lab
+system. It does not mean the procedure was validated for production, and no figure in it is
+a service level.
 
-The three incident procedures in [Incident procedures](#incident-procedures) are the
-exception in one direction only: the failures themselves were induced on a running
-system against a real PostgreSQL and the measurements are real, recorded in
-[19-runtime-failure-modes.md](19-runtime-failure-modes.md). The operator steps written
-around those measurements have not been rehearsed.
+| Procedure | Status | What was actually run |
+|---|---|---|
+| Deploy by rolling update (`kubectl apply -k`, `rollout status`) | **Rehearsed** (Kind, Sandbox) | three complete rollouts at ~10 requests/s with 0 failed Service or Route requests. Not a general zero-downtime guarantee ([Kubernetes](evidence/kubernetes-runtime-verification.md), [OpenShift](evidence/openshift-runtime-verification.md)) |
+| Failed rollout detection, then `rollout undo` | **Rehearsed** (Kind, Sandbox) | a non-existent image tag: `rollout status` exited 1, undo returned in 87 ms (Kind) and 2.0 s (Sandbox), no request failed. **Only against the same schema version** |
+| Rollback across a schema change | **Not rehearsed** | see [the limit](#the-limit-rollback-is-not-an-undo-across-a-schema-change) |
+| Pod loss and replacement | **Rehearsed** (Kind, Sandbox) | replacement Ready at +15 s (Kind) and +29.7 s (Sandbox); 0 failed Service requests |
+| Database unavailable: readiness and liveness behaviour | **Rehearsed** (Kind: database scaled to 0 for 54 s; Sandbox: database pod replaced) | pods withdrawn, none restarted; readiness fails by timeout, and requests in the ~18 s detection window wait ~30 s for a `500`. The incident steps in this runbook were **not** followed step by step |
+| Idempotent retry and claim takeover after an outage | **Rehearsed** (Kind) | an abandoned `IN_PROGRESS` claim was reclaimed after the 2-minute lease; retry with the exact original body produced exactly one journal |
+| Probes on the management port (readiness, liveness) | **Rehearsed** | driven by the kubelet and read from inside the pod |
+| Autoscaling under load (HPA) | **Rehearsed** (Kind, Sandbox) | scaled 3 → 6 and back; found the database connection ceiling |
+| Database connection budget | **Rehearsed** | `check-connection-budget.sh`; `max_connections=200` on Kind and on the Sandbox catalog database |
+| Diagnosing lock contention from traces and the database | **Rehearsed once** (Kind, Dynatrace) | a 45 s row lock diagnosed from a `QUERY` span plus `pg_stat_activity`. `pg_blocking_pids()` and `pg_terminate_backend()` were **not** exercised ([RCA](evidence/dynatrace-incident-rca.md)) |
+| OpenShift Route, HTTPS, actuator not published | **Rehearsed** (Sandbox) | HTTPS `200`, HTTP `302`, `/actuator/*` `404` |
+| Collector and Dynatrace export | **Rehearsed** (Kind; Sandbox partly) | see [APM verification](evidence/dynatrace-apm-verification.md) |
+| Traffic shifting, mTLS and rollback with a mesh | **Rehearsed** (upstream Istio on Kind only) | [Service mesh verification](evidence/service-mesh-verification.md) |
+| Local start with Docker Compose | **Not re-run** in this exercise | the application was run through Kubernetes |
+| Daily health verification (`/api/reporting/...`, `actuator/info`) | **Not rehearsed** | only the health endpoints and the metrics endpoint were read |
+| Alert response (`alerts.yml`) | **Not rehearsed** | no Prometheus evaluated any alert; no Davis problem or Dynatrace alert was checked |
+| Runtime modes and draining (`SystemModeService`) | **Not rehearsed** | |
+| Scheduled and on-demand ops jobs | **Not rehearsed** | |
+| Log fields and incident queries | **Not rehearsed** | structured logs were seen in pod output; the queries here were not run |
+| Backup, restore and partition archive | **Not rehearsed** | [27](27-backup-restore-and-partition-archive-runbook.md) |
+| Failure procedures for `SIGKILL`, retry storm, duplicates | **Measured earlier, steps not rehearsed** | [19](19-runtime-failure-modes.md) |
+| OpenShift Service Mesh, Dynatrace Operator (DynaKube) | **Not run** | not installable with the access used |
 
-Treat the whole document as a reviewed design for operating this system, and rehearse
-each procedure in a scratch environment before relying on it in an incident.
+Every other procedure is a reviewed design. Rehearse it in a scratch environment before
+relying on it in an incident.
 
 ## Daily health verification
 
@@ -990,6 +1009,11 @@ kubectl apply -k deploy/kubernetes
 kubectl -n corebank rollout status deployment/corebank-api --timeout=300s
 ```
 
+Observed on Kind and on the Sandbox: three complete rollouts at ~10 requests/s failed no
+request that went through the Service or the Route. That is a synthetic result, not a
+guarantee, and with the HPA live a rollout that starts at three replicas can become a
+six-replica one and take minutes.
+
 What makes it zero-downtime: `maxUnavailable: 0` with `maxSurge: 1` adds a pod before
 retiring one, so capacity never dips; `minReadySeconds: 15` stops a pod that passes
 readiness and then crashes from counting as a successful step; and the `preStop` sleep
@@ -1042,22 +1066,26 @@ migration takes — which is why the startup probe allows five minutes.
 ### Deliberately not here
 
 - **No down-migrations.** Forward-only is the stated design, not an omission.
-- **No canary or blue/green.** Traffic goes Ingress or Route → Service → pods. Rollout
-  safety comes from `maxUnavailable: 0` and the probes, which is a weaker guarantee than
-  progressive delivery and is documented as such.
-- **No service mesh, no mTLS between workloads.**
+- **No canary or blue/green in the base.** Traffic goes Ingress or Route → Service → pods.
+  Rollout safety comes from `maxUnavailable: 0` and the probes, which is a weaker guarantee
+  than progressive delivery and is documented as such. An Istio canary overlay exists in
+  `deploy/service-mesh/` and was verified on Kind only; it is not part of the deployment
+  procedure above.
+- **No service mesh, no mTLS between workloads, in the base.** The same overlay shows STRICT
+  mutual TLS between meshed pods on Kind; the application-to-database hop stays unencrypted.
 
 ### Not done yet
 
-- **The OpenShift overlay has never been applied to a live cluster.** It is rendered and
-  schema-validated in CI, and nothing more. Every claim about SCC admission and router
-  behaviour is reasoning from documentation.
-- **No telemetry leaves a Kubernetes deployment.** `COREBANK_OTLP_ENABLED` is `"false"`
-  and OTLP export is switched off. A collector manifest does now exist —
-  `deploy/observability/kubernetes/` is a separate kustomize root that deploys one,
-  rendered and schema-validated in CI — but `deploy/kubernetes` does not include it and
-  `COREBANK_OTLP_ENABLED` stays `"false"`, so nothing is exported until both change. The
-  alerts in this runbook therefore have nothing evaluating them on that path.
+- **The OpenShift overlay has been applied to one live cluster only**, a project-scoped
+  Developer Sandbox on OpenShift 4.21, and needed two fixes to run there (the Namespace object;
+  the catalog database's 100-connection ceiling). See
+  [OpenShift runtime verification](evidence/openshift-runtime-verification.md). Nothing
+  is known about a cluster where an administrator installs operators or sets other policies.
+- **Telemetry is off by default.** `COREBANK_OTLP_ENABLED` is `"false"` in the tracked
+  ConfigMap. Switching it on, with the collector from `deploy/observability/kubernetes/`,
+  was done at render time on Kind and on the Sandbox and reached a Dynatrace trial tenant
+  ([APM verification](evidence/dynatrace-apm-verification.md)). The alerts in this runbook
+  still have nothing evaluating them on that path: no Prometheus, no Dynatrace alert.
 - **Nothing scrapes the metrics endpoint in-cluster.** The pods carry
   `prometheus.io/*` annotations but there is no `ServiceMonitor` and no credentials
   Secret, and the endpoint requires authentication.

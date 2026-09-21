@@ -347,19 +347,24 @@ schema catalogue `kubeconform` ships with, so its schema is vendored under
 to the platform would be a check that cannot fail. That schema was tested against a
 deliberately misspelled enum and rejected it.
 
-That is the whole of the evidence. **The overlay has never been applied to a live
-OpenShift cluster.** Rendering and schema validation catch a malformed manifest; they
-say nothing about whether the SCC admits the pods, whether the router behaves as
-described, or whether the catalog database works as assumed.
+CI is not the whole of the evidence any more. The overlay was applied to a Red Hat
+Developer Sandbox (OpenShift 4.21, a project-scoped account) and exercised through its
+Route: SCC admission with an arbitrary UID, the HTTPS Route and its redirect, pod
+replacement, rolling update, rollback and the HPA. Running it found the two defects fixed
+above (the Namespace object, and the catalog database's connection ceiling). The results
+are in `docs/evidence/openshift-runtime-verification.md`.
+
+That is **one free, shared cluster and one project-scoped user**, with synthetic traffic.
+It says nothing about a cluster where an administrator installs operators or applies other
+policy, and its figures are not production measurements.
 
 ### Not done yet
 
 These are gaps, not decisions. The section below this one lists the things that are
 absent on purpose.
 
-1. **Never run on a real cluster.** As above — rendered and validated only. Every
-   claim here about SCC admission and router behaviour is reasoning from the docs,
-   not an observation.
+1. **Run on one cluster only.** A Developer Sandbox, as above. Not tried: a cluster with
+   other SCCs or network policy, node loss, an OpenShift upgrade, a Sandbox hibernation.
 2. **No database manifest on this path.** The overlay deletes PostgreSQL and expects
    one to exist; nothing in the repository provisions it. The password has to be kept
    in sync by hand between `oc new-app` and `secret.yaml`, and `secret.example.yaml`
@@ -367,18 +372,16 @@ absent on purpose.
 3. **The Route has no host and no certificate of its own.** OpenShift generates the
    hostname and the router serves its default wildcard certificate. Workable for a
    lab, not for a named domain.
-4. **Resource footprint never checked against a Developer Sandbox quota.** Three
-   replicas request 750m CPU and 1.5Gi and cap at 3 CPU and 3Gi, and the PDB wants 2
-   of 3 available. Whether that fits the Sandbox's limits is untested; the overlay
-   patches neither the replica count nor the HPA's `minReplicas: 3`.
-5. **No telemetry leaves the cluster yet.** `COREBANK_OTLP_ENABLED` is still
-   `"false"`. `deploy/observability/kubernetes/` now carries manifests for an
-   OpenTelemetry Collector that forwards to Dynatrace over OTLP, but they have never
-   been applied to a cluster and the switch is left off until they have — turning
-   export on with nothing answering produces a stream of export failures and no
-   telemetry. Prometheus, Tempo and Grafana stay docker-compose-only, deliberately.
-   Until that cutover this is still the largest gap between what the application can
-   emit and what the deployment actually collects.
+4. **The Sandbox quota was checked and the footprint fits**, with no patch: the peak
+   `requests.cpu` was 1560m of 3 CPU with six replicas, and nothing had to be changed. A
+   seventh pod during a rollout at the HPA maximum was not exercised (arithmetically about
+   1.8 of 3 CPU). The collector and the database share the same project quota.
+5. **Telemetry is off by default.** `COREBANK_OTLP_ENABLED` is still `"false"` in the
+   tracked ConfigMap. With the collector from `deploy/observability/kubernetes/` it was
+   switched on at render time on the Sandbox and telemetry reached a Dynatrace trial tenant
+   (`docs/evidence/dynatrace-apm-verification.md`); the attributes of the OpenShift traces
+   were not read back in the tenant. Prometheus, Tempo and Grafana stay docker-compose-only,
+   deliberately.
 6. **Nothing scrapes the metrics endpoint.** The pods carry `prometheus.io/*`
    annotations, but the overlay creates no `ServiceMonitor` and no credentials
    Secret, and the endpoint requires authentication.
@@ -386,10 +389,12 @@ absent on purpose.
    unset everywhere under `deploy/`, and `CustomerSecretCryptoService` answers
    `SERVICE_UNAVAILABLE` without it. This applies to every deployment path, not just
    this one.
-8. **No service mesh, and no progressive delivery.** Traffic goes Route → Service →
-   pods. There is no mTLS between workloads, no canary or blue/green split, and no
-   per-request routing. The rollout safety here comes from `maxUnavailable: 0` and
-   the probes, which is a different and weaker guarantee.
+8. **No service mesh, and no progressive delivery, in this base.** Traffic goes Route →
+   Service → pods, with no mTLS between workloads and no canary split. The rollout safety
+   here comes from `maxUnavailable: 0` and the probes, which is a different and weaker
+   guarantee. An upstream Istio canary and mTLS overlay exists in `deploy/service-mesh/` and
+   was verified on Kind only; Red Hat OpenShift Service Mesh could not be installed with the
+   Sandbox's access.
 
 ## Deliberately not here
 

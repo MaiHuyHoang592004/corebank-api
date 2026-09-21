@@ -138,10 +138,11 @@ spec:
               readOnly: true
             # No exporter or extension configured here writes to disk, so this is
             # insurance rather than a known requirement: with readOnlyRootFilesystem
-            # set, anything that did want a scratch file would fail at startup, and
-            # this directory has never been applied to a cluster where that could be
-            # observed. Adding a file_storage extension later would need a real
-            # volume, not this one.
+            # set, anything that did want a scratch file would fail at startup. The
+            # collector ran for a whole verification session on Kind and on OpenShift
+            # with this mount and a read-only root filesystem; running without the
+            # mount was not tested. Adding a file_storage extension later would need
+            # a real volume, not this one.
             - name: tmp
               mountPath: /tmp
       volumes:
