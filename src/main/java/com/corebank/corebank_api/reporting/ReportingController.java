@@ -2,6 +2,7 @@ package com.corebank.corebank_api.reporting;
 
 import com.corebank.corebank_api.common.CoreBankException;
 import com.corebank.corebank_api.integration.saga.SagaQueryService;
+import com.corebank.corebank_api.ledger.LedgerJournalQueryService;
 import com.corebank.corebank_api.ops.hotaccount.HotAccountOpsService;
 import com.corebank.corebank_api.ops.reconciliation.ExternalReconciliationService;
 import com.corebank.corebank_api.ops.reconciliation.ReconciliationService;
@@ -26,6 +27,7 @@ public class ReportingController {
 	private final ReconciliationService reconciliationService;
 	private final ExternalReconciliationService externalReconciliationService;
 	private final HotAccountOpsService hotAccountOpsService;
+	private final LedgerJournalQueryService ledgerJournalQueryService;
 
 	public ReportingController(
 			ReadModelQueryService readModelQueryService,
@@ -33,13 +35,15 @@ public class ReportingController {
 			OutboxReportingService outboxReportingService,
 			ReconciliationService reconciliationService,
 			ExternalReconciliationService externalReconciliationService,
-			HotAccountOpsService hotAccountOpsService) {
+			HotAccountOpsService hotAccountOpsService,
+			LedgerJournalQueryService ledgerJournalQueryService) {
 		this.readModelQueryService = readModelQueryService;
 		this.sagaQueryService = sagaQueryService;
 		this.outboxReportingService = outboxReportingService;
 		this.reconciliationService = reconciliationService;
 		this.externalReconciliationService = externalReconciliationService;
 		this.hotAccountOpsService = hotAccountOpsService;
+		this.ledgerJournalQueryService = ledgerJournalQueryService;
 	}
 
 	@GetMapping("/aggregate-activity")
@@ -144,6 +148,18 @@ public class ReportingController {
 				breakType,
 				status,
 				limit));
+	}
+
+	/**
+	 * Reads a posted journal back with its debit and credit lines, so that the double entry behind
+	 * a money command can be inspected instead of taken on trust. Callers get the derived totals
+	 * and a {@code balanced} flag alongside the postings.
+	 */
+	@GetMapping("/journals/{journalId}")
+	public ResponseEntity<LedgerJournalQueryService.JournalView> journal(@PathVariable UUID journalId) {
+		return ledgerJournalQueryService.findJournal(journalId)
+				.map(ResponseEntity::ok)
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Unknown journal"));
 	}
 
 	@GetMapping("/hot-accounts/{ledgerAccountId}/slots")
