@@ -10,7 +10,7 @@ observed and operated like a platform workload.**
 **Observability:** Micrometer · OpenTelemetry · Prometheus · Tempo · Grafana · Dynatrace OTLP path  
 **Operations:** probes · rolling updates · HPA/PDB · SLOs · alerts · incident runbooks
 
-[Live demo](https://corebank-api-acv7.onrender.com) ·
+[Live demo](https://corebank-api-production.up.railway.app) ·
 [Failure evidence](docs/19-runtime-failure-modes.md) ·
 [Operations runbook](docs/31-operations-runbook.md) ·
 [Platform & APM guide](docs/33-platform-deployment-and-apm-guide.md)
@@ -299,14 +299,16 @@ http://localhost:9090/
 Redis and Kafka are optional for the basic startup path. The application is designed so
 their absence does not redefine financial truth.
 
-A hosted demo is available at
-[corebank-api-acv7.onrender.com](https://corebank-api-acv7.onrender.com) and may take
-up to ninety seconds to wake.
+A hosted demo runs on Railway at
+[corebank-api-production.up.railway.app](https://corebank-api-production.up.railway.app).
+The site root opens the dashboard. Deployment details are in [DEPLOY.md](DEPLOY.md).
 
 Demo credentials:
 
 ```text
 demo_admin / demo_admin
+demo_ops   / demo_ops
+demo_user  / demo_user
 ```
 
 Initialize the demo data, authorize and capture a hold, execute a transfer, then replay

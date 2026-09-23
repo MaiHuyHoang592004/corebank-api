@@ -12,8 +12,10 @@ Railway dashboard.
 1. In Railway: **New Project → Deploy from GitHub repo** → `MaiHuyHoang592004/corebank-api`.
    Autodeploy needs a project member with a connected GitHub account that has contributor
    access to the repository.
-2. In the same project: **+ New → Database → PostgreSQL**. Keep the default service name
-   `Postgres`; the variable reference below uses it.
+2. In the same project: **+ New → Database → PostgreSQL**. The variable reference below
+   names this service, so it must match the name the service actually has. Railway's
+   default is `Postgres`. The live demo's database service is called `corebank-postgres`,
+   so its reference is `${{corebank-postgres.DATABASE_URL}}`.
 
 Railway detects `railway.json` and builds with the `Dockerfile`. The first build takes a few
 minutes because Maven resolves every dependency; later builds reuse that layer.
@@ -34,6 +36,9 @@ minutes because Maven resolves every dependency; later builds reuse that layer.
 Do not set `SPRING_DATASOURCE_URL` as well as `DATABASE_URL`. When both are present,
 `SPRING_DATASOURCE_URL` wins, which is the right precedence but a confusing one to debug.
 
+Variable edits made in the dashboard are staged, not live. The canvas shows **Apply N
+changes**, and nothing reaches the service until you press **Deploy** there.
+
 ### 3. Expose it and choose the trigger branch
 
 1. Application service → **Settings → Networking → Generate Domain**.
@@ -48,22 +53,39 @@ dashboard's document links, so an edit to them must reach the running image.
 
 ### 4. Verify
 
+The live demo is `https://corebank-api-production.up.railway.app`. For your own deployment,
+use the domain Railway generated for it.
+
 ```bash
-URL="https://<your-service>.up.railway.app"
+URL="https://corebank-api-production.up.railway.app"
 curl -i "$URL/actuator/health/readiness"   # 200 once the database is reachable
-curl -i "$URL/dashboard/"
+curl -iL "$URL/"                           # the site root redirects to the dashboard
 ```
 
-In the deploy logs, look for this line near the top of startup:
+In the deploy logs, look for this line near the top of startup. The host is the database
+service's name followed by `.railway.internal`:
 
 ```
-[DatabaseUrlConverter] spring.datasource.url taken from DATABASE_URL: jdbc:postgresql://postgres.railway.internal:5432/railway
+[DatabaseUrlConverter] spring.datasource.url taken from DATABASE_URL: jdbc:postgresql://corebank-postgres.railway.internal:5432/railway
 ```
 
 If it is missing, `DATABASE_URL` did not reach the service and the application is pointing at
 its local default, `localhost:5433`. The readiness healthcheck then never returns `200` and
 Railway marks the deploy failed after `healthcheckTimeout` (300s) rather than routing traffic to
 it.
+
+If startup stops at once with `spring.datasource.url is empty`, a database variable exists but
+holds an empty value. The message says which one. Before this check existed, the same fault
+surfaced as Spring's `Failed to determine suitable jdbc url`. That message suggests adding an
+embedded database and does not name the variable.
+
+The live demo's first deploy failed this way. Its `SPRING_DATASOURCE_URL` was
+`${{corebank-postgres.DATABASE_URL}}`. The service name was right, and the database's own
+`DATABASE_URL` rendered correctly, but on the application service the reference rendered as an
+empty string. Both services had been created within half a second of each other, the
+application first. Deleting that variable and adding `DATABASE_URL` with the same reference
+made it resolve. Why the first reference stayed empty was not established. If it recurs,
+delete the variable and add it again.
 
 Railway calls the healthcheck only while a deploy is starting, not afterwards. It is not
 monitoring.
