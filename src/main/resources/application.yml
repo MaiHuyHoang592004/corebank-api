@@ -46,6 +46,13 @@ spring:
 server:
   port: ${PORT:${SERVER_PORT:9090}}
   shutdown: graceful
+  tomcat:
+    # Send redirects as a path, not an absolute URL. Behind a TLS-terminating proxy such as
+    # Railway's edge, Tomcat receives plain HTTP, so an absolute Location it builds says http://
+    # and every redirect detours through an insecure hop before the proxy upgrades it again. A
+    # relative Location is resolved by the browser against the URL it actually used, whatever
+    # proxy sits in front. Spring Boot defaults this to false.
+    use-relative-redirects: true
 
 # Structured logs are opt-in. A developer reading a terminal wants the readable
 # format; a log pipeline wants one JSON object per line. ecs is the Elastic Common

@@ -21,7 +21,10 @@ docker compose up -d postgres redis
 ./mvnw spring-boot:run
 ```
 
-Open `http://localhost:9090/dashboard/` and use one of the published demo accounts:
+Open `http://localhost:9090/dashboard/` and use one of the published demo accounts. The
+hosted demo at <https://corebank-api-production.up.railway.app> serves the same dashboard
+and accepts the same accounts, so these scenarios can also be run there without starting
+anything locally.
 
 - `demo_user / demo_user`
 - `demo_ops / demo_ops`

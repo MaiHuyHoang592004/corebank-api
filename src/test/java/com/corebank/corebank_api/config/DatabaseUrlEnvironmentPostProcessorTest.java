@@ -2,6 +2,8 @@ package com.corebank.corebank_api.config;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
@@ -113,6 +115,48 @@ class DatabaseUrlEnvironmentPostProcessorTest {
 		processor.postProcessEnvironment(environment, null);
 
 		assertNull(environment.getPropertySources().get("databaseUrlConverter"));
+		assertEquals(LOCAL_DEFAULT, environment.getProperty("spring.datasource.url"));
+	}
+
+	@Test
+	@DisplayName("an empty SPRING_DATASOURCE_URL with nothing to fall back on fails naming the variable")
+	void emptySpringDatasourceUrlFailsWithTheCause() {
+		// An empty SPRING_DATASOURCE_URL also empties spring.datasource.url: it binds onto it
+		// directly and replaces the application.yml default. Left alone, Spring reports only
+		// "Failed to determine suitable jdbc url" and suggests an embedded database.
+		MockEnvironment environment = new MockEnvironment()
+				.withProperty("SPRING_DATASOURCE_URL", "")
+				.withProperty("spring.datasource.url", "");
+
+		IllegalStateException failure = assertThrows(IllegalStateException.class,
+				() -> processor.postProcessEnvironment(environment, null));
+
+		assertTrue(failure.getMessage().contains("SPRING_DATASOURCE_URL is set but empty"), failure.getMessage());
+		assertTrue(failure.getMessage().contains("DATABASE_URL is not set"), failure.getMessage());
+	}
+
+	@Test
+	@DisplayName("an empty SPRING_DATASOURCE_URL does not hide a DATABASE_URL")
+	void emptySpringDatasourceUrlFallsThroughToDatabaseUrl() {
+		MockEnvironment environment = new MockEnvironment()
+				.withProperty("SPRING_DATASOURCE_URL", "")
+				.withProperty("spring.datasource.url", "")
+				.withProperty("DATABASE_URL", "postgres://u:p@db.internal:5432/railway");
+
+		processor.postProcessEnvironment(environment, null);
+
+		assertEquals("jdbc:postgresql://db.internal:5432/railway", environment.getProperty("spring.datasource.url"));
+	}
+
+	@Test
+	@DisplayName("an empty DATABASE_URL on its own leaves the local default in place")
+	void emptyDatabaseUrlKeepsTheLocalDefault() {
+		MockEnvironment environment = new MockEnvironment()
+				.withProperty("spring.datasource.url", LOCAL_DEFAULT)
+				.withProperty("DATABASE_URL", "");
+
+		processor.postProcessEnvironment(environment, null);
+
 		assertEquals(LOCAL_DEFAULT, environment.getProperty("spring.datasource.url"));
 	}
 
