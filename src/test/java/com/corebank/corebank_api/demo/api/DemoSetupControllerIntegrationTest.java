@@ -83,6 +83,13 @@ class DemoSetupControllerIntegrationTest {
 	}
 
 	@Test
+	void siteRoot_isPublicAndLandsOnTheDashboard() throws Exception {
+		mockMvc.perform(get("/"))
+				.andExpect(status().is3xxRedirection())
+				.andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl("/dashboard/index.html"));
+	}
+
+	@Test
 	void dashboardDocs_isPublicAndServesMarkdown() throws Exception {
 		mockMvc.perform(get("/dashboard/docs/readme"))
 				.andExpect(status().isOk())
