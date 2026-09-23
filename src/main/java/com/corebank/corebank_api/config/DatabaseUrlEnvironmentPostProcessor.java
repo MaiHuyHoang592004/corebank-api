@@ -45,6 +45,7 @@ public class DatabaseUrlEnvironmentPostProcessor implements EnvironmentPostProce
 	public void postProcessEnvironment(ConfigurableEnvironment environment, SpringApplication application) {
 		Candidate candidate = resolve(environment);
 		if (candidate == null) {
+			failIfUrlIsBlank(environment);
 			return;
 		}
 
@@ -99,6 +100,42 @@ public class DatabaseUrlEnvironmentPostProcessor implements EnvironmentPostProce
 		}
 
 		return null;
+	}
+
+	/**
+	 * Stops startup with the actual cause when {@code spring.datasource.url} is defined but empty.
+	 *
+	 * <p>A variable that is set to an empty string is not the same as one that is unset. An empty
+	 * {@code SPRING_DATASOURCE_URL} binds straight onto {@code spring.datasource.url} and also
+	 * replaces the {@code application.yml} default, so the datasource sees no URL at all. Spring
+	 * then reports "Failed to determine suitable jdbc url" and suggests adding an embedded
+	 * database, which points away from the cause. On a platform the empty value comes from the
+	 * service's own variables: one saved with no value, or a reference such as
+	 * {@code ${{Postgres.DATABASE_URL}}} that did not resolve to one.
+	 *
+	 * <p>Only a blank value is rejected. An unset URL is left alone, and so is an empty
+	 * {@code DATABASE_URL} on its own, since the local default still applies then.
+	 */
+	private static void failIfUrlIsBlank(ConfigurableEnvironment environment) {
+		String resolved = environment.getProperty("spring.datasource.url");
+		if (resolved == null || !resolved.isBlank()) {
+			return;
+		}
+
+		throw new IllegalStateException("spring.datasource.url is empty, so there is no database to connect to. "
+				+ describe(environment, SPRING_DATASOURCE_URL) + "; " + describe(environment, DATABASE_URL)
+				+ ". Set DATABASE_URL (or SPRING_DATASOURCE_URL) to the database's connection URL, and remove "
+				+ "whichever of the two is empty. On Railway, check that a reference such as "
+				+ "${{Postgres.DATABASE_URL}} names a PostgreSQL service that exists in this environment, "
+				+ "spelled as the service is named.");
+	}
+
+	private static String describe(ConfigurableEnvironment environment, String name) {
+		String value = environment.getProperty(name);
+		if (value == null) {
+			return name + " is not set";
+		}
+		return value.isBlank() ? name + " is set but empty" : name + " is set";
 	}
 
 	/**
