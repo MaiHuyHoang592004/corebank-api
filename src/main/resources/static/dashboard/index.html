@@ -3,365 +3,170 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FinLedger Lab — Fintech Backend Live Demo</title>
-  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <title>CoreBank — Demo dòng tiền</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Material+Symbols+Outlined:opsz,wght,FILL@20..48,100..700,0..1&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/dashboard/styles.css" />
 </head>
-<body class="flex min-h-screen bg-[#F7FAFC] text-[#1a1c1e] font-sans">
-
-<!-- LEFT SIDEBAR -->
-<aside class="fixed left-0 top-0 h-full w-[280px] z-40 flex flex-col p-4 bg-white border-r border-[#EDF2F7] overflow-y-auto sidebar-scroll">
-  <!-- Logo -->
-  <div class="mb-8 flex items-center gap-3">
-    <div class="w-10 h-10 bg-[#002045] flex items-center justify-center rounded-lg flex-shrink-0">
-      <span class="material-symbols-outlined text-white text-[24px]" style="font-variation-settings:'FILL'1">account_balance</span>
-    </div>
-    <div>
-      <h1 class="text-[20px] leading-7 font-bold text-[#002045]">FinLedger Lab</h1>
-      <p class="text-[10px] text-[#43474e] uppercase tracking-widest font-bold">FINTECH BACKEND DEMO</p>
-    </div>
-  </div>
-
-  <!-- Start Here Stepper -->
-  <div class="mb-6">
-    <p class="text-[12px] tracking-wider font-bold text-[#43474e] mb-4 flex items-center gap-2 uppercase">
-      <span class="material-symbols-outlined text-[18px]">play_circle</span>
-      Bắt đầu tại đây (Demo 3 phút)
-    </p>
-    <nav class="space-y-1 relative pl-4 border-l-2 border-[#efedf1] ml-2">
-      <div class="relative pb-4" data-step="admin">
-        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
-        <span class="text-[14px] font-bold stepper-label">Admin</span>
-      </div>
-      <div class="relative pb-4" data-step="setup">
-        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
-        <span class="text-[14px] font-bold stepper-label">Setup</span>
-      </div>
-      <div class="relative pb-4" data-step="authorize">
-        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
-        <span class="text-[14px] font-bold stepper-label">Authorize Hold</span>
-      </div>
-      <div class="relative pb-4" data-step="capture">
-        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
-        <span class="text-[14px] font-bold stepper-label">Capture Hold</span>
-      </div>
-      <div class="relative pb-4" data-step="transfer">
-        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
-        <span class="text-[14px] font-bold stepper-label">Transfer</span>
-      </div>
-      <div class="relative pb-4" data-step="replay">
-        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
-        <span class="text-[14px] font-bold stepper-label">Replay</span>
-      </div>
-      <div class="relative opacity-50" data-step="verify">
-        <div class="absolute -left-[22px] top-1 w-3 h-3 rounded-full ring-4 ring-white stepper-dot"></div>
-        <span class="text-[14px] stepper-label">Verify</span>
-      </div>
-    </nav>
-  </div>
-
-  <!-- Demo Progress -->
-  <div class="mb-6">
-    <p class="text-[12px] tracking-wider font-bold text-[#43474e] mb-3 flex items-center gap-2 uppercase">
-      <span class="material-symbols-outlined text-[18px]">fact_check</span>
-      Tiến độ Demo
-    </p>
-    <ul class="space-y-2 text-[14px]">
-      <li class="flex items-center gap-2" data-check="admin"><span class="material-symbols-outlined text-[18px] check-icon">radio_button_unchecked</span> Health check: UP</li>
-      <li class="flex items-center gap-2" data-check="setup"><span class="material-symbols-outlined text-[18px] check-icon">radio_button_unchecked</span> Auth demo: đã dùng Admin</li>
-      <li class="flex items-center gap-2" data-check="authorize"><span class="material-symbols-outlined text-[18px] check-icon">radio_button_unchecked</span> Dữ liệu demo: chưa khởi tạo</li>
-    </ul>
-  </div>
-
-  <!-- Demo Account Selector -->
-  <div class="mb-6">
-    <p class="text-[12px] tracking-wider font-bold text-[#43474e] mb-3 uppercase">Tài khoản Demo</p>
-    <div class="flex flex-col gap-2">
-      <button data-fill="demo_admin" class="w-full text-left bg-[#d6e0f6] text-[#002045] rounded-lg px-4 py-2 text-[12px] tracking-wider font-bold flex items-center justify-between hover:opacity-90 transition-all">
-        <span>Admin</span>
-        <span id="admin-badge" class="text-[10px] bg-[#002045] text-white px-1.5 py-0.5 rounded uppercase hidden">Đã dùng</span>
-      </button>
-      <button data-fill="demo_ops" class="w-full text-left border border-[#EDF2F7] hover:bg-[#f4f3f7] rounded-lg px-4 py-2 text-[12px] tracking-wider font-bold text-[#43474e] transition-colors">
-        Ops
-      </button>
-      <button data-fill="demo_user" class="w-full text-left border border-[#EDF2F7] hover:bg-[#f4f3f7] rounded-lg px-4 py-2 text-[12px] tracking-wider font-bold text-[#43474e] transition-colors">
-        User
-      </button>
-    </div>
-    <p id="auth-state" class="text-[11px] text-[#43474e] mt-2">Chưa có credentials.</p>
-  </div>
-
-  <!-- Setup Demo Data -->
-  <div class="mb-6">
-    <p class="text-[12px] tracking-wider font-bold text-[#43474e] mb-3 uppercase">Dữ liệu mẫu</p>
-    <button id="run-setup" class="w-full bg-[#002045] text-white rounded-lg px-4 py-3 font-bold text-[14px] hover:opacity-90 active:scale-95 transition-all flex items-center justify-center gap-2">
-      <span class="material-symbols-outlined text-[20px]">database</span>
-      Khởi tạo dữ liệu demo
-    </button>
-  </div>
-
-  <!-- Evidence Links -->
-  <div class="mt-auto pt-4 border-t border-[#EDF2F7]">
-    <p class="text-[10px] tracking-wider font-bold text-[#43474e] mb-3 uppercase">Bằng chứng (Evidence)</p>
-    <div class="space-y-1">
-      <a href="/dashboard/docs/readme" target="_blank" rel="noopener" class="flex items-center gap-2 text-[14px] text-[#43474e] hover:text-[#002045] transition-colors no-underline">
-        <span class="material-symbols-outlined text-[18px]">description</span> README.md
-      </a>
-      <a href="/dashboard/docs/demo-script" target="_blank" rel="noopener" class="flex items-center gap-2 text-[14px] text-[#43474e] hover:text-[#002045] transition-colors no-underline">
-        <span class="material-symbols-outlined text-[18px]">terminal</span> Demo Script
-      </a>
-      <a href="/dashboard/docs/interview-prep" target="_blank" rel="noopener" class="flex items-center gap-2 text-[14px] text-[#43474e] hover:text-[#002045] transition-colors no-underline">
-        <span class="material-symbols-outlined text-[18px]">verified</span> Interview Prep
-      </a>
-    </div>
-  </div>
-</aside>
-
-<!-- MAIN CONTENT -->
-<main class="ml-[280px] mr-[400px] flex-1 min-h-screen">
-
-  <!-- Top Public Demo Bar -->
-  <div class="bg-[#1a365d] text-[#adc7f7] px-8 py-2 text-[14px] flex items-center justify-between border-b border-white/10 sticky top-0 z-30">
-    <div class="flex items-center gap-4">
-      <span class="bg-[#d6e3ff] text-[#2d476f] text-[10px] font-bold px-2 py-0.5 rounded uppercase">PUBLIC DEMO MODE</span>
-      <span class="flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">storage</span> PostgreSQL là nguồn sự thật tài chính</span>
-    </div>
-    <div class="flex items-center gap-3">
-      <span class="material-symbols-outlined cursor-pointer hover:text-white transition-colors">notifications</span>
-      <span class="material-symbols-outlined cursor-pointer hover:text-white transition-colors">settings</span>
-    </div>
-  </div>
-
-  <div class="p-8">
-
-    <!-- Hero -->
-    <header class="mb-10">
-      <div class="flex items-end justify-between mb-2">
-        <h2 class="text-[28px] leading-9 font-bold text-[#002045]">FinLedger Lab — Demo Backend Giao Dịch Fintech</h2>
-        <div class="flex gap-2">
-          <a href="https://github.com/MaiHuyHoang592004/corebank-api" target="_blank" rel="noopener" class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#EDF2F7] bg-white text-[12px] tracking-wider font-bold hover:bg-[#f4f3f7] transition-colors no-underline text-[#1a1c1e]">
-            <span class="material-symbols-outlined text-[18px]">code</span> GitHub
-          </a>
-          <a href="/dashboard/docs/readme" target="_blank" rel="noopener" class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#EDF2F7] bg-white text-[12px] tracking-wider font-bold hover:bg-[#f4f3f7] transition-colors no-underline text-[#1a1c1e]">
-            <span class="material-symbols-outlined text-[18px]">menu_book</span> Docs
-          </a>
-        </div>
-      </div>
-      <p class="text-[16px] leading-6 text-[#43474e] max-w-2xl">Demo backend xử lý giao dịch tiền an toàn: payment hold/capture, transfer idempotency, ledger journal, audit và outbox.</p>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/dashboard/" aria-label="CoreBank Demo"><span class="brand-mark" aria-hidden="true"></span><span>COREBANK</span></a>
+      <nav class="top-links" aria-label="Liên kết dự án">
+        <a href="/dashboard/docs/readme" target="_blank" rel="noopener">Dự án</a>
+        <a href="/dashboard/docs/demo-script" target="_blank" rel="noopener">Demo Script</a>
+        <a href="https://github.com/MaiHuyHoang592004/corebank-api" target="_blank" rel="noopener">GitHub</a>
+      </nav>
+      <span class="demo-pill">Dữ liệu mô phỏng</span>
     </header>
 
-    <!-- Tabs -->
-    <div class="border-b border-[#EDF2F7] mb-8 flex items-center gap-8">
-      <button class="tab-btn pb-3 text-[14px] font-medium text-[#43474e] hover:text-[#002045] transition-colors border-b-2 border-transparent" data-tab="payment">Thanh toán</button>
-      <button class="tab-btn pb-3 text-[14px] font-medium text-[#43474e] hover:text-[#002045] transition-colors border-b-2 border-transparent" data-tab="transfer">Chuyển tiền</button>
-      <button class="tab-btn pb-3 text-[14px] font-medium text-[#43474e] hover:text-[#002045] transition-colors border-b-2 border-transparent flex items-center gap-2" data-tab="deposit">Tiền gửi <span class="text-[10px] bg-[#321b00] text-[#f2bc82] px-1.5 py-0.5 rounded font-bold">Nâng cao</span></button>
-      <button class="tab-btn pb-3 text-[14px] font-medium text-[#43474e] hover:text-[#002045] transition-colors border-b-2 border-transparent flex items-center gap-2" data-tab="lending">Khoản vay <span class="text-[10px] bg-[#321b00] text-[#f2bc82] px-1.5 py-0.5 rounded font-bold">Nâng cao</span></button>
+    <div class="tourbar" aria-label="Tiến độ demo">
+      <span class="eyebrow">TOUR 3 PHÚT</span>
+      <span class="tour-step" data-step="setup">1. Khởi tạo</span>
+      <span class="tour-step" data-step="transfer">2. Chuyển tiền</span>
+      <span class="tour-step" data-step="replay">3. Gửi lại cùng key</span>
+      <span class="tour-step" data-step="verify">4. Xác minh</span>
+      <span id="tour-progress" class="tour-progress">0/4</span>
     </div>
 
-    <!-- ===== TAB: PAYMENT ===== -->
-    <div class="tab-body hidden" data-panel="payment">
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <!-- Authorize Hold Card -->
-        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
-          <div class="flex items-center justify-between mb-4">
-            <span class="p-2 bg-[#d6e0f6] rounded-lg text-[#002045]">
-              <span class="material-symbols-outlined">lock_clock</span>
-            </span>
-          </div>
-          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Authorize Hold</h4>
-          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Tạm giữ số dư nguồn để đảm bảo thanh toán. Chưa thực hiện chuyển khoản thực tế.</p>
-          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="payment-authorize">Giữ tiền</button>
-        </div>
-        <!-- Capture Hold Card -->
-        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
-          <div class="flex items-center justify-between mb-4">
-            <span class="p-2 bg-[#d6e0f6] rounded-lg text-[#002045]">
-              <span class="material-symbols-outlined">payments</span>
-            </span>
-          </div>
-          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Capture Hold</h4>
-          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Chốt giao dịch đã hold. Số tiền sẽ chính thức được chuyển từ nguồn sang đích.</p>
-          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="payment-capture">Capture thanh toán</button>
-        </div>
-        <!-- Void Hold Card -->
-        <div class="bg-white p-6 rounded-xl border border-[#EF4444]/20 flex flex-col card-shadow">
-          <div class="flex items-center justify-between mb-4">
-            <span class="p-2 bg-[#ffdad6] rounded-lg text-[#EF4444]">
-              <span class="material-symbols-outlined">cancel</span>
-            </span>
-          </div>
-          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Void Hold</h4>
-          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Huỷ lệnh giữ tiền, hoàn trả hạn mức cho chủ thẻ ngay lập tức.</p>
-          <button class="action-btn w-full py-2 bg-[#ffdad6] hover:bg-[#EF4444]/10 text-[#EF4444] font-bold rounded-lg transition-colors" data-action="payment-void">Huỷ hold</button>
-        </div>
-      </div>
-    </div>
+    <nav class="tabs" aria-label="Hành trình demo">
+      <button type="button" class="tab-btn tab-active" data-tab="overview">Tổng quan</button>
+      <button type="button" class="tab-btn" data-tab="transfer">Chuyển tiền</button>
+      <button type="button" class="tab-btn" data-tab="payment">Giữ &amp; thanh toán</button>
+      <button type="button" class="tab-btn" data-tab="deposit">Tiền gửi</button>
+      <button type="button" class="tab-btn" data-tab="lending">Khoản vay</button>
+      <button type="button" class="tab-btn" data-tab="verify">Xác minh</button>
+    </nav>
 
-    <!-- ===== TAB: TRANSFER ===== -->
-    <div class="tab-body hidden" data-panel="transfer">
-      <div class="bg-white p-8 rounded-xl border border-[#EDF2F7] relative overflow-hidden card-shadow">
-        <!-- Decorative background -->
-        <div class="absolute top-0 right-0 w-64 h-64 bg-[#002045]/5 rounded-full -mr-32 -mt-32"></div>
-        <div class="relative z-10">
-          <div class="inline-flex items-center gap-2 bg-[#002045] text-[#adc7f7] px-4 py-1.5 rounded-full mb-6">
-            <span class="material-symbols-outlined text-[20px]" style="font-variation-settings:'FILL'1">verified</span>
-            <span class="text-[12px] tracking-wider font-bold">Fintech Core Proof</span>
+    <main>
+      <section class="tab-body" data-panel="overview">
+        <div class="hero">
+          <div>
+            <p class="eyebrow accent">BANKING INFRASTRUCTURE DEMO</p>
+            <h1>Tiền đi đâu, thay đổi thế nào, và vì sao không bị trừ hai lần?</h1>
+            <p class="intro">Thực hiện giao dịch với backend CoreBank. Mỗi kết quả đặt số tiền và số dư trước → sau lên trước; mã kỹ thuật nằm trong phần chi tiết.</p>
+            <button type="button" class="button button-dark" id="start-demo">Bắt đầu với một giao dịch <span aria-hidden="true">→</span></button>
+            <p class="quiet">Dữ liệu mô phỏng. Khởi tạo lại sẽ đặt các tài khoản mẫu về trạng thái ban đầu.</p>
           </div>
-          <h3 class="text-[20px] leading-7 font-semibold text-[#002045] mb-2">Quy trình Chuyển tiền Idempotency</h3>
-          <p class="text-[14px] text-[#43474e] mb-8 max-w-xl">Hệ thống sử dụng Idempotency Key để đảm bảo một giao dịch không bao giờ bị xử lý trùng lặp ngay cả khi có sự cố mạng hoặc người dùng nhấn nút nhiều lần.</p>
-          <div class="flex gap-4">
-            <button class="action-btn bg-[#002045] text-white px-6 py-3 rounded-lg font-bold hover:opacity-90 active:scale-95 transition-all flex items-center gap-3" data-action="transfer-internal">
-              <span class="material-symbols-outlined">send</span>
-              Chạy chuyển tiền
-            </button>
-            <button class="action-btn border-2 border-[#002045] text-[#002045] px-6 py-3 rounded-lg font-bold hover:bg-[#002045]/5 active:scale-95 transition-all flex items-center gap-3 bg-white" data-action="transfer-replay">
-              <span class="material-symbols-outlined">replay</span>
-              Gửi lại cùng key (Replay Same Key)
-            </button>
+          <div class="hero-art" aria-hidden="true"><div class="art-orbit orbit-one"></div><div class="art-orbit orbit-two"></div><div class="art-core">₫</div><span>Money moves.<br />Trust stays.</span></div>
+        </div>
+        <div class="story-grid">
+          <button type="button" class="story-card" data-go="transfer"><span class="story-icon">↔</span><strong>Chuyển tiền</strong><small>Thấy cả hai số dư trước và sau.</small></button>
+          <button type="button" class="story-card" data-go="payment"><span class="story-icon">◈</span><strong>Giữ &amp; thanh toán</strong><small>Tiền khả dụng thay đổi ngay khi giữ hoặc huỷ.</small></button>
+          <button type="button" class="story-card" data-go="deposit"><span class="story-icon">▥</span><strong>Tiền gửi có kỳ hạn</strong><small>Gốc, lãi dự thu và ngày đáo hạn từ API.</small></button>
+          <button type="button" class="story-card" data-go="lending"><span class="story-icon">▤</span><strong>Khoản vay</strong><small>Giải ngân và cơ cấu trả nợ.</small></button>
+        </div>
+      </section>
+
+      <section class="setup-strip" aria-labelledby="setup-heading">
+        <div>
+          <p class="eyebrow">BƯỚC CHUẨN BỊ</p>
+          <h2 id="setup-heading">Khởi tạo dữ liệu demo</h2>
+          <p id="setup-description" class="quiet">Chọn tài khoản thử nghiệm và gọi POST /api/demo/setup. Số dư chỉ hiển thị sau khi API giao dịch trả về.</p>
+        </div>
+        <div class="setup-actions">
+          <div class="role-pickers" aria-label="Vai trò thử nghiệm">
+            <button type="button" data-fill="demo_admin" class="role-button selected">Admin</button>
+            <button type="button" data-fill="demo_ops" class="role-button">Ops</button>
+            <button type="button" data-fill="demo_user" class="role-button">User</button>
           </div>
-          <!-- Idempotency explanation -->
-          <div class="mt-8 p-4 bg-[#f4f3f7] rounded-lg border border-dashed border-[#c4c6cf] flex items-start gap-4">
-            <span class="material-symbols-outlined text-[#002045] mt-0.5">info</span>
-            <div class="text-[14px]">
-              <p class="font-bold text-[#002045] mb-1">Cơ chế Idempotency</p>
-              <p class="text-[#43474e]">Khi nhấn 'Replay', backend sẽ nhận diện key cũ trong cơ sở dữ liệu và trả về kết quả đã có sẵn mà không thực hiện trừ tiền lần 2.</p>
+          <button type="button" id="run-setup" class="button button-dark">Khởi tạo dữ liệu</button>
+          <span id="auth-state" class="quiet">Chưa có credentials.</span>
+        </div>
+      </section>
+
+      <section class="tab-body hidden" data-panel="transfer" aria-labelledby="transfer-heading">
+        <div class="section-heading"><p class="eyebrow accent">01 · DÒNG TIỀN</p><h2 id="transfer-heading">Chuyển tiền nội bộ</h2><p>Quan sát tiền rời tài khoản nguồn và đến tài khoản đích trong cùng một response.</p></div>
+        <div class="flow-layout">
+          <div class="form-card">
+            <div class="account-pair">
+              <div class="account-card"><span class="card-label">TÀI KHOẢN NGUỒN</span><strong>DEMO-SRC-0001</strong><small id="transfer-source-preview">Chưa có số dư từ response</small></div>
+              <span class="pair-arrow" aria-hidden="true">→</span>
+              <div class="account-card"><span class="card-label">TÀI KHOẢN ĐÍCH</span><strong>DEMO-DST-0001</strong><small id="transfer-destination-preview">Chưa có số dư từ response</small></div>
             </div>
+            <div class="form-grid">
+              <label>Số tiền chuyển (VND)<input id="transfer-amount" type="number" inputmode="numeric" min="1" step="1" value="700000" /></label>
+              <label>Idempotency key<input id="transfer-key" class="mono" type="text" spellcheck="false" /></label>
+            </div>
+            <div class="button-row">
+              <button type="button" class="button button-dark action-btn" data-action="transfer-internal">Chuyển tiền <span aria-hidden="true">→</span></button>
+              <button type="button" class="button button-outline action-btn" data-action="transfer-replay">Gửi lại cùng key</button>
+              <button type="button" class="button button-text" id="new-transfer-key">Tạo key mới</button>
+            </div>
+            <p class="quiet">Replay dùng nguyên payload và key của lần chuyển trước. Đổi số tiền sẽ cần key mới.</p>
           </div>
-          <!-- Idempotency Proof Block -->
-          <div id="transfer-proof-block" class="mt-4 p-4 bg-[#10B981]/5 rounded-lg border border-[#10B981]/20 hidden">
-            <p class="text-[12px] tracking-wider font-bold text-[#10B981] uppercase mb-2">Bằng chứng Idempotency</p>
-            <ul class="space-y-1 text-[14px]">
-              <li class="flex justify-between"><span>First journalId:</span><span id="transfer-first-journal-id" class="font-mono bg-white px-1 rounded text-[13px]">—</span></li>
-              <li class="flex justify-between"><span>Replay journalId:</span><span id="transfer-replay-journal-id" class="font-mono bg-white px-1 rounded text-[13px]">—</span></li>
-              <li id="transfer-proof-conclusion" class="pt-2 border-t border-[#10B981]/10 text-[#10B981] font-bold">—</li>
-            </ul>
+          <aside class="explain-card"><span class="explain-icon">i</span><h3>Điều cần quan sát</h3><p>Lần chuyển đầu trả về số dư khả dụng trước/sau của hai tài khoản. Gửi lại cùng key để so sánh mã bút toán và toàn bộ số dư được trả về.</p><p class="quiet">Các bước nội bộ trong mã nguồn là tài liệu kiến trúc, không phải timeline thực thi của request này.</p></aside>
+        </div>
+        <div id="transfer-proof-block" class="proof-card hidden" aria-live="polite">
+          <h3>Đối chiếu lần đầu và lần gửi lại</h3>
+          <div class="proof-pair"><div><span>Lần đầu</span><code id="transfer-first-journal-id">—</code></div><div><span>Gửi lại</span><code id="transfer-replay-journal-id">Chưa gửi lại</code></div></div>
+          <p id="transfer-proof-conclusion">Chưa có dữ liệu để đối chiếu.</p>
+        </div>
+      </section>
+
+      <section class="tab-body hidden" data-panel="payment" aria-labelledby="payment-heading">
+        <div class="section-heading"><p class="eyebrow accent">02 · THANH TOÁN</p><h2 id="payment-heading">Giữ tiền → hoàn tất hoặc huỷ</h2><p>Giữ tiền làm giảm số dư khả dụng. Huỷ trả hạn mức về; hoàn tất ghi nhận số tiền capture.</p></div>
+        <div class="form-card">
+          <div class="payment-layout">
+            <label>Số tiền giữ (VND)<input id="payment-amount" type="number" inputmode="numeric" min="1" step="1" value="500000" /></label>
+            <div class="payment-actions"><button type="button" class="button button-dark action-btn" data-action="payment-authorize">1. Giữ tiền</button><button type="button" class="button button-outline action-btn" data-action="payment-capture">2a. Hoàn tất</button><button type="button" class="button button-outline action-btn" data-action="payment-void">2b. Huỷ giữ tiền</button></div>
           </div>
+          <p class="quiet">Hoàn tất và huỷ là hai nhánh thay thế cho cùng một hold. Response capture không có số dư trước/sau.</p>
         </div>
-      </div>
-    </div>
+      </section>
 
-    <!-- ===== TAB: DEPOSIT ===== -->
-    <div class="tab-body hidden" data-panel="deposit">
-      <p class="text-[14px] text-[#43474e] mb-4 italic">Quy trình mở/accrue/maturity với product version ràng buộc.</p>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
-          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Open Deposit</h4>
-          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Mở hợp đồng tiền gửi có kỳ hạn với lãi suất cố định.</p>
-          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="deposit-open">Mở tiền gửi</button>
+      <section class="tab-body hidden" data-panel="deposit" aria-labelledby="deposit-heading">
+        <div class="section-heading"><p class="eyebrow accent">03 · TIỀN GỬI</p><h2 id="deposit-heading">Tiền gửi có kỳ hạn</h2><p>Đi từ hợp đồng gốc đến lãi dự thu và đáo hạn. Mỗi bước hiển thị đúng trường mà API trả về.</p></div>
+        <div class="journey-grid">
+          <div class="journey-card"><span class="eyebrow">BƯỚC 1</span><h3>Mở tiền gửi</h3><p>Gốc, lãi suất và ngày đáo hạn.</p><button type="button" class="button button-dark action-btn" data-action="deposit-open">Mở hợp đồng</button></div>
+          <div class="journey-card"><span class="eyebrow">BƯỚC 2</span><h3>Tính lãi</h3><p>Lãi dự thu và số dư hợp đồng.</p><button type="button" class="button button-outline action-btn" data-action="deposit-accrue">Tính lãi</button></div>
+          <div class="journey-card"><span class="eyebrow">BƯỚC 3</span><h3>Đáo hạn</h3><p>Gốc cộng lãi dự thu trong response.</p><button type="button" class="button button-outline action-btn" data-action="deposit-maturity">Xử lý đáo hạn</button></div>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
-          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Accrue Interest</h4>
-          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Tính lãi dự thu cho hợp đồng tiền gửi hiện tại.</p>
-          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="deposit-accrue">Tính lãi</button>
-        </div>
-        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
-          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Process Maturity</h4>
-          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Xử lý đáo hạn hợp đồng tiền gửi đến kỳ.</p>
-          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="deposit-maturity">Xử lý đáo hạn</button>
-        </div>
-      </div>
-      </div>
+      </section>
 
-    <!-- ===== TAB: LENDING ===== -->
-    <div class="tab-body hidden" data-panel="lending">
-      <p class="text-[14px] text-[#43474e] mb-4 italic">Quy trình giải ngân/trả nợ. Overdue/default là evidence-only trong showcase này.</p>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
-          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Disburse Loan</h4>
-          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Giải ngân khoản vay cho borrower account.</p>
-          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="lending-disburse">Giải ngân</button>
+      <section class="tab-body hidden" data-panel="lending" aria-labelledby="lending-heading">
+        <div class="section-heading"><p class="eyebrow accent">04 · KHOẢN VAY</p><h2 id="lending-heading">Giải ngân và trả nợ</h2><p>Quan sát tiền giải ngân, rồi xem khoản trả được chia vào gốc, lãi và phí.</p></div>
+        <div class="journey-grid two">
+          <div class="journey-card"><span class="eyebrow">BƯỚC 1</span><h3>Giải ngân</h3><p>API trả tiền gốc và ngày đến hạn kỳ đầu.</p><button type="button" class="button button-dark action-btn" data-action="lending-disburse">Giải ngân</button></div>
+          <div class="journey-card"><span class="eyebrow">BƯỚC 2</span><h3>Trả nợ</h3><p>API trả phần gốc, lãi, phí và gốc còn lại.</p><button type="button" class="button button-outline action-btn" data-action="lending-repay">Trả nợ</button></div>
         </div>
-        <div class="bg-white p-6 rounded-xl border border-[#EDF2F7] flex flex-col card-shadow">
-          <h4 class="text-[16px] leading-6 font-bold text-[#002045] mb-2">Repay Loan</h4>
-          <p class="text-[14px] text-[#43474e] flex-1 mb-6">Trả nợ gốc + lãi cho khoản vay hiện tại.</p>
-          <button class="action-btn w-full py-2 bg-[#e9e7eb] hover:bg-[#e3e2e6] text-[#43474e] font-bold rounded-lg transition-colors" data-action="lending-repay">Trả nợ</button>
-        </div>
-      </div>
-    </div>
+      </section>
 
+      <section class="tab-body hidden" data-panel="verify" aria-labelledby="verify-heading">
+        <div class="section-heading"><p class="eyebrow accent">05 · BẰNG CHỨNG</p><h2 id="verify-heading">Xác minh từ response thật</h2><p>Kiểm tra số tiền rời nguồn và đến đích, rồi đối chiếu response khi gửi lại cùng key.</p></div>
+        <div id="verify-evidence" class="verify-grid" aria-live="polite"><div class="verify-card pending"><h3>Tổng số dư khả dụng của hai tài khoản</h3><p>Chạy chuyển tiền để có dữ liệu.</p></div><div class="verify-card pending"><h3>Idempotency</h3><p>Gửi lại cùng key để so sánh.</p></div></div>
+        <p class="quiet verify-footnote">Màn này đối chiếu các trường do TransferResponse trả về. API hiện tại không cung cấp journal postings để xác minh độc lập tổng Nợ/Có hay số dư toàn hệ thống.</p>
+        <button type="button" class="button button-outline" data-go="transfer">Đến chuyển tiền</button>
+      </section>
+
+      <section id="result-summary" class="result-card hidden" aria-live="polite" aria-labelledby="result-summary-title">
+        <div class="result-header"><div><span class="eyebrow">PHẢN HỒI TỪ BACKEND</span><h2 id="result-summary-title">Kết quả giao dịch</h2></div><span id="result-status-badge" class="status-badge">—</span></div>
+        <p id="result-summary-body" class="result-headline"></p>
+        <p id="result-summary-detail" class="quiet"></p>
+        <div id="result-balances" class="balance-grid"></div>
+        <div id="result-metrics" class="metric-grid"></div>
+        <div id="result-journal-row" class="reference-row hidden"><span id="result-reference-label">Mã tham chiếu</span><code id="result-reference-value">—</code><button type="button" id="open-journal" class="button button-text hidden">Xem chi tiết</button></div>
+      </section>
+
+      <details id="raw-json-section" class="technical-details"><summary>Chi tiết kỹ thuật · HTTP và JSON</summary><div class="technical-body"><p id="response-meta" class="mono">Chưa gửi request.</p><pre id="response-output" aria-live="polite">{}</pre></div></details>
+    </main>
+
+    <footer class="footer"><span>CoreBank Demo · PostgreSQL là nguồn sự thật tài chính</span><a href="/dashboard/docs/readme" target="_blank" rel="noopener">Tài liệu kỹ thuật ↗</a></footer>
   </div>
-</main>
 
-<!-- RIGHT PANEL -->
-<aside class="fixed right-0 top-0 h-full w-[400px] z-40 bg-[#f4f3f7] border-l border-[#EDF2F7] flex flex-col">
-  <div class="p-6 border-b border-[#EDF2F7] bg-white flex items-center justify-between">
-    <h3 class="text-[20px] leading-7 font-semibold text-[#002045]">Luồng xử lý nghiệp vụ</h3>
-    <span class="material-symbols-outlined text-[#43474e] cursor-pointer" id="refresh-panel">refresh</span>
+  <dialog id="journal-dialog" class="journal-dialog" aria-labelledby="journal-dialog-heading"><div class="dialog-header"><h2 id="journal-dialog-heading">Chi tiết giao dịch</h2><button type="button" id="journal-close" aria-label="Đóng">×</button></div><div id="journal-details"></div></dialog>
+
+  <div class="hidden" aria-hidden="true">
+    <input id="auth-username" autocomplete="username" value="demo_admin" />
+    <input id="auth-password" type="password" autocomplete="current-password" value="demo_admin" />
+    <button id="save-auth" type="button">Use Credentials</button>
+    <pre id="setup-output"></pre>
+    <textarea id="payment-authorize-payload"></textarea><textarea id="payment-capture-payload"></textarea><textarea id="payment-void-payload"></textarea>
+    <textarea id="transfer-payload"></textarea><textarea id="deposit-open-payload"></textarea><textarea id="deposit-accrue-payload"></textarea>
+    <textarea id="deposit-maturity-payload"></textarea><textarea id="lending-disburse-payload"></textarea><textarea id="lending-repay-payload"></textarea>
   </div>
-  <div class="flex-1 overflow-y-auto p-6 space-y-6">
-
-    <!-- Result Summary Card -->
-    <div id="result-summary" class="bg-white p-5 rounded-xl border border-[#EDF2F7] card-shadow" style="display:none">
-      <div class="flex items-center justify-between mb-4">
-        <span class="text-[12px] tracking-wider font-bold text-[#43474e] uppercase">Trạng thái</span>
-        <span id="result-status-badge" class="px-3 py-1 rounded-full text-[12px] tracking-wider font-bold flex items-center gap-1"></span>
-      </div>
-      <div class="space-y-4">
-        <div id="result-journal-row" class="hidden">
-          <p class="text-[10px] text-[#43474e] font-bold uppercase mb-1">Journal ID</p>
-          <p id="result-summary-title" class="font-mono text-[13px] bg-[#f4f3f7] px-3 py-2 rounded border border-[#EDF2F7] select-all break-all">—</p>
-        </div>
-        <div>
-          <p id="result-summary-body" class="text-[14px]"></p>
-        </div>
-        <div>
-          <p id="result-summary-detail" class="text-[12px] text-[#43474e]"></p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Processing Flow -->
-    <div id="processing-flow" class="space-y-3 hidden">
-      <p class="text-[10px] tracking-wider font-bold text-[#43474e] uppercase">Luồng xử lý giao dịch</p>
-      <div class="relative pl-6 space-y-4 border-l border-[#c4c6cf] ml-1.5" id="processing-flow-steps">
-        <!-- Populated dynamically by JS -->
-      </div>
-    </div>
-
-    <!-- Raw JSON Accordion -->
-    <div id="raw-json-section" class="mt-4 hidden">
-      <details class="group bg-[#1E293B] rounded-xl overflow-hidden" open>
-        <summary class="list-none p-4 flex items-center justify-between cursor-pointer text-white/80 hover:bg-white/5 transition-colors">
-          <span class="text-[12px] tracking-wider font-bold flex items-center gap-2">
-            <span class="material-symbols-outlined text-[18px]">data_object</span>
-            Chi tiết kỹ thuật (JSON Raw)
-          </span>
-          <span class="material-symbols-outlined group-open:rotate-180 transition-transform">expand_more</span>
-        </summary>
-        <div class="px-4 pb-4">
-          <p id="response-meta" class="text-[11px] text-white/60 mb-2 font-mono">Chưa gửi request.</p>
-          <pre id="response-output" class="overflow-x-auto font-mono text-[13px] text-[#10B981]/90 whitespace-pre-wrap m-0" aria-live="polite">{}</pre>
-        </div>
-      </details>
-    </div>
-
-  </div>
-  <footer class="p-6 bg-white border-t border-[#EDF2F7]">
-    <p class="text-[11px] text-[#43474e] text-center">FinLedger Lab Architecture Demo</p>
-  </footer>
-</aside>
-
-<!-- HIDDEN ELEMENTS: Auth inputs and payload textareas (required by app.js) -->
-<div class="hidden">
-  <input id="auth-username" autocomplete="username" value="demo_admin" />
-  <input id="auth-password" type="password" autocomplete="current-password" value="demo_admin" />
-  <button id="save-auth">Use Credentials</button>
-  <pre id="setup-output" aria-live="polite"></pre>
-
-  <textarea id="payment-authorize-payload"></textarea>
-  <textarea id="payment-capture-payload"></textarea>
-  <textarea id="payment-void-payload"></textarea>
-  <textarea id="transfer-payload"></textarea>
-  <textarea id="deposit-open-payload"></textarea>
-  <textarea id="deposit-accrue-payload"></textarea>
-  <textarea id="deposit-maturity-payload"></textarea>
-  <textarea id="lending-disburse-payload"></textarea>
-  <textarea id="lending-repay-payload"></textarea>
-</div>
-
-<script src="/dashboard/app.js" defer></script>
+  <script src="/dashboard/presentation.js" defer></script>
+  <script src="/dashboard/app.js" defer></script>
 </body>
 </html>

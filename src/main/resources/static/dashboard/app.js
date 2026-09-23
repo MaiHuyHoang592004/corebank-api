@@ -1,118 +1,108 @@
 (() => {
   window.__finledgerLoaded = true;
   try {
-
   const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
-
+  const view = window.DemoPresentation;
   const state = {
-    authHeader: null,
-    actor: "demo_admin",
-    setup: null,
-    holdId: ZERO_UUID,
-    depositContractId: ZERO_UUID,
-    loanContractId: ZERO_UUID,
-    firstTransferJournalId: null,
-    demoProgress: {}
+    authHeader: null, actor: "demo_admin", setup: null,
+    holdId: ZERO_UUID, heldAmountMinor: null,
+    depositContractId: ZERO_UUID, loanContractId: ZERO_UUID,
+    firstTransferJournalId: null, firstTransferResponse: null,
+    replayTransferResponse: null, lastTransferPayload: null,
+    lastAction: null, lastResponse: null, resultPanel: null, demoProgress: {}
   };
 
-  // Hidden form elements (preserved from existing app.js for payload templates)
-  const authUsername = document.getElementById("auth-username");
-  const authPassword = document.getElementById("auth-password");
-  const authState = document.getElementById("auth-state");
-  const setupOutput = document.getElementById("setup-output");
-  const responseMeta = document.getElementById("response-meta");
-  const responseOutput = document.getElementById("response-output");
-  const resultSummary = document.getElementById("result-summary");
-  const resultSummaryTitle = document.getElementById("result-summary-title");
-  const resultSummaryBody = document.getElementById("result-summary-body");
-  const resultSummaryDetail = document.getElementById("result-summary-detail");
-
-  // New UI elements
-  const resultStatusBadge = document.getElementById("result-status-badge");
-  const resultJournalRow = document.getElementById("result-journal-row");
-  const transferProofBlock = document.getElementById("transfer-proof-block");
-  const transferFirstJournalId = document.getElementById("transfer-first-journal-id");
-  const transferReplayJournalId = document.getElementById("transfer-replay-journal-id");
-  const transferProofConclusion = document.getElementById("transfer-proof-conclusion");
-  const processingFlow = document.getElementById("processing-flow");
-  const processingFlowSteps = document.getElementById("processing-flow-steps");
-  const rawJsonSection = document.getElementById("raw-json-section");
-  const adminBadge = document.getElementById("admin-badge");
-  const refreshPanelBtn = document.getElementById("refresh-panel");
+  const $ = (id) => document.getElementById(id);
+  const authUsername = $("auth-username");
+  const authPassword = $("auth-password");
+  const authState = $("auth-state");
+  const setupOutput = $("setup-output");
+  const responseMeta = $("response-meta");
+  const responseOutput = $("response-output");
+  const resultSummary = $("result-summary");
+  const resultSummaryTitle = $("result-summary-title");
+  const resultSummaryBody = $("result-summary-body");
+  const resultSummaryDetail = $("result-summary-detail");
+  const resultStatusBadge = $("result-status-badge");
+  const resultJournalRow = $("result-journal-row");
+  const resultReferenceLabel = $("result-reference-label");
+  const resultReferenceValue = $("result-reference-value");
+  const resultBalances = $("result-balances");
+  const resultMetrics = $("result-metrics");
+  const transferProofBlock = $("transfer-proof-block");
+  const transferFirstJournalId = $("transfer-first-journal-id");
+  const transferReplayJournalId = $("transfer-replay-journal-id");
+  const transferProofConclusion = $("transfer-proof-conclusion");
+  const rawJsonSection = $("raw-json-section");
 
   const actionConfig = {
-    "payment-authorize": { endpoint: "/api/payments/authorize-hold", textareaId: "payment-authorize-payload", flowLabel: "payment-authorize" },
-    "payment-capture": { endpoint: "/api/payments/capture-hold", textareaId: "payment-capture-payload", flowLabel: "payment-capture" },
-    "payment-void": { endpoint: "/api/payments/void-hold", textareaId: "payment-void-payload", flowLabel: "payment-void" },
-    "transfer-internal": { endpoint: "/api/transfers/internal", textareaId: "transfer-payload", flowLabel: "transfer" },
-    "transfer-replay": { endpoint: "/api/transfers/internal", textareaId: "transfer-payload", flowLabel: "transfer-replay" },
-    "deposit-open": { endpoint: "/api/deposits/open", textareaId: "deposit-open-payload", flowLabel: "deposit" },
-    "deposit-accrue": { endpoint: "/api/deposits/accrue", textareaId: "deposit-accrue-payload", flowLabel: "deposit" },
-    "deposit-maturity": { endpoint: "/api/deposits/maturity", textareaId: "deposit-maturity-payload", flowLabel: "deposit" },
-    "lending-disburse": { endpoint: "/api/lending/disburse", textareaId: "lending-disburse-payload", flowLabel: "lending" },
-    "lending-repay": { endpoint: "/api/lending/repay", textareaId: "lending-repay-payload", flowLabel: "lending" }
+    "payment-authorize": { endpoint: "/api/payments/authorize-hold", textareaId: "payment-authorize-payload" },
+    "payment-capture": { endpoint: "/api/payments/capture-hold", textareaId: "payment-capture-payload" },
+    "payment-void": { endpoint: "/api/payments/void-hold", textareaId: "payment-void-payload" },
+    "transfer-internal": { endpoint: "/api/transfers/internal", textareaId: "transfer-payload" },
+    "transfer-replay": { endpoint: "/api/transfers/internal", textareaId: "transfer-payload" },
+    "deposit-open": { endpoint: "/api/deposits/open", textareaId: "deposit-open-payload" },
+    "deposit-accrue": { endpoint: "/api/deposits/accrue", textareaId: "deposit-accrue-payload" },
+    "deposit-maturity": { endpoint: "/api/deposits/maturity", textareaId: "deposit-maturity-payload" },
+    "lending-disburse": { endpoint: "/api/lending/disburse", textareaId: "lending-disburse-payload" },
+    "lending-repay": { endpoint: "/api/lending/repay", textareaId: "lending-repay-payload" }
   };
 
-  // Tab switching
-  document.querySelectorAll(".tab-btn").forEach((button) => {
-    button.addEventListener("click", () => activateTab(button.dataset.tab));
+  document.querySelectorAll(".tab-btn").forEach((button) =>
+    button.addEventListener("click", () => activateTab(button.dataset.tab)));
+  document.querySelectorAll("[data-go]").forEach((button) =>
+    button.addEventListener("click", () => activateTab(button.dataset.go)));
+  $("start-demo").addEventListener("click", () => activateTab("transfer"));
+  document.querySelectorAll("[data-fill]").forEach((button) => button.addEventListener("click", () => {
+    authUsername.value = button.dataset.fill;
+    authPassword.value = button.dataset.fill;
+    document.querySelectorAll("[data-fill]").forEach((item) => item.classList.toggle("selected", item === button));
+    saveCredentials();
+  }));
+  $("save-auth").addEventListener("click", saveCredentials);
+  $("run-setup").addEventListener("click", runSetup);
+  document.querySelectorAll(".action-btn").forEach((button) =>
+    button.addEventListener("click", () => runAction(button.dataset.action, button)));
+  $("new-transfer-key").addEventListener("click", () => {
+    $("transfer-key").value = idem("transfer-internal");
+    state.firstTransferResponse = null;
+    state.replayTransferResponse = null;
+    state.lastTransferPayload = null;
+    state.firstTransferJournalId = null;
+    markProgress("transfer", false);
+    markProgress("replay", false);
+    markProgress("verify", false);
+    transferProofBlock.classList.add("hidden");
+    renderVerification();
+  });
+  $("open-journal").addEventListener("click", openJournal);
+  $("journal-close").addEventListener("click", () => $("journal-dialog").close());
+  $("journal-dialog").addEventListener("click", (event) => {
+    if (event.target === $("journal-dialog")) $("journal-dialog").close();
   });
 
-  // Data-fill buttons (sidebar account selector)
-  document.querySelectorAll("[data-fill]").forEach((button) => {
-    button.addEventListener("click", () => {
-      const user = button.dataset.fill;
-      authUsername.value = user;
-      authPassword.value = user;
-      saveCredentials();
-    });
-  });
-
-  document.getElementById("save-auth").addEventListener("click", saveCredentials);
-  document.getElementById("run-setup").addEventListener("click", runSetup);
-
-  // Action buttons
-  document.querySelectorAll(".action-btn").forEach((button) => {
-    button.addEventListener("click", () => runAction(button.dataset.action));
-  });
-
-  // Refresh panel button
-  if (refreshPanelBtn) {
-    refreshPanelBtn.addEventListener("click", () => {
-      resultSummary.style.display = "none";
-      transferProofBlock.classList.add("hidden");
-      processingFlow.classList.add("hidden");
-      rawJsonSection.classList.add("hidden");
-      responseMeta.textContent = "Chưa gửi request.";
-      responseOutput.textContent = "{}";
-    });
-  }
-
-  // Auto-fill demo_admin on load (wrapped in DOMContentLoaded for reliability)
   function initOnReady() {
     authUsername.value = "demo_admin";
     authPassword.value = "demo_admin";
     saveCredentials();
     refreshPayloadTemplates();
+    const transferPayload = JSON.parse($("transfer-payload").value);
+    $("transfer-key").value = transferPayload.idempotencyKey;
+    $("transfer-amount").value = transferPayload.amountMinor;
+    $("payment-amount").value = JSON.parse($("payment-authorize-payload").value).amountMinor;
+    activateTab("overview");
+    renderVerification();
   }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initOnReady);
-  } else {
-    initOnReady();
-  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initOnReady);
+  else initOnReady();
 
   function activateTab(tabName) {
-    document.querySelectorAll(".tab-btn").forEach((tab) => {
-      const isActive = tab.dataset.tab === tabName;
-      tab.classList.toggle("tab-active", isActive);
-    });
-    document.querySelectorAll(".tab-body").forEach((panel) => {
-      if (panel.dataset.panel === tabName) {
-        panel.classList.remove("hidden");
-      } else {
-        panel.classList.add("hidden");
-      }
-    });
+    document.querySelectorAll(".tab-btn").forEach((tab) =>
+      tab.classList.toggle("tab-active", tab.dataset.tab === tabName));
+    document.querySelectorAll(".tab-body").forEach((panel) =>
+      panel.classList.toggle("hidden", panel.dataset.panel !== tabName));
+    resultSummary.classList.toggle("hidden", state.resultPanel !== tabName);
+    if (tabName === "verify") renderVerification();
   }
 
   function saveCredentials() {
@@ -120,437 +110,274 @@
     const password = authPassword.value || "";
     if (!username || !password) {
       setAuthState("Chưa có credentials.", true);
+      state.authHeader = null;
       return;
     }
     state.actor = username;
     state.authHeader = `Basic ${btoa(`${username}:${password}`)}`;
-    setAuthState(`Credentials: ${username}`);
-    markProgress("admin", true);
-    if (adminBadge) {
-      adminBadge.classList.remove("hidden");
-    }
+    setAuthState(`Dùng ${username} · được xác thực khi gọi API`);
     refreshPayloadTemplates();
   }
 
   async function runSetup() {
-    const btn = document.getElementById("run-setup");
-    const origText = btn.innerHTML;
-    btn.innerHTML = '<span class="material-symbols-outlined animate-spin text-[20px]">sync</span> Đang khởi tạo...';
-    btn.disabled = true;
-
+    const button = $("run-setup");
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "Đang khởi tạo…";
     const result = await callApi("POST", "/api/demo/setup", null);
     renderResult("POST /api/demo/setup", result);
-
-    btn.innerHTML = origText;
-    btn.disabled = false;
-
-    if (result.ok && result.body) {
-      state.setup = result.body;
-      if (state.setup.sampleContractIds && state.setup.sampleContractIds.maturityReadyContractId) {
-        state.depositContractId = state.setup.sampleContractIds.maturityReadyContractId;
-      }
-      setupOutput.textContent = pretty(result.body);
-      markProgress("setup", true);
-      showResultSummary(
-        "SUCCESS",
-        "Demo Data Initialized",
-        "Customer, account, product, and ledger IDs loaded into all payload templates.",
-        null,
-        null
-      );
-      showProcessingFlow("setup");
-      refreshPayloadTemplates();
+    button.disabled = false;
+    button.textContent = original;
+    if (!result.ok || !result.body || typeof result.body !== "object") {
+      showRequestError(result);
+      return;
     }
+    state.setup = result.body;
+    state.holdId = ZERO_UUID;
+    state.heldAmountMinor = null;
+    state.depositContractId = result.body.sampleContractIds?.maturityReadyContractId || ZERO_UUID;
+    state.loanContractId = ZERO_UUID;
+    state.firstTransferResponse = null;
+    state.replayTransferResponse = null;
+    state.lastTransferPayload = null;
+    state.firstTransferJournalId = null;
+    transferProofBlock.classList.add("hidden");
+    $("transfer-source-preview").textContent = "Chưa có số dư từ response";
+    $("transfer-destination-preview").textContent = "Chưa có số dư từ response";
+    setupOutput.textContent = pretty(result.body);
+    refreshPayloadTemplates();
+    const transferPayload = JSON.parse($("transfer-payload").value);
+    $("transfer-key").value = transferPayload.idempotencyKey;
+    $("transfer-amount").value = transferPayload.amountMinor;
+    $("payment-amount").value = JSON.parse($("payment-authorize-payload").value).amountMinor;
+    $("setup-description").textContent = `Đã khởi tạo ${Object.keys(result.body.accountIds || {}).length} tài khoản mẫu. Chạy giao dịch để xem số dư thật từ response.`;
+    markProgress("setup", true);
+    ["transfer", "replay", "verify"].forEach((step) => markProgress(step, false));
+    renderStory({ title: "Dữ liệu demo", headline: "Đã khởi tạo dữ liệu mẫu", explanation: result.body.note || "Payload đã lấy ID do backend trả về.", balances: [], metrics: [], referenceId: null }, "success");
+    renderVerification();
   }
 
-  async function runAction(actionName) {
+  async function runAction(actionName, button) {
     const config = actionConfig[actionName];
     if (!config) return;
-
-    const textarea = document.getElementById(config.textareaId);
-    if (!textarea) return;
-
+    if (!state.setup) {
+      showLocalError("Hãy khởi tạo dữ liệu demo trước khi gửi giao dịch.");
+      return;
+    }
     let payload;
     try {
-      payload = JSON.parse(textarea.value);
+      payload = JSON.parse($(config.textareaId).value);
     } catch (_error) {
-      renderLocalError(`Invalid JSON payload for ${actionName}.`);
+      showLocalError("Payload JSON không hợp lệ.");
       return;
     }
-
-    // Show loading state on the clicked button
-    const btn = document.querySelector(`.action-btn[data-action="${actionName}"]`);
-    const origText = btn ? btn.innerHTML : null;
-    if (btn) {
-      btn.innerHTML = '<span class="material-symbols-outlined animate-spin">sync</span>';
-      btn.disabled = true;
+    if (actionName === "transfer-internal") {
+      const amount = Number($("transfer-amount").value);
+      const key = $("transfer-key").value.trim();
+      if (!Number.isSafeInteger(amount) || amount <= 0 || !key) {
+        showLocalError("Nhập số tiền nguyên dương và idempotency key.");
+        return;
+      }
+      payload.amountMinor = amount;
+      payload.idempotencyKey = key;
+      $("transfer-payload").value = pretty(payload);
     }
-
+    if (actionName === "transfer-replay") {
+      if (!state.lastTransferPayload) {
+        showLocalError("Hãy chuyển tiền một lần trước khi gửi lại cùng key.");
+        return;
+      }
+      payload = { ...state.lastTransferPayload };
+    }
+    if (actionName === "payment-authorize") {
+      const amount = Number($("payment-amount").value);
+      if (!Number.isSafeInteger(amount) || amount <= 0) {
+        showLocalError("Nhập số tiền giữ nguyên dương.");
+        return;
+      }
+      payload.amountMinor = amount;
+      $(config.textareaId).value = pretty(payload);
+    }
+    if ((actionName === "payment-capture" || actionName === "payment-void") && state.holdId === ZERO_UUID) {
+      showLocalError("Hãy giữ tiền trước khi hoàn tất hoặc huỷ.");
+      return;
+    }
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = "Đang xử lý…";
     const result = await callApi("POST", config.endpoint, payload);
     renderResult(`POST ${config.endpoint}`, result);
-
-    if (btn) {
-      btn.innerHTML = origText;
-      btn.disabled = false;
-    }
-
-    if (!result.ok || !result.body) {
-      showResultSummary("ERROR", `Status: ${result.status} ${result.statusText}`, result.body?.message || "Request failed.", null, null);
+    button.disabled = false;
+    button.textContent = original;
+    if (!result.ok || !result.body || typeof result.body !== "object") {
+      showRequestError(result);
       return;
     }
 
-    // --- Payment Authorize ---
-    if (actionName === "payment-authorize" && result.body.holdId) {
-      state.holdId = result.body.holdId;
-      markProgress("authorize", true);
-      const status = result.body.status || "AUTHORIZED";
-      showResultSummary(
-        "SUCCESS",
-        "Payment Authorized",
-        `Hold ${result.body.holdId} — Status: ${status}`,
-        result.body.journalId || null,
-        `Amount: ${result.body.holdAmountMinor || "—"} ${result.body.currency || ""}`
-      );
-      showProcessingFlow("payment-authorize");
+    const body = result.body;
+    if (actionName === "payment-authorize") {
+      state.holdId = body.holdId || ZERO_UUID;
+      state.heldAmountMinor = body.holdAmountMinor;
       refreshPayloadTemplates();
-      return;
     }
-
-    // --- Payment Capture ---
-    if (actionName === "payment-capture") {
-      markProgress("capture", true);
-      const holdStatus = result.body.holdStatus || "—";
-      const paymentStatus = result.body.paymentStatus || "—";
-      showResultSummary(
-        "SUCCESS",
-        "Payment Captured",
-        `Hold: ${holdStatus}, Payment: ${paymentStatus}`,
-        result.body.journalId || null,
-        `Captured: ${result.body.capturedAmountMinor || "—"} ${result.body.currency || ""}`
-      );
-      showProcessingFlow("payment-capture");
-      return;
-    }
-
-    // --- Payment Void ---
-    if (actionName === "payment-void") {
-      const holdStatus = result.body.status || result.body.holdStatus || "VOIDED";
-      showResultSummary(
-        "SUCCESS",
-        "Hold Voided",
-        `Hold released — Status: ${holdStatus}`,
-        null,
-        "Available balance restored."
-      );
-      showProcessingFlow("payment-void");
-      return;
-    }
-
-    // --- Transfer ---
     if (actionName === "transfer-internal") {
+      state.firstTransferResponse = body;
+      state.replayTransferResponse = null;
+      state.lastTransferPayload = { ...payload };
+      state.firstTransferJournalId = body.journalId || null;
       markProgress("transfer", true);
-      if (!state.firstTransferJournalId) {
-        state.firstTransferJournalId = result.body.journalId;
-      }
-      // Show proof block with partial data (replay not yet)
-      if (transferProofBlock) {
-        transferProofBlock.classList.remove("hidden");
-        transferFirstJournalId.textContent = state.firstTransferJournalId || "—";
-        transferReplayJournalId.textContent = "Chưa replay";
-        transferProofConclusion.textContent = "Chạy Replay để xác minh idempotency.";
-        transferProofConclusion.className = "pt-2 border-t border-[#F59E0B]/10 text-[#F59E0B] font-bold";
-      }
-      showResultSummary(
-        "SUCCESS",
-        "Transfer Completed",
-        `Journal: ${result.body.journalId || "—"}`,
-        result.body.journalId || null,
-        `Status: ${result.body.status || "COMPLETED"} | Amount: ${result.body.amountMinor || "—"} ${result.body.currency || ""}`
-      );
-      showProcessingFlow("transfer");
-      return;
+      markProgress("replay", false);
+      markProgress("verify", false);
+      $("transfer-source-preview").textContent = typeof body.sourceAvailableBalanceAfterMinor === "number"
+        ? `Khả dụng sau: ${view.money(body.sourceAvailableBalanceAfterMinor, body.currency)}` : "Response thiếu số dư nguồn";
+      $("transfer-destination-preview").textContent = typeof body.destinationAvailableBalanceAfterMinor === "number"
+        ? `Khả dụng sau: ${view.money(body.destinationAvailableBalanceAfterMinor, body.currency)}` : "Response thiếu số dư đích";
     }
-
-    // --- Transfer Replay ---
     if (actionName === "transfer-replay") {
-      const currentJournalId = result.body.journalId;
-      if (state.firstTransferJournalId && currentJournalId === state.firstTransferJournalId) {
-        markProgress("replay", true);
-        markProgress("verify", true);
-        if (transferProofBlock) {
-          transferProofBlock.classList.remove("hidden");
-          transferFirstJournalId.textContent = state.firstTransferJournalId;
-          transferReplayJournalId.textContent = currentJournalId;
-          transferProofConclusion.textContent = "Kết luận: Trùng journalId = không double-post";
-          transferProofConclusion.className = "pt-2 border-t border-[#10B981]/10 text-[#10B981] font-bold";
-        }
-        showResultSummary(
-          "SUCCESS",
-          "Idempotency Verified",
-          `Same journalId returned: <code class="font-mono bg-[#f4f3f7] px-1 rounded text-[13px]">${currentJournalId}</code> — no double-post.`,
-          currentJournalId,
-          "Idempotency key replay correctly returned the original transfer result."
-        );
-      } else if (state.firstTransferJournalId) {
-        if (transferProofBlock) {
-          transferProofBlock.classList.remove("hidden");
-          transferFirstJournalId.textContent = state.firstTransferJournalId;
-          transferReplayJournalId.textContent = currentJournalId || "—";
-          transferProofConclusion.textContent = `Cảnh báo: journalId khác với lần đầu (${state.firstTransferJournalId}).`;
-          transferProofConclusion.className = "pt-2 border-t border-[#F59E0B]/10 text-[#F59E0B] font-bold";
-        }
-        showResultSummary(
-          "WARNING",
-          "Replay Result",
-          `Journal: ${currentJournalId || "—"}`,
-          currentJournalId || null,
-          `Note: journalId differs from first transfer (${state.firstTransferJournalId}).`
-        );
-      } else {
-        showResultSummary(
-          "INFO",
-          "Replay Result",
-          `Journal: ${currentJournalId || "—"}`,
-          currentJournalId || null,
-          "Run a transfer first before replay."
-        );
-      }
-      showProcessingFlow("transfer-replay");
-      return;
+      state.replayTransferResponse = body;
+      markProgress("replay", true);
     }
-
-    // --- Deposit Open ---
-    if (actionName === "deposit-open" && result.body.contractId) {
-      state.depositContractId = result.body.contractId;
-      showResultSummary(
-        "SUCCESS",
-        "Deposit Opened",
-        `Contract: ${result.body.contractId}`,
-        null,
-        ""
-      );
-      showProcessingFlow("deposit");
+    if (actionName === "deposit-open" && body.contractId) {
+      state.depositContractId = body.contractId;
       refreshPayloadTemplates();
-      return;
     }
-
-    // --- Deposit Accrue ---
-    if (actionName === "deposit-accrue") {
-      showResultSummary(
-        "SUCCESS",
-        "Interest Accrued",
-        result.body.message || `Contract: ${result.body.contractId || state.depositContractId}`,
-        null,
-        ""
-      );
-      showProcessingFlow("deposit");
-      return;
-    }
-
-    // --- Deposit Maturity ---
-    if (actionName === "deposit-maturity") {
-      showResultSummary(
-        "SUCCESS",
-        "Maturity Processed",
-        result.body.message || `Contract: ${result.body.contractId || state.depositContractId}`,
-        null,
-        ""
-      );
-      showProcessingFlow("deposit");
-      return;
-    }
-
-    // --- Lending Disburse ---
-    if (actionName === "lending-disburse" && result.body.contractId) {
-      state.loanContractId = result.body.contractId;
-      showResultSummary(
-        "SUCCESS",
-        "Loan Disbursed",
-        `Contract: ${result.body.contractId}`,
-        null,
-        ""
-      );
-      showProcessingFlow("lending");
+    if (actionName === "lending-disburse" && body.contractId) {
+      state.loanContractId = body.contractId;
       refreshPayloadTemplates();
-      return;
     }
-
-    // --- Lending Repay ---
-    if (actionName === "lending-repay") {
-      showResultSummary(
-        "SUCCESS",
-        "Loan Repaid",
-        result.body.message || `Contract: ${result.body.contractId || state.loanContractId}`,
-        null,
-        ""
-      );
-      showProcessingFlow("lending");
-      return;
-    }
-
-    // Fallback for any other action
-    showResultSummary(
-      result.ok ? "SUCCESS" : "ERROR",
-      actionName,
-      pretty(result.body).substring(0, 200),
-      null,
-      ""
-    );
+    state.lastAction = actionName;
+    state.lastResponse = body;
+    renderStory(view.describeAction(actionName, body), "success");
+    renderTransferProof();
+    renderVerification();
   }
 
-  function showResultSummary(status, title, body, journalId, detail) {
-    resultSummary.style.display = "block";
-
-    // Status badge
-    if (resultStatusBadge) {
-      resultStatusBadge.textContent = status;
-      resultStatusBadge.className = "px-3 py-1 rounded-full text-[12px] tracking-wider font-bold flex items-center gap-1";
-      if (status === "SUCCESS") {
-        resultStatusBadge.classList.add("bg-[#10B981]/10", "text-[#10B981]");
-        resultStatusBadge.innerHTML = '<span class="material-symbols-outlined text-[16px]" style="font-variation-settings:\'FILL\'1">check_circle</span> SUCCESS';
-      } else if (status === "ERROR") {
-        resultStatusBadge.classList.add("bg-[#EF4444]/10", "text-[#EF4444]");
-        resultStatusBadge.innerHTML = '<span class="material-symbols-outlined text-[16px]" style="font-variation-settings:\'FILL\'1">error</span> ERROR';
-      } else if (status === "WARNING") {
-        resultStatusBadge.classList.add("bg-[#F59E0B]/10", "text-[#F59E0B]");
-        resultStatusBadge.innerHTML = '<span class="material-symbols-outlined text-[16px]" style="font-variation-settings:\'FILL\'1">warning</span> WARNING';
-      } else {
-        resultStatusBadge.classList.add("bg-[#d6e0f6]", "text-[#002045]");
-        resultStatusBadge.innerHTML = '<span class="material-symbols-outlined text-[16px]">info</span> INFO';
-      }
-    }
-
-    // Journal ID row
-    if (resultJournalRow) {
-      if (journalId) {
-        resultJournalRow.classList.remove("hidden");
-        resultSummaryTitle.textContent = journalId;
-      } else {
-        resultJournalRow.classList.add("hidden");
-      }
-    }
-
-    resultSummaryBody.innerHTML = body;
-    resultSummaryDetail.textContent = detail || "";
+  function showLocalError(message) {
+    renderLocalError(message);
+    renderStory({ title: "Chưa gửi giao dịch", headline: message, explanation: "Kiểm tra dữ liệu đầu vào rồi thử lại.", balances: [], metrics: [], referenceId: null }, "error");
   }
 
-  function showProcessingFlow(flowType) {
-    if (!processingFlow || !processingFlowSteps) return;
+  function showRequestError(result) {
+    const message = typeof result.body === "object" && result.body?.message ? result.body.message : "Request thất bại.";
+    renderStory({ title: `HTTP ${result.status} ${result.statusText}`, headline: message,
+      explanation: result.status === 0 ? "Không kết nối được tới backend." : "Xem JSON kỹ thuật để biết thêm chi tiết.",
+      balances: [], metrics: [], referenceId: null }, "error");
+  }
 
-    processingFlow.classList.remove("hidden");
+  function node(tag, className, text) {
+    const item = document.createElement(tag);
+    if (className) item.className = className;
+    if (text !== undefined) item.textContent = text;
+    return item;
+  }
 
-    const flows = {
-      "setup": [
-        "Demo Data Created",
-        "Customer & Accounts Provisioned",
-        "Product Versions Activated",
-        "Ledger Accounts Mapped"
-      ],
-      "payment-authorize": [
-        "Request Validated",
-        "Hold Created",
-        "Available Balance Reserved",
-        "Audit/Outbox Written"
-      ],
-      "payment-capture": [
-        "Request Validated",
-        "Hold Checked",
-        "Ledger Journal Posted",
-        "Audit/Outbox Written"
-      ],
-      "payment-void": [
-        "Request Validated",
-        "Hold Checked",
-        "Hold Released",
-        "Audit/Outbox Written"
-      ],
-      "transfer": [
-        "Request Validated",
-        "Idempotency Key Checked",
-        "Ledger Journal Posted",
-        "Audit/Outbox Written"
-      ],
-      "transfer-replay": [
-        "Request Validated",
-        "Idempotency Key Checked",
-        "Previous Result Returned",
-        "Audit/Outbox Written"
-      ],
-      "deposit": [
-        "Request Validated",
-        "Product Version Verified",
-        "Ledger Journal Posted",
-        "Audit/Outbox Written"
-      ],
-      "lending": [
-        "Request Validated",
-        "Contract Validated",
-        "Ledger Journal Posted",
-        "Audit/Outbox Written"
-      ]
-    };
+  function renderStory(story, tone) {
+    state.resultPanel = document.querySelector(".tab-btn.tab-active")?.dataset.tab || "overview";
+    resultSummary.classList.remove("hidden", "error", "warning");
+    if (tone !== "success") resultSummary.classList.add(tone);
+    resultSummaryTitle.textContent = story.title;
+    resultSummaryBody.textContent = story.headline;
+    resultSummaryDetail.textContent = [story.explanation, story.status ? `Trạng thái: ${story.status}` : "", story.dataNote].filter(Boolean).join(" ");
+    resultStatusBadge.textContent = tone === "success" ? "API THÀNH CÔNG" : tone === "warning" ? "CẦN KIỂM TRA" : "LỖI";
+    resultBalances.replaceChildren();
+    (story.balances || []).forEach((row) => {
+      const card = node("div", "balance-card");
+      card.append(node("h3", "", row.label));
+      addBalanceLine(card, "Trước", row.before);
+      addBalanceLine(card, "Sau", row.after);
+      addBalanceLine(card, "Thay đổi", row.delta, row.delta.startsWith("+") ? "positive" : row.delta.startsWith("−") ? "negative" : "");
+      if (row.postedAfter) addBalanceLine(card, "Ghi sổ sau", row.postedAfter);
+      resultBalances.append(card);
+    });
+    resultMetrics.replaceChildren();
+    (story.metrics || []).forEach((item) => {
+      const block = node("div", "metric");
+      block.append(node("span", "", item.label), node("strong", "", item.value));
+      resultMetrics.append(block);
+    });
+    resultJournalRow.classList.toggle("hidden", !story.referenceId);
+    resultReferenceLabel.textContent = story.referenceLabel || "Mã tham chiếu";
+    resultReferenceValue.textContent = story.referenceId || "—";
+    $("open-journal").classList.toggle("hidden", !story.journalId);
+    resultSummary.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 
-    const steps = flows[flowType] || flows["transfer"];
-    processingFlowSteps.innerHTML = steps.map((step, i) => {
-      const isLast = i === steps.length - 1;
-      return `
-        <div class="relative">
-          <div class="absolute -left-[27px] top-1 w-2 h-2 rounded-full ${isLast ? 'bg-[#002045] ring-2 ring-[#d6e3ff]' : 'bg-[#10B981]'}"></div>
-          <p class="text-[14px] font-bold">${step}</p>
-        </div>`;
-    }).join("");
+  function addBalanceLine(card, label, value, valueClass = "") {
+    const line = node("div", "balance-line");
+    line.append(node("span", "", label), node("strong", valueClass, value));
+    card.append(line);
+  }
+
+  function renderTransferProof() {
+    if (!state.firstTransferResponse) return;
+    const evidence = view.verifyTransfer(state.firstTransferResponse, state.replayTransferResponse);
+    transferProofBlock.classList.remove("hidden", "warning");
+    transferFirstJournalId.textContent = state.firstTransferResponse.journalId || "—";
+    transferReplayJournalId.textContent = state.replayTransferResponse?.journalId || "Chưa gửi lại";
+    if (evidence.replay.status === "fail" || evidence.balance.status === "fail") {
+      transferProofBlock.classList.add("warning");
+      transferProofConclusion.textContent = "Dữ liệu không khớp; xem response kỹ thuật để điều tra.";
+    } else if (evidence.replay.status === "pass") {
+      transferProofConclusion.textContent = "Cùng mã bút toán, số tiền và số dư trước/sau trong hai response.";
+    } else {
+      transferProofConclusion.textContent = "Đã có response lần đầu. Gửi lại cùng key để đối chiếu.";
+    }
+  }
+
+  function renderVerification() {
+    const evidence = view.verifyTransfer(state.firstTransferResponse, state.replayTransferResponse);
+    const container = $("verify-evidence");
+    container.replaceChildren();
+    const balance = node("div", `verify-card ${evidence.balance.status === "pass" ? "" : evidence.balance.status}`);
+    balance.append(node("h3", "", "Số dư khả dụng của hai tài khoản"));
+    if (evidence.balance.before !== undefined) {
+      balance.append(node("p", "", `Trước: ${evidence.balance.before}`), node("strong", "", `Sau: ${evidence.balance.after}`),
+        node("p", "", `Chênh lệch: ${evidence.balance.difference}`));
+    }
+    balance.append(node("p", "", evidence.balance.detail));
+    const replay = node("div", `verify-card ${evidence.replay.status === "pass" ? "" : evidence.replay.status}`);
+    replay.append(node("h3", "", "Gửi lại cùng idempotency key"), node("strong", "", evidence.replay.status === "pass" ? "2 response · 1 journal ID" :
+      evidence.replay.status === "fail" ? "Response không khớp" : "Chờ gửi lại"), node("p", "", evidence.replay.detail));
+    container.append(balance, replay);
+    markProgress("verify", evidence.balance.status === "pass" && evidence.replay.status === "pass");
+  }
+
+  function openJournal() {
+    if (!state.lastResponse?.journalId) return;
+    const story = view.describeAction(state.lastAction, state.lastResponse);
+    const container = $("journal-details");
+    container.replaceChildren();
+    const content = node("div", "dialog-content");
+    content.append(node("p", "eyebrow accent", "DỮ LIỆU TRẢ VỀ TỪ API"), node("h3", "", story.headline));
+    const ref = node("div", "reference-row");
+    ref.append(node("span", "", "Mã bút toán: "), node("code", "", story.journalId));
+    content.append(ref);
+    const balances = node("div", "balance-grid");
+    story.balances.forEach((row) => {
+      const card = node("div", "balance-card");
+      card.append(node("h3", "", row.label));
+      addBalanceLine(card, "Trước", row.before);
+      addBalanceLine(card, "Sau", row.after);
+      addBalanceLine(card, "Thay đổi", row.delta);
+      balances.append(card);
+    });
+    content.append(balances);
+    const payload = state.lastTransferPayload;
+    if (state.lastAction.startsWith("transfer") && payload) {
+      const key = node("div", "reference-row");
+      key.append(node("span", "", "Idempotency key: "), node("code", "", payload.idempotencyKey));
+      content.append(key);
+    }
+    content.append(node("p", "dialog-note", "Đây là chi tiết từ response của giao dịch. API hiện không trả journal postings, hash hay timeline thực thi, nên màn này không suy diễn các dữ liệu đó."));
+    container.append(content);
+    $("journal-dialog").showModal();
   }
 
   function markProgress(step, done) {
     state.demoProgress[step] = done;
-    // Update check items in sidebar
-    document.querySelectorAll(`[data-check="${step}"]`).forEach((el) => {
-      if (done) {
-        el.classList.add("text-[#10B981]");
-        el.classList.remove("text-[#43474e]");
-        const icon = el.querySelector(".check-icon");
-        if (icon) {
-          icon.textContent = "check_circle";
-          icon.classList.add("text-[#10B981]");
-        }
-      } else {
-        el.classList.remove("text-[#10B981]");
-        el.classList.add("text-[#43474e]");
-        const icon = el.querySelector(".check-icon");
-        if (icon) {
-          icon.textContent = "radio_button_unchecked";
-          icon.classList.remove("text-[#10B981]");
-        }
-      }
-    });
-    // Update stepper dots in sidebar
-    document.querySelectorAll(`[data-step="${step}"]`).forEach((el) => {
-      const dot = el.querySelector(".stepper-dot");
-      const label = el.querySelector(".stepper-label");
-      if (done && dot) {
-        dot.classList.add("bg-[#10B981]");
-        dot.classList.remove("bg-[#dad9dd]");
-      } else if (dot) {
-        dot.classList.remove("bg-[#10B981]", "bg-[#002045]");
-      }
-      if (done && label) {
-        label.classList.add("text-[#002045]", "font-bold");
-        label.classList.remove("text-[#43474e]");
-      }
-      // For current step (next after last completed)
-      if (!done && dot) {
-        const prevStep = getPrevStep(step);
-        if (prevStep && state.demoProgress[prevStep]) {
-          dot.classList.add("bg-[#002045]", "animate-pulse");
-        }
-      }
-    });
-  }
-
-  function getPrevStep(step) {
-    const order = ["admin", "setup", "authorize", "capture", "transfer", "replay", "verify"];
-    const idx = order.indexOf(step);
-    return idx > 0 ? order[idx - 1] : null;
+    document.querySelectorAll(`[data-step="${step}"]`).forEach((item) => item.classList.toggle("done", Boolean(done)));
+    const steps = ["setup", "transfer", "replay", "verify"];
+    $("tour-progress").textContent = `${steps.filter((item) => state.demoProgress[item]).length}/4`;
   }
 
   async function callApi(method, path, payload) {
@@ -612,7 +439,7 @@
       idempotencyKey: idem("pay-authorize"),
       payerAccountId: accountIds.sourceAccountId || ZERO_UUID,
       payeeAccountId: accountIds.destinationAccountId || ZERO_UUID,
-      amountMinor: amounts.paymentAmountMinor || 500000,
+      amountMinor: amounts.paymentAmountMinor ?? 500000,
       currency: "VND",
       paymentType: "CARD",
       description: "Dashboard payment hold",
@@ -626,7 +453,7 @@
     setTextarea("payment-capture-payload", {
       idempotencyKey: idem("pay-capture"),
       holdId: state.holdId,
-      amountMinor: amounts.paymentAmountMinor || 500000,
+      amountMinor: state.heldAmountMinor ?? amounts.paymentAmountMinor ?? 500000,
       debitLedgerAccountId: ledger.paymentCaptureDebitLedgerAccountId || ZERO_UUID,
       creditLedgerAccountId: ledger.paymentCaptureCreditLedgerAccountId || ZERO_UUID,
       beneficiaryCustomerAccountId: accountIds.destinationAccountId || ZERO_UUID,
@@ -766,6 +593,7 @@
 
   function renderLocalError(message) {
     responseMeta.textContent = message;
+    responseOutput.textContent = "{}";
     responseMeta.classList.add("text-[#EF4444]");
     if (rawJsonSection) {
       rawJsonSection.classList.remove("hidden");
