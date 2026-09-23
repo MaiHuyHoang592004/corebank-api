@@ -134,9 +134,9 @@
       </section>
 
       <section class="tab-body hidden" data-panel="verify" aria-labelledby="verify-heading">
-        <div class="section-heading"><p class="eyebrow accent">05 · BẰNG CHỨNG</p><h2 id="verify-heading">Xác minh từ response thật</h2><p>Kiểm tra số tiền rời nguồn và đến đích, rồi đối chiếu response khi gửi lại cùng key.</p></div>
+        <div class="section-heading"><p class="eyebrow accent">05 · BẰNG CHỨNG</p><h2 id="verify-heading">Xác minh từ response thật</h2><p>Kiểm tra số tiền rời nguồn và đến đích, đối chiếu response khi gửi lại cùng key, và đọc lại bút toán kép từ sổ cái.</p></div>
         <div id="verify-evidence" class="verify-grid" aria-live="polite"><div class="verify-card pending"><h3>Tổng số dư khả dụng của hai tài khoản</h3><p>Chạy chuyển tiền để có dữ liệu.</p></div><div class="verify-card pending"><h3>Idempotency</h3><p>Gửi lại cùng key để so sánh.</p></div></div>
-        <p class="quiet verify-footnote">Màn này đối chiếu các trường do TransferResponse trả về. API hiện tại không cung cấp journal postings để xác minh độc lập tổng Nợ/Có hay số dư toàn hệ thống.</p>
+        <p class="quiet verify-footnote">Hai thẻ đầu đối chiếu các trường do TransferResponse trả về. Thẻ thứ ba đọc lại bút toán từ sổ cái để kiểm tổng Nợ và tổng Có. Chưa có API tổng hợp số dư toàn hệ thống, nên màn này không khẳng định điều đó.</p>
         <button type="button" class="button button-outline" data-go="transfer">Đến chuyển tiền</button>
       </section>
 

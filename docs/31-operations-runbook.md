@@ -198,12 +198,14 @@ the `sha-<commit>` tag that is actually deployed.
 ### Environment variable reference
 
 Every entry below was read from `application.yml`, `application-showcase.yml`,
-`.env.example`, `Dockerfile` or `deploy/kubernetes/configmap.yaml`.
+`.env.example`, `Dockerfile`, `deploy/kubernetes/configmap.yaml` or
+`DatabaseUrlEnvironmentPostProcessor`.
 
 | Variable | Bound property | Default | Notes |
 |---|---|---|---|
 | `PORT` / `SERVER_PORT` | `server.port` | `9090` | `PORT` wins; `SERVER_PORT` is the fallback |
-| `SPRING_DATASOURCE_URL` | `spring.datasource.url` | `jdbc:postgresql://localhost:5433/corebank` | a `postgres://` URL is rewritten to JDBC at startup by `RenderDatabaseUrlEnvironmentPostProcessor` |
+| `SPRING_DATASOURCE_URL` | `spring.datasource.url` | `jdbc:postgresql://localhost:5433/corebank` | a `postgres://` URL is rewritten to JDBC at startup by `DatabaseUrlEnvironmentPostProcessor`, with the credentials moved into the username and password properties |
+| `DATABASE_URL` | `spring.datasource.url` (and username, password) | unset | read by `DatabaseUrlEnvironmentPostProcessor` only when `SPRING_DATASOURCE_URL` is unset; the form Railway's PostgreSQL service publishes |
 | `SPRING_DATASOURCE_USERNAME` | `spring.datasource.username` | `corebank` | from the Secret in Kubernetes |
 | `SPRING_DATASOURCE_PASSWORD` | `spring.datasource.password` | `corebank123` | from the Secret in Kubernetes |
 | `COREBANK_DB_POOL_SIZE` | `spring.datasource.hikari.maximum-pool-size` | `20` | see [Operating thresholds and capacity](#operating-thresholds-and-capacity) before changing |
@@ -226,7 +228,7 @@ Every entry below was read from `application.yml`, `application-showcase.yml`,
 Two entries need their behaviour stated rather than their default:
 
 `SPRING_PROFILES_ACTIVE=showcase` is the profile the Kubernetes ConfigMap sets and
-`DEPLOY.md` sets on Render. It turns on `corebank.showcase.token-gate-enabled`, and
+`DEPLOY.md` sets on Railway and Render. It turns on `corebank.showcase.token-gate-enabled`, and
 `DemoSecurityConfig` responds to that flag with `denyAll()` on
 `/api/ops/maintenance/**`, `/api/ops/executions/**` and `/api/ops/security/**`. That is
 a flat denial, not a token gate: nothing anywhere in `src/main/java` reads
@@ -731,7 +733,7 @@ job, and saying so is the point of the table.
 Two things apply to every HTTP-invoked job below. They need `ROLE_OPS` or `ROLE_ADMIN`
 (approval execution needs the `APPROVAL_EXECUTE` permission instead). And under the
 `showcase` profile, everything under `/api/ops/maintenance/**` and
-`/api/ops/executions/**` is denied outright — so in the Kubernetes and Render
+`/api/ops/executions/**` is denied outright — so in the Kubernetes, Railway and Render
 deployments as configured, these jobs cannot be invoked over HTTP at all. See
 [the environment variable reference](#environment-variable-reference).
 

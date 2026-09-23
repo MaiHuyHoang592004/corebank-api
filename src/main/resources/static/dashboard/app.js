@@ -1,5 +1,5 @@
 (() => {
-  window.__finledgerLoaded = true;
+  window.__corebankDashboardLoaded = true;
   try {
   const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
   const view = window.DemoPresentation;
@@ -9,6 +9,7 @@
     depositContractId: ZERO_UUID, loanContractId: ZERO_UUID,
     firstTransferJournalId: null, firstTransferResponse: null,
     replayTransferResponse: null, lastTransferPayload: null,
+    firstJournal: null, journals: {},
     lastAction: null, lastResponse: null, resultPanel: null, demoProgress: {}
   };
 
@@ -69,6 +70,7 @@
     state.replayTransferResponse = null;
     state.lastTransferPayload = null;
     state.firstTransferJournalId = null;
+    state.firstJournal = null;
     markProgress("transfer", false);
     markProgress("replay", false);
     markProgress("verify", false);
@@ -141,6 +143,8 @@
     state.replayTransferResponse = null;
     state.lastTransferPayload = null;
     state.firstTransferJournalId = null;
+    state.firstJournal = null;
+    state.journals = {};
     transferProofBlock.classList.add("hidden");
     $("transfer-source-preview").textContent = "Chưa có số dư từ response";
     $("transfer-destination-preview").textContent = "Chưa có số dư từ response";
@@ -225,6 +229,7 @@
       state.replayTransferResponse = null;
       state.lastTransferPayload = { ...payload };
       state.firstTransferJournalId = body.journalId || null;
+      state.firstJournal = null;
       markProgress("transfer", true);
       markProgress("replay", false);
       markProgress("verify", false);
@@ -247,9 +252,32 @@
     }
     state.lastAction = actionName;
     state.lastResponse = body;
-    renderStory(view.describeAction(actionName, body), "success");
+    const story = view.describeAction(actionName, body, { first: state.firstTransferResponse });
+    renderStory(story, story.tone || "success");
     renderTransferProof();
     renderVerification();
+    if (actionName === "transfer-internal" && body.journalId) {
+      const journal = await loadJournal(body.journalId);
+      // A later transfer may have replaced the first one while this request was in flight.
+      if (state.firstTransferJournalId === body.journalId) {
+        state.firstJournal = journal;
+        renderVerification();
+      }
+    }
+  }
+
+  /**
+   * Reads the posted journal back from the ledger. Returns { ok, journal } or { ok: false,
+   * message }; a failure here never undoes what the transfer response already showed.
+   */
+  async function loadJournal(journalId) {
+    if (state.journals[journalId]) return state.journals[journalId];
+    const result = await callApi("GET", `/api/reporting/journals/${encodeURIComponent(journalId)}`, null);
+    const outcome = result.ok && result.body && typeof result.body === "object"
+      ? { ok: true, journal: result.body }
+      : { ok: false, message: `Không đọc được bút toán (HTTP ${result.status}).` };
+    if (outcome.ok) state.journals[journalId] = outcome;
+    return outcome;
   }
 
   function showLocalError(message) {
@@ -338,39 +366,89 @@
     const replay = node("div", `verify-card ${evidence.replay.status === "pass" ? "" : evidence.replay.status}`);
     replay.append(node("h3", "", "Gửi lại cùng idempotency key"), node("strong", "", evidence.replay.status === "pass" ? "2 response · 1 journal ID" :
       evidence.replay.status === "fail" ? "Response không khớp" : "Chờ gửi lại"), node("p", "", evidence.replay.detail));
-    container.append(balance, replay);
+    const ledger = node("div", "verify-card pending");
+    ledger.append(node("h3", "", "Bút toán kép: tổng Nợ = tổng Có"));
+    if (state.firstJournal?.ok) {
+      const entry = view.describeJournal(state.firstJournal.journal);
+      ledger.className = `verify-card ${entry.balanced ? "" : "fail"}`;
+      ledger.append(node("strong", "", entry.balanced ? "Chênh lệch 0" : `Chênh lệch ${entry.difference}`),
+        node("p", "", `Nợ ${entry.totalDebit} · Có ${entry.totalCredit}`),
+        node("p", "", "Đọc lại từ sổ cái qua GET /api/reporting/journals/{id}, không lấy từ response chuyển tiền."));
+    } else if (state.firstJournal) {
+      ledger.className = "verify-card fail";
+      ledger.append(node("p", "", state.firstJournal.message));
+    } else {
+      ledger.append(node("p", "", state.firstTransferResponse ? "Đang đọc bút toán…" : "Chạy chuyển tiền để đọc bút toán."));
+    }
+    container.append(balance, replay, ledger);
     markProgress("verify", evidence.balance.status === "pass" && evidence.replay.status === "pass");
   }
 
-  function openJournal() {
-    if (!state.lastResponse?.journalId) return;
-    const story = view.describeAction(state.lastAction, state.lastResponse);
+  async function openJournal() {
+    const journalId = state.lastResponse?.journalId;
+    if (!journalId) return;
     const container = $("journal-details");
+    container.replaceChildren(node("p", "dialog-note", "Đang đọc bút toán từ sổ cái…"));
+    $("journal-dialog").showModal();
+    const outcome = await loadJournal(journalId);
     container.replaceChildren();
     const content = node("div", "dialog-content");
-    content.append(node("p", "eyebrow accent", "DỮ LIỆU TRẢ VỀ TỪ API"), node("h3", "", story.headline));
-    const ref = node("div", "reference-row");
-    ref.append(node("span", "", "Mã bút toán: "), node("code", "", story.journalId));
-    content.append(ref);
-    const balances = node("div", "balance-grid");
-    story.balances.forEach((row) => {
-      const card = node("div", "balance-card");
-      card.append(node("h3", "", row.label));
-      addBalanceLine(card, "Trước", row.before);
-      addBalanceLine(card, "Sau", row.after);
-      addBalanceLine(card, "Thay đổi", row.delta);
-      balances.append(card);
+    content.append(node("p", "eyebrow accent", "ĐỌC LẠI TỪ SỔ CÁI"));
+    if (!outcome.ok) {
+      content.append(node("h3", "", "Không hiển thị được bút toán"), node("p", "dialog-note", outcome.message),
+        node("p", "dialog-note", `Mã bút toán: ${journalId}`));
+      container.append(content);
+      return;
+    }
+    const entry = view.describeJournal(outcome.journal);
+    content.append(node("h3", "", "Bút toán kép"));
+
+    const meta = node("div", "journal-meta");
+    [["Mã bút toán", entry.journalId], ["Loại", entry.type], ["Người lập", entry.actor],
+      ["Thời điểm", entry.createdAt ? new Date(entry.createdAt).toLocaleString("vi-VN") : "—"]].forEach(([label, value]) => {
+      const item = node("div");
+      item.append(node("span", "", label), node("strong", "", value));
+      meta.append(item);
     });
-    content.append(balances);
+    content.append(meta);
+
+    const table = node("table", "journal-table");
+    const head = node("thead"); const headRow = node("tr");
+    [["Bên", ""], ["Tài khoản", ""], ["Tài khoản sổ cái", ""], ["Nợ", "num"], ["Có", "num"]]
+      .forEach(([label, cls]) => headRow.append(node("th", cls, label)));
+    head.append(headRow);
+    const bodyRows = node("tbody");
+    entry.lines.forEach((line) => {
+      const row = node("tr");
+      row.append(node("td", "side", line.side), node("td", "", line.account), node("td", "", line.name),
+        node("td", "num", line.debit), node("td", "num", line.credit));
+      bodyRows.append(row);
+    });
+    const foot = node("tfoot"); const totals = node("tr");
+    totals.append(node("td", "", "Tổng"), node("td", "", ""), node("td", "", ""),
+      node("td", "num", entry.totalDebit), node("td", "num", entry.totalCredit));
+    foot.append(totals);
+    table.append(head, bodyRows, foot);
+    const scroll = node("div", "journal-scroll");
+    scroll.append(table);
+    content.append(scroll);
+
+    const verdict = node("div", `journal-verdict ${entry.balanced ? "" : "unbalanced"}`);
+    verdict.append(node("span", "", entry.verdict), node("span", "", `Chênh lệch ${entry.difference}`));
+    content.append(verdict);
+
+    const hash = node("p", "journal-hash");
+    hash.append("Chuỗi hash: bút toán trước ", node("code", "", entry.prevRowHash), " → bút toán này ",
+      node("code", "", entry.rowHash), ". Sổ cái chỉ ghi thêm, không sửa.");
+    content.append(hash);
+
     const payload = state.lastTransferPayload;
-    if (state.lastAction.startsWith("transfer") && payload) {
+    if (state.lastAction?.startsWith("transfer") && payload) {
       const key = node("div", "reference-row");
       key.append(node("span", "", "Idempotency key: "), node("code", "", payload.idempotencyKey));
       content.append(key);
     }
-    content.append(node("p", "dialog-note", "Đây là chi tiết từ response của giao dịch. API hiện không trả journal postings, hash hay timeline thực thi, nên màn này không suy diễn các dữ liệu đó."));
     container.append(content);
-    $("journal-dialog").showModal();
   }
 
   function markProgress(step, done) {
@@ -581,8 +659,7 @@
     if (result.headers.retryAfter) metaParts.push(`retryAfter=${result.headers.retryAfter}s`);
 
     responseMeta.textContent = metaParts.join(" | ");
-    responseMeta.classList.toggle("text-[#EF4444]", !result.ok);
-    responseMeta.classList.toggle("text-white/60", result.ok);
+    responseMeta.classList.toggle("is-error", !result.ok);
     responseOutput.textContent = pretty(result.body);
 
     // Show the raw JSON section
@@ -594,7 +671,7 @@
   function renderLocalError(message) {
     responseMeta.textContent = message;
     responseOutput.textContent = "{}";
-    responseMeta.classList.add("text-[#EF4444]");
+    responseMeta.classList.add("is-error");
     if (rawJsonSection) {
       rawJsonSection.classList.remove("hidden");
     }
@@ -603,8 +680,7 @@
   function setAuthState(message, isError = false) {
     if (authState) {
       authState.textContent = message;
-      authState.classList.toggle("text-[#EF4444]", isError);
-      authState.classList.toggle("text-[#10B981]", !isError);
+      authState.classList.toggle("is-error", isError);
     }
   }
 
@@ -625,8 +701,8 @@
   }
 
   } catch (e) {
-    window.__finledgerError = e.message;
-    window.__finledgerStack = e.stack;
-    console.error('FinLedger Lab init error:', e);
+    window.__corebankDashboardError = e.message;
+    window.__corebankDashboardStack = e.stack;
+    console.error('CoreBank dashboard init error:', e);
   }
 })();

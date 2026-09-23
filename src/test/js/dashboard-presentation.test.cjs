@@ -67,3 +67,50 @@ test('transfer verification uses the returned changes and checks replay content'
   assert.equal(view.verifyTransfer(first, null).replay.status, 'pending');
   assert.equal(view.verifyTransfer({ journalId: 'journal-1' }, null).balance.status, 'pending');
 });
+
+test('a verified replay says nothing was deducted, instead of repeating "đã chuyển"', () => {
+  const first = {
+    journalId: 'journal-1', amountMinor: 700000, currency: 'VND',
+    sourceAvailableBalanceBeforeMinor: 80000000, sourceAvailableBalanceAfterMinor: 79300000,
+    destinationAvailableBalanceBeforeMinor: 25000000, destinationAvailableBalanceAfterMinor: 25700000
+  };
+  const replay = view.describeAction('transfer-replay', { ...first }, { first });
+  assert.equal(replay.headline, 'Không trừ tiền lần hai');
+  assert.equal(replay.tone, 'success');
+  assert.doesNotMatch(replay.headline, /đã chuyển/);
+  assert.equal(replay.balances[0].label, 'Tài khoản nguồn · giao dịch gốc');
+
+  const differs = view.describeAction('transfer-replay', { ...first, journalId: 'journal-2' }, { first });
+  assert.equal(differs.tone, 'warning');
+  assert.equal(differs.headline, 'Response gửi lại khác lần đầu');
+
+  // Without the first response there is nothing to compare, so the plain wording stays.
+  assert.equal(view.describeAction('transfer-replay', first).headline, '700.000 đ đã chuyển');
+});
+
+test('journal maps postings onto debit and credit columns and keeps the endpoint verdict', () => {
+  const journal = {
+    journalId: 'journal-1', journalType: 'INTERNAL_TRANSFER', createdByActor: 'demo_admin',
+    createdAt: '2026-09-22T14:32:05Z', currency: 'VND',
+    postings: [
+      { entrySide: 'D', ledgerAccountCode: '1001', ledgerAccountName: 'Customer deposits',
+        customerAccountNumber: 'DEMO-SRC-0001', amountMinor: 700000, currency: 'VND' },
+      { entrySide: 'C', ledgerAccountCode: '1001', ledgerAccountName: 'Customer deposits',
+        customerAccountNumber: 'DEMO-DST-0001', amountMinor: 700000, currency: 'VND' }
+    ],
+    totalDebitMinor: 700000, totalCreditMinor: 700000, differenceMinor: 0, balanced: true,
+    rowHashHex: '8f2a1c4b9d0e11aa', prevRowHashHex: 'c1e93b07ffee2233'
+  };
+  const entry = view.describeJournal(journal);
+  assert.deepEqual(entry.lines.map(({ side, account, debit, credit }) => [side, account, debit, credit]), [
+    ['Nợ', 'DEMO-SRC-0001', '700.000 đ', '—'],
+    ['Có', 'DEMO-DST-0001', '—', '700.000 đ']
+  ]);
+  assert.equal(entry.difference, '0 đ');
+  assert.equal(entry.balanced, true);
+  assert.equal(entry.rowHash, '8f2a1c4b…');
+
+  const unbalanced = view.describeJournal({ ...journal, totalCreditMinor: 500000, differenceMinor: 200000, balanced: false });
+  assert.equal(unbalanced.balanced, false);
+  assert.match(unbalanced.verdict, /Không cân đối/);
+});

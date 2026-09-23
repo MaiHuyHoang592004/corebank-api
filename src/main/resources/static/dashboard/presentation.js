@@ -22,10 +22,15 @@
     return numeric(value) ? { label, value: money(value, currency) } : null;
   }
 
-  function describeAction(action, body = {}) {
+  /**
+   * `context.first` is the first transfer's response. When it is given for a replay, the
+   * result is phrased as what the viewer needs to understand — nothing was deducted again —
+   * instead of repeating the original "700.000 đ đã chuyển", which reads as a second transfer.
+   */
+  function describeAction(action, body = {}, context = {}) {
     const currency = body.currency || 'VND';
     const result = {
-      title: '', headline: '', explanation: '', status: body.status || '',
+      title: '', headline: '', explanation: '', status: body.status || '', tone: 'success',
       balances: [], metrics: [], journalId: body.journalId || null,
       referenceId: null, referenceLabel: '', dataNote: ''
     };
@@ -33,17 +38,32 @@
     let metrics = [];
     switch (action) {
       case 'transfer-internal':
-      case 'transfer-replay':
-        result.title = action === 'transfer-replay' ? 'Kết quả gửi lại' : 'Chuyển tiền nội bộ';
-        result.headline = numeric(body.amountMinor) ? `${money(body.amountMinor, currency)} đã chuyển` : 'Giao dịch đã phản hồi';
-        result.explanation = 'Số dư khả dụng lấy trực tiếp từ phản hồi chuyển tiền.';
+      case 'transfer-replay': {
+        const replayCheck = action === 'transfer-replay' && context.first
+          ? verifyTransfer(context.first, body).replay.status : null;
+        const suffix = replayCheck === 'pass' ? ' · giao dịch gốc' : '';
+        if (replayCheck === 'pass') {
+          result.title = 'Gửi lại cùng idempotency key';
+          result.headline = 'Không trừ tiền lần hai';
+          result.explanation = 'Backend nhận ra key đã xử lý và trả lại nguyên kết quả của lần chuyển đầu, cùng mã bút toán. Không có bút toán mới; số dư bên dưới là của giao dịch gốc.';
+        } else if (replayCheck === 'fail') {
+          result.title = 'Kết quả gửi lại';
+          result.headline = 'Response gửi lại khác lần đầu';
+          result.explanation = 'Mã bút toán hoặc số dư không trùng với lần chuyển đầu. Xem chi tiết kỹ thuật để điều tra.';
+          result.tone = 'warning';
+        } else {
+          result.title = action === 'transfer-replay' ? 'Kết quả gửi lại' : 'Chuyển tiền nội bộ';
+          result.headline = numeric(body.amountMinor) ? `${money(body.amountMinor, currency)} đã chuyển` : 'Giao dịch đã phản hồi';
+          result.explanation = 'Số dư khả dụng lấy trực tiếp từ phản hồi chuyển tiền.';
+        }
         rows = [
-          balance('Tài khoản nguồn', body.sourceAvailableBalanceBeforeMinor, body.sourceAvailableBalanceAfterMinor, currency, body.sourcePostedBalanceMinor),
-          balance('Tài khoản đích', body.destinationAvailableBalanceBeforeMinor, body.destinationAvailableBalanceAfterMinor, currency, body.destinationPostedBalanceMinor)
+          balance('Tài khoản nguồn' + suffix, body.sourceAvailableBalanceBeforeMinor, body.sourceAvailableBalanceAfterMinor, currency, body.sourcePostedBalanceMinor),
+          balance('Tài khoản đích' + suffix, body.destinationAvailableBalanceBeforeMinor, body.destinationAvailableBalanceAfterMinor, currency, body.destinationPostedBalanceMinor)
         ];
         result.referenceId = body.journalId || null;
         result.referenceLabel = 'Mã bút toán';
         break;
+      }
       case 'payment-authorize':
         result.title = 'Giữ tiền thanh toán';
         result.headline = numeric(body.holdAmountMinor) ? `${money(body.holdAmountMinor, currency)} đã được giữ` : 'Yêu cầu giữ tiền đã phản hồi';
@@ -149,7 +169,43 @@
     return { balance: balanceEvidence, replay: replayEvidence };
   }
 
-  const api = { money, describeAction, verifyTransfer };
+  const shortHash = (hex) => (typeof hex === 'string' && hex.length > 12 ? `${hex.slice(0, 8)}…` : hex || '—');
+
+  /**
+   * Maps GET /api/reporting/journals/{id} onto the double-entry table. The totals and the
+   * verdict come from the endpoint, which derives them from the postings themselves; this
+   * only formats them, so an unbalanced journal is shown as unbalanced.
+   */
+  function describeJournal(journal = {}) {
+    const currency = journal.currency || 'VND';
+    const lines = (Array.isArray(journal.postings) ? journal.postings : []).map((posting) => {
+      const debit = posting.entrySide === 'D';
+      return {
+        side: debit ? 'Nợ' : 'Có',
+        account: posting.customerAccountNumber || posting.ledgerAccountCode || '—',
+        name: [posting.ledgerAccountCode, posting.ledgerAccountName].filter(Boolean).join(' · '),
+        debit: debit ? money(posting.amountMinor, posting.currency || currency) : '—',
+        credit: debit ? '—' : money(posting.amountMinor, posting.currency || currency)
+      };
+    });
+    const balanced = journal.balanced === true;
+    return {
+      journalId: journal.journalId || null,
+      type: journal.journalType || '—',
+      actor: journal.createdByActor || '—',
+      createdAt: journal.createdAt || null,
+      lines,
+      totalDebit: money(journal.totalDebitMinor, currency),
+      totalCredit: money(journal.totalCreditMinor, currency),
+      difference: money(journal.differenceMinor, currency),
+      balanced,
+      verdict: balanced ? 'Cân đối: tổng Nợ bằng tổng Có' : 'Không cân đối: tổng Nợ khác tổng Có',
+      rowHash: shortHash(journal.rowHashHex),
+      prevRowHash: shortHash(journal.prevRowHashHex)
+    };
+  }
+
+  const api = { money, describeAction, describeJournal, verifyTransfer };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.DemoPresentation = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

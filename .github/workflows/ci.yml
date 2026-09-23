@@ -52,6 +52,16 @@ jobs:
       - name: Run container-free tests
         run: ./mvnw -B -ntp -Dgroups=fast test
 
+      # The dashboard's response-to-story mapping has its own tests. Maven does not run
+      # them, so without this step they only ran on a developer's machine, if at all.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run dashboard presentation tests
+        run: node --test src/test/js/dashboard-presentation.test.cjs
+
   # ---------------------------------------------------------------- manifests
   # Catches typos and removed fields in the Kubernetes manifests without needing a
   # cluster. kubeconform validates against the published API schemas; -strict rejects

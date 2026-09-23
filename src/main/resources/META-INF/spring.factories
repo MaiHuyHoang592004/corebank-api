@@ -1,1 +1,1 @@
-org.springframework.boot.env.EnvironmentPostProcessor=com.corebank.corebank_api.config.RenderDatabaseUrlEnvironmentPostProcessor
+org.springframework.boot.EnvironmentPostProcessor=com.corebank.corebank_api.config.DatabaseUrlEnvironmentPostProcessor
